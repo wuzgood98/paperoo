@@ -1,0 +1,299 @@
+import type { Dispatch, PointerEvent, SetStateAction } from "react";
+
+import { toastManager } from "@/components/ui/toast-manager";
+import {
+  objectCenter,
+  objectWrapperStyle,
+  resizeRotatedBox,
+  screenToPage,
+} from "@/lib/editor/coordinates";
+import type { PageBounds, ResizeHandle } from "@/lib/editor/coordinates";
+import {
+  createDrawingObject,
+  createHighlightObject,
+  createImageObject,
+  createShapeObject,
+  normalizedRect,
+  scaleObjectToBox,
+} from "@/lib/editor/object-utils";
+import { editorStore } from "@/lib/editor/store";
+import { MIN_OBJECT_SIZE } from "@/lib/editor/types";
+import type {
+  DrawStyleDefaults,
+  EditorObject,
+  EditorTool,
+  Point,
+  ShapeStyleDefaults,
+} from "@/lib/editor/types";
+import { readImageFile } from "@/lib/pdf/image-file";
+
+export type OverlayDraft =
+  | { kind: "draw"; points: Point[] }
+  | { kind: "rect"; end: Point; start: Point };
+
+export type Gesture =
+  | {
+      handle: ResizeHandle;
+      kind: "resize";
+      object: EditorObject;
+      start: Point;
+    }
+  | { kind: "draw"; points: Point[] }
+  | { kind: "drag"; object: EditorObject; start: Point; origin: Point }
+  | { kind: "rect"; start: Point }
+  | {
+      kind: "rotate";
+      object: EditorObject;
+      startAngle: number;
+      originRotation: number;
+    };
+
+interface RefBox<T> {
+  current: T;
+}
+
+export const requireOverlayRoot = (
+  element: HTMLDivElement | null
+): HTMLElement => {
+  if (!element) {
+    throw new Error("Editor overlay is not mounted");
+  }
+  return element;
+};
+
+export const snapshotBounds = (element: HTMLElement): PageBounds => {
+  const rect = element.getBoundingClientRect();
+  return {
+    height: rect.height,
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+  };
+};
+
+export const useOverlayGestures = ({
+  boundsRef,
+  drawStyle,
+  gestureRef,
+  highlightColor,
+  imagePointRef,
+  nodeRefs,
+  pageWidth,
+  placingSignature,
+  rootRef,
+  setDraft,
+  setPreviewPoint,
+  shapeStyle,
+  tool,
+  zoom,
+}: {
+  boundsRef: RefBox<PageBounds | null>;
+  drawStyle: DrawStyleDefaults;
+  gestureRef: RefBox<Gesture | null>;
+  highlightColor: string;
+  imagePointRef: RefBox<Point | null>;
+  nodeRefs: RefBox<Map<string, HTMLDivElement>>;
+  pageWidth: number;
+  placingSignature: boolean;
+  rootRef: RefBox<HTMLDivElement | null>;
+  setDraft: Dispatch<SetStateAction<OverlayDraft | null>>;
+  setPreviewPoint: Dispatch<SetStateAction<Point | null>>;
+  shapeStyle: ShapeStyleDefaults;
+  tool: EditorTool;
+  zoom: number;
+}) => {
+  const toPage = (event: { clientX: number; clientY: number }): Point => {
+    const bounds =
+      boundsRef.current ?? snapshotBounds(requireOverlayRoot(rootRef.current));
+    return screenToPage({ x: event.clientX, y: event.clientY }, bounds, zoom);
+  };
+
+  const writeNodeBox = (object: EditorObject): void => {
+    const node = nodeRefs.current.get(object.id);
+    if (!node) {
+      return;
+    }
+    const style = objectWrapperStyle(object, zoom);
+    node.style.left = `${style.left}px`;
+    node.style.top = `${style.top}px`;
+    node.style.width = `${style.width}px`;
+    node.style.height = `${style.height}px`;
+    node.style.transform = `rotate(${object.rotation}deg)`;
+  };
+
+  const finishGesture = (object: EditorObject | null): void => {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+    if (!object || !gesture) {
+      return;
+    }
+    if (gesture.kind === "draw") {
+      editorStore.addObject(
+        createDrawingObject(
+          gesture.points,
+          drawStyle.stroke,
+          drawStyle.strokeWidth
+        )
+      );
+      return;
+    }
+    if (gesture.kind === "rect") {
+      return;
+    }
+    editorStore.commitObject(object.id, object, true);
+  };
+
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>): void => {
+    if (placingSignature) {
+      setPreviewPoint(toPage(event));
+    }
+    const gesture = gestureRef.current;
+    if (!gesture) {
+      return;
+    }
+    const point = toPage(event);
+
+    if (gesture.kind === "drag") {
+      const next = {
+        ...gesture.object,
+        x: gesture.origin.x + (point.x - gesture.start.x),
+        y: gesture.origin.y + (point.y - gesture.start.y),
+      };
+      writeNodeBox(next);
+      return;
+    }
+
+    if (gesture.kind === "resize") {
+      const nextBox = resizeRotatedBox(
+        gesture.object,
+        gesture.object.rotation,
+        gesture.handle,
+        point,
+        {
+          lockAspect: event.shiftKey || gesture.object.type === "image",
+          minSize: MIN_OBJECT_SIZE,
+        }
+      );
+      writeNodeBox({ ...gesture.object, ...nextBox });
+      return;
+    }
+
+    if (gesture.kind === "rotate") {
+      const center = objectCenter(gesture.object);
+      const angle =
+        (Math.atan2(point.y - center.y, point.x - center.x) * 180) / Math.PI;
+      const next = {
+        ...gesture.object,
+        rotation: gesture.originRotation + (angle - gesture.startAngle),
+      };
+      writeNodeBox(next);
+      gesture.object = next;
+      return;
+    }
+
+    if (gesture.kind === "draw") {
+      const events = event.nativeEvent.getCoalescedEvents?.() ?? [
+        event.nativeEvent,
+      ];
+      for (const coalesced of events) {
+        gesture.points.push(toPage(coalesced));
+      }
+      setDraft({ kind: "draw", points: [...gesture.points] });
+      return;
+    }
+
+    if (gesture.kind === "rect") {
+      setDraft({ end: point, kind: "rect", start: gesture.start });
+    }
+  };
+
+  const onPointerUp = (event: PointerEvent<HTMLDivElement>): void => {
+    const gesture = gestureRef.current;
+    if (!gesture) {
+      return;
+    }
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    setDraft(null);
+    const point = toPage(event);
+
+    if (gesture.kind === "drag") {
+      const next = {
+        ...gesture.object,
+        x: gesture.origin.x + (point.x - gesture.start.x),
+        y: gesture.origin.y + (point.y - gesture.start.y),
+      };
+      finishGesture(next);
+      return;
+    }
+    if (gesture.kind === "resize") {
+      const nextBox = resizeRotatedBox(
+        gesture.object,
+        gesture.object.rotation,
+        gesture.handle,
+        point,
+        {
+          lockAspect: event.shiftKey || gesture.object.type === "image",
+          minSize: MIN_OBJECT_SIZE,
+        }
+      );
+      finishGesture(scaleObjectToBox(gesture.object, nextBox));
+      return;
+    }
+    if (gesture.kind === "rotate") {
+      finishGesture(gesture.object);
+      return;
+    }
+    if (gesture.kind === "draw") {
+      finishGesture(null);
+      editorStore.addObject(
+        createDrawingObject(
+          gesture.points,
+          drawStyle.stroke,
+          drawStyle.strokeWidth
+        )
+      );
+      return;
+    }
+    if (gesture.kind === "rect") {
+      const rect = normalizedRect(gesture.start, point);
+      if (tool === "highlight") {
+        editorStore.addObject(createHighlightObject(rect, highlightColor));
+      } else {
+        editorStore.addObject(createShapeObject(rect, shapeStyle.shape));
+      }
+      gestureRef.current = null;
+    }
+  };
+
+  const placeImage = async (files: FileList | null) => {
+    const file = files?.[0];
+    const point = imagePointRef.current;
+    imagePointRef.current = null;
+    if (!file || !point) {
+      return;
+    }
+    try {
+      const image = await readImageFile(file);
+      const maxWidth = pageWidth * 0.4;
+      const scale = Math.min(1, maxWidth / image.width);
+      const asset = editorStore.addAsset(image.bytes, image.mimeType);
+      editorStore.addObject(
+        createImageObject(
+          point,
+          { height: image.height * scale, width: image.width * scale },
+          asset.id,
+          image.mimeType
+        )
+      );
+    } catch (error) {
+      toastManager.add({
+        description:
+          error instanceof Error ? error.message : "Could not add image.",
+        title: "Image failed",
+        type: "error",
+      });
+    }
+  };
+
+  return { onPointerMove, onPointerUp, placeImage, toPage };
+};

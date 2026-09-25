@@ -1,0 +1,514 @@
+import { useSyncExternalStore } from "react";
+
+import {
+  clamp,
+  fitPageScale,
+  fitWidthScale,
+  normalizeRotation,
+} from "@/lib/editor/coordinates";
+import {
+  cloneSnapshot,
+  emptyHistory,
+  pushHistory,
+  redoHistory,
+  undoHistory,
+} from "@/lib/editor/history";
+import type { HistoryState } from "@/lib/editor/history";
+import { createId } from "@/lib/editor/ids";
+import {
+  findObject,
+  findPage,
+  mapPageObjects,
+  removeObjects,
+  updateObject,
+} from "@/lib/editor/object-utils";
+import {
+  DEFAULT_DRAW_STYLE,
+  DEFAULT_HIGHLIGHT_COLOR,
+  DEFAULT_SHAPE_STYLE,
+  DEFAULT_TEXT_STYLE,
+  MAX_ZOOM,
+  MIN_ZOOM,
+} from "@/lib/editor/types";
+import type {
+  DrawStyleDefaults,
+  EditorDocument,
+  EditorObject,
+  EditorPage,
+  EditorStatus,
+  EditorTool,
+  HistorySnapshot,
+  ImageAsset,
+  ImageMimeType,
+  PageRotation,
+  ShapeStyleDefaults,
+  TextStyleDefaults,
+  ZoomMode,
+} from "@/lib/editor/types";
+
+export interface ViewportSize {
+  width: number;
+  height: number;
+}
+
+export interface EditorStoreState {
+  currentPageId: string | null;
+  document: EditorDocument;
+  drawStyle: DrawStyleDefaults;
+  errorMessage: string | null;
+  fileName: string | null;
+  highlightColor: string;
+  isExporting: boolean;
+  selectedObjectIds: readonly string[];
+  shapeStyle: ShapeStyleDefaults;
+  status: EditorStatus;
+  textStyle: TextStyleDefaults;
+  tool: EditorTool;
+  viewportSize: ViewportSize;
+  zoom: number;
+  zoomMode: ZoomMode;
+}
+
+interface StoreInternal {
+  assets: Map<string, ImageAsset>;
+  history: HistoryState;
+  listeners: Set<() => void>;
+  state: EditorStoreState;
+}
+
+const initialState = (): EditorStoreState => ({
+  currentPageId: null,
+  document: { pages: [] },
+  drawStyle: { ...DEFAULT_DRAW_STYLE },
+  errorMessage: null,
+  fileName: null,
+  highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+  isExporting: false,
+  selectedObjectIds: [],
+  shapeStyle: { ...DEFAULT_SHAPE_STYLE },
+  status: "idle",
+  textStyle: { ...DEFAULT_TEXT_STYLE },
+  tool: "select",
+  viewportSize: { height: 800, width: 800 },
+  zoom: 1,
+  zoomMode: "fit-page",
+});
+
+const internal: StoreInternal = {
+  assets: new Map(),
+  history: emptyHistory(),
+  listeners: new Set(),
+  state: initialState(),
+};
+
+const emit = (): void => {
+  for (const listener of internal.listeners) {
+    listener();
+  }
+};
+
+const getSnapshot = (): HistorySnapshot => ({
+  currentPageId: internal.state.currentPageId,
+  document: internal.state.document,
+  selectedObjectIds: internal.state.selectedObjectIds,
+});
+
+const applySnapshot = (snapshot: HistorySnapshot): void => {
+  internal.state = {
+    ...internal.state,
+    currentPageId: snapshot.currentPageId,
+    document: snapshot.document,
+    selectedObjectIds: snapshot.selectedObjectIds,
+  };
+};
+
+const commit = (mutate: () => void, recordHistory: boolean): void => {
+  const before = recordHistory ? cloneSnapshot(getSnapshot()) : null;
+  mutate();
+  if (before) {
+    internal.history = pushHistory(internal.history, before);
+  }
+  emit();
+};
+
+const setState = (partial: Partial<EditorStoreState>): void => {
+  internal.state = { ...internal.state, ...partial };
+  emit();
+};
+
+const currentPage = (): EditorPage | undefined =>
+  findPage(internal.state.document.pages, internal.state.currentPageId);
+
+export const editorStore = {
+  addAsset: (bytes: Uint8Array, mimeType: ImageMimeType): ImageAsset => {
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    const blob = new Blob([copy], { type: mimeType });
+    const asset: ImageAsset = {
+      bytes: copy,
+      id: createId(),
+      mimeType,
+      objectUrl: URL.createObjectURL(blob),
+    };
+    internal.assets.set(asset.id, asset);
+    return asset;
+  },
+
+  addObject: (object: EditorObject, select = true): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: mapPageObjects(
+            internal.state.document.pages,
+            pageId,
+            (objects) => [...objects, object]
+          ),
+        },
+        selectedObjectIds: select
+          ? [object.id]
+          : internal.state.selectedObjectIds,
+        tool: "select",
+      };
+    }, true);
+  },
+
+  canRedo: (): boolean => internal.history.future.length > 0,
+
+  canUndo: (): boolean => internal.history.past.length > 0,
+
+  clearDocument: (): void => {
+    editorStore.revokeAssets();
+    internal.history = emptyHistory();
+    setState(initialState());
+  },
+
+  clearSelection: (): void => {
+    setState({ selectedObjectIds: [] });
+  },
+
+  commitObject: (
+    objectId: string,
+    object: EditorObject,
+    recordHistory: boolean
+  ): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: updateObject(
+            internal.state.document.pages,
+            pageId,
+            objectId,
+            () => object
+          ),
+        },
+      };
+    }, recordHistory);
+  },
+
+  deleteSelected: (): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId || internal.state.selectedObjectIds.length === 0) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: removeObjects(
+            internal.state.document.pages,
+            pageId,
+            internal.state.selectedObjectIds
+          ),
+        },
+        selectedObjectIds: [],
+      };
+    }, true);
+  },
+
+  fitPage: (): void => {
+    setState({ zoomMode: "fit-page" });
+    editorStore.recomputeFitZoom();
+  },
+
+  fitWidth: (): void => {
+    setState({ zoomMode: "fit-width" });
+    editorStore.recomputeFitZoom();
+  },
+
+  getAsset: (assetId: string): ImageAsset | undefined =>
+    internal.assets.get(assetId),
+
+  getAssets: (): ReadonlyMap<string, ImageAsset> => internal.assets,
+
+  getState: (): EditorStoreState => internal.state,
+
+  patchSelected: (updater: (object: EditorObject) => EditorObject): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId || internal.state.selectedObjectIds.length === 0) {
+      return;
+    }
+    const ids = new Set(internal.state.selectedObjectIds);
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: mapPageObjects(
+            internal.state.document.pages,
+            pageId,
+            (objects) =>
+              objects.map((object) =>
+                ids.has(object.id) ? updater(object) : object
+              )
+          ),
+        },
+      };
+    }, true);
+  },
+
+  recomputeFitZoom: (): void => {
+    const page = currentPage();
+    if (!page) {
+      return;
+    }
+    const { viewportSize, zoomMode } = internal.state;
+    if (zoomMode === "fit-width") {
+      editorStore.setZoom(fitWidthScale(page, viewportSize), "fit-width");
+      return;
+    }
+    if (zoomMode === "fit-page") {
+      editorStore.setZoom(fitPageScale(page, viewportSize), "fit-page");
+    }
+  },
+
+  redo: (): void => {
+    const result = redoHistory(internal.history, getSnapshot());
+    if (!result) {
+      return;
+    }
+    internal.history = result.history;
+    applySnapshot(result.snapshot);
+    emit();
+  },
+
+  reorderSelected: (placement: "front" | "back"): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId || internal.state.selectedObjectIds.length === 0) {
+      return;
+    }
+    const ids = new Set(internal.state.selectedObjectIds);
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: mapPageObjects(
+            internal.state.document.pages,
+            pageId,
+            (objects) => {
+              const selected = objects.filter((object) => ids.has(object.id));
+              const rest = objects.filter((object) => !ids.has(object.id));
+              return placement === "front"
+                ? [...rest, ...selected]
+                : [...selected, ...rest];
+            }
+          ),
+        },
+      };
+    }, true);
+  },
+
+  replaceObject: (objectId: string, object: EditorObject): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: updateObject(
+            internal.state.document.pages,
+            pageId,
+            objectId,
+            () => object
+          ),
+        },
+      };
+    }, false);
+  },
+
+  resetDocument: (pages: EditorPage[], fileName: string): void => {
+    editorStore.revokeAssets();
+    internal.history = emptyHistory();
+    setState({
+      currentPageId: pages[0]?.id ?? null,
+      document: { pages },
+      errorMessage: null,
+      fileName,
+      selectedObjectIds: [],
+      status: "ready",
+      tool: "select",
+      zoomMode: "fit-page",
+    });
+    editorStore.recomputeFitZoom();
+  },
+
+  revokeAssets: (): void => {
+    for (const asset of internal.assets.values()) {
+      URL.revokeObjectURL(asset.objectUrl);
+    }
+    internal.assets.clear();
+  },
+
+  rotateCurrentPage: (delta: PageRotation): void => {
+    const page = currentPage();
+    if (!page) {
+      return;
+    }
+    const nextRotation = normalizeRotation(page.rotation + delta);
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: internal.state.document.pages.map((item) =>
+            item.id === page.id ? { ...item, rotation: nextRotation } : item
+          ),
+        },
+      };
+    }, true);
+  },
+
+  selectObjects: (objectIds: readonly string[]): void => {
+    setState({ selectedObjectIds: objectIds, tool: "select" });
+  },
+
+  selectedObject: (): EditorObject | undefined => {
+    const page = currentPage();
+    const [id] = internal.state.selectedObjectIds;
+    if (!page || !id) {
+      return undefined;
+    }
+    return findObject(page, id);
+  },
+
+  setCurrentPage: (pageId: string): void => {
+    setState({ currentPageId: pageId, selectedObjectIds: [] });
+    if (internal.state.zoomMode !== "custom") {
+      editorStore.recomputeFitZoom();
+    }
+  },
+
+  setDrawStyle: (drawStyle: Partial<DrawStyleDefaults>): void => {
+    setState({ drawStyle: { ...internal.state.drawStyle, ...drawStyle } });
+  },
+
+  setExporting: (isExporting: boolean): void => {
+    setState({ isExporting });
+  },
+
+  setFileName: (fileName: string | null): void => {
+    setState({ fileName });
+  },
+
+  setHighlightColor: (highlightColor: string): void => {
+    setState({ highlightColor });
+  },
+
+  setPages: (pages: EditorPage[], recordHistory = true): void => {
+    commit(() => {
+      const currentExists = pages.some(
+        (page) => page.id === internal.state.currentPageId
+      );
+      internal.state = {
+        ...internal.state,
+        currentPageId: currentExists
+          ? internal.state.currentPageId
+          : (pages[0]?.id ?? null),
+        document: { pages },
+        selectedObjectIds: [],
+      };
+    }, recordHistory);
+  },
+
+  setShapeStyle: (shapeStyle: Partial<ShapeStyleDefaults>): void => {
+    setState({ shapeStyle: { ...internal.state.shapeStyle, ...shapeStyle } });
+  },
+
+  setStatus: (
+    status: EditorStatus,
+    errorMessage: string | null = null
+  ): void => {
+    setState({ errorMessage, status });
+  },
+
+  setTextStyle: (textStyle: Partial<TextStyleDefaults>): void => {
+    setState({ textStyle: { ...internal.state.textStyle, ...textStyle } });
+  },
+
+  setTool: (tool: EditorTool): void => {
+    setState({
+      selectedObjectIds:
+        tool === "select" ? internal.state.selectedObjectIds : [],
+      tool,
+    });
+  },
+
+  setViewportSize: (viewportSize: ViewportSize): void => {
+    if (
+      viewportSize.width === internal.state.viewportSize.width &&
+      viewportSize.height === internal.state.viewportSize.height
+    ) {
+      return;
+    }
+    setState({ viewportSize });
+    if (internal.state.zoomMode !== "custom") {
+      editorStore.recomputeFitZoom();
+    }
+  },
+
+  setZoom: (zoom: number, mode: ZoomMode = "custom"): void => {
+    setState({
+      zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM),
+      zoomMode: mode,
+    });
+  },
+
+  subscribe: (listener: () => void): (() => void) => {
+    internal.listeners.add(listener);
+    return () => {
+      internal.listeners.delete(listener);
+    };
+  },
+
+  undo: (): void => {
+    const result = undoHistory(internal.history, getSnapshot());
+    if (!result) {
+      return;
+    }
+    internal.history = result.history;
+    applySnapshot(result.snapshot);
+    emit();
+  },
+
+  zoomBy: (delta: number): void => {
+    editorStore.setZoom(internal.state.zoom + delta, "custom");
+  },
+};
+
+export const useEditorStore = <T>(
+  selector: (state: EditorStoreState) => T
+): T =>
+  useSyncExternalStore(
+    editorStore.subscribe,
+    () => selector(internal.state),
+    () => selector(internal.state)
+  );
