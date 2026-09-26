@@ -9,12 +9,43 @@ import {
 } from "@/lib/pdf/pdfjs";
 import type { PDFPageProxy, RenderTask } from "@/lib/pdf/pdfjs";
 
+export type CanvasTransform = [number, number, number, number, number, number];
+
+export interface CanvasBackingSize {
+  cssHeight: number;
+  cssWidth: number;
+  height: number;
+  transform: CanvasTransform | null;
+  width: number;
+}
+
+export const canvasBackingSize = (
+  cssWidth: number,
+  cssHeight: number,
+  pixelRatio: number
+): CanvasBackingSize => {
+  const width = Math.round(cssWidth * pixelRatio);
+  const height = Math.round(cssHeight * pixelRatio);
+  const sx = width / cssWidth;
+  const sy = height / cssHeight;
+  return {
+    cssHeight,
+    cssWidth,
+    height,
+    transform: sx === 1 && sy === 1 ? null : [sx, 0, 0, sy, 0, 0],
+    width,
+  };
+};
+
 export const sizeCanvas = (
   canvas: HTMLCanvasElement,
   width: number,
-  height: number
-): [number, number, number, number, number, number] | null => {
+  height: number,
+  pixelRatio = OutputScale.pixelRatio
+): CanvasTransform | null => {
   const scale = new OutputScale();
+  scale.sx = pixelRatio;
+  scale.sy = pixelRatio;
   scale.limitCanvas(
     width,
     height,
@@ -22,15 +53,12 @@ export const sizeCanvas = (
     MAX_CANVAS_DIM,
     CANVAS_AREA_FACTOR
   );
-
-  canvas.width = Math.floor(width * scale.sx);
-  canvas.height = Math.floor(height * scale.sy);
-  canvas.style.width = `${Math.floor(width)}px`;
-  canvas.style.height = `${Math.floor(height)}px`;
-
-  const sx = canvas.width / width;
-  const sy = canvas.height / height;
-  return sx !== 1 || sy !== 1 ? [sx, 0, 0, sy, 0, 0] : null;
+  const backing = canvasBackingSize(width, height, scale.sx);
+  canvas.width = backing.width;
+  canvas.height = backing.height;
+  canvas.style.width = `${backing.cssWidth}px`;
+  canvas.style.height = `${backing.cssHeight}px`;
+  return backing.transform;
 };
 
 export const releaseCanvas = (canvas: HTMLCanvasElement): void => {
@@ -61,7 +89,12 @@ export const renderPdfPage = async (
   page: PDFPageProxy,
   canvas: HTMLCanvasElement,
   scale: number,
-  options: { annotationMode?: number; previous?: RenderTask | null } = {}
+  options: {
+    annotationMode?: number;
+    pixelRatio?: number;
+    previous?: RenderTask | null;
+    rotation?: number;
+  } = {}
 ): Promise<RenderTask | null> => {
   const previousWork = canvasQueue.get(canvas) ?? Promise.resolve();
   let release = holdQueue;
@@ -75,8 +108,16 @@ export const renderPdfPage = async (
     await previousWork;
     options.previous?.cancel();
     await settleTask(options.previous);
-    const viewport = page.getViewport({ scale });
-    const transform = sizeCanvas(canvas, viewport.width, viewport.height);
+    const viewport = page.getViewport({
+      rotation: options.rotation,
+      scale,
+    });
+    const transform = sizeCanvas(
+      canvas,
+      viewport.width,
+      viewport.height,
+      options.pixelRatio
+    );
     const task = page.render({
       annotationMode: options.annotationMode ?? AnnotationMode.ENABLE,
       canvas,

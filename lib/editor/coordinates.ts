@@ -16,6 +16,16 @@ export interface PageBounds {
 export const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+export const pixelSnapOffset = (
+  position: number,
+  devicePixelRatio: number
+): number => {
+  if (devicePixelRatio <= 0) {
+    return 0;
+  }
+  return Math.round(position * devicePixelRatio) / devicePixelRatio - position;
+};
+
 export const degreesToRadians = (degrees: number): number =>
   (degrees * Math.PI) / 180;
 
