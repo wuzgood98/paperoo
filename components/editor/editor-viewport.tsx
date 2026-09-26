@@ -1,14 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { EditorOverlay } from "@/components/editor/editor-overlay";
 import { InspectorBar } from "@/components/editor/inspector-bar";
 import { PdfCanvas } from "@/components/editor/pdf-canvas";
-import { clamp } from "@/lib/editor/coordinates";
+import {
+  clamp,
+  normalizeRotation,
+  pixelSnapOffset,
+} from "@/lib/editor/coordinates";
 import { findPage } from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_SETTLE_MS } from "@/lib/editor/types";
+import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
 import { openPdfFromList } from "@/lib/pdf/open-pdf";
 
 export const EditorViewport = () => {
@@ -17,10 +22,13 @@ export const EditorViewport = () => {
   const zoom = useEditorStore((state) => state.zoom);
   const page = findPage(pages, currentPageId);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const [previewZoom, setPreviewZoom] = useState<number | null>(null);
   const [trackedZoom, setTrackedZoom] = useState(zoom);
+  const [snap, setSnap] = useState({ x: 0, y: 0 });
   const previewRef = useRef(zoom);
   const settleTimer = useRef<number>(0);
+  const pixelRatio = useDevicePixelRatio();
 
   if (zoom !== trackedZoom) {
     setTrackedZoom(zoom);
@@ -79,16 +87,51 @@ export const EditorViewport = () => {
     };
   }, []);
 
+  const displayZoom = previewZoom ?? zoom;
+  const rasterScale = displayZoom / zoom;
+  const previewing = previewZoom !== null && rasterScale !== 1;
+  const pageWidth = page ? page.width * zoom : 0;
+  const pageHeight = page ? page.height * zoom : 0;
+  const displayWidth = page ? page.width * displayZoom : 0;
+  const displayHeight = page ? page.height * displayZoom : 0;
+  const swapped = page ? page.rotation % 180 !== 0 : false;
+  const frameWidth = swapped ? displayHeight : displayWidth;
+  const frameHeight = swapped ? displayWidth : displayHeight;
+  const canvasWidth = swapped ? pageHeight : pageWidth;
+  const canvasHeight = swapped ? pageWidth : pageHeight;
+  const canvasRotation = page
+    ? normalizeRotation(page.sourceRotate + page.rotation)
+    : 0;
+
+  useLayoutEffect(() => {
+    const node = frameRef.current;
+    if (!node || frameWidth === 0 || frameHeight === 0) {
+      return;
+    }
+    const rect = node.getBoundingClientRect();
+    const x = pixelSnapOffset(rect.left, pixelRatio);
+    const y = pixelSnapOffset(rect.top, pixelRatio);
+    if (x === 0 && y === 0) {
+      return;
+    }
+    setSnap((current) => ({ x: current.x + x, y: current.y + y }));
+  }, [frameHeight, frameWidth, pixelRatio]);
+
   if (!page) {
     return null;
   }
 
-  const displayZoom = previewZoom ?? zoom;
-  const rasterScale = displayZoom / zoom;
-  const displayWidth = page.width * displayZoom;
-  const displayHeight = page.height * displayZoom;
-  const frameWidth = page.rotation % 180 === 0 ? displayWidth : displayHeight;
-  const frameHeight = page.rotation % 180 === 0 ? displayHeight : displayWidth;
+  const overlayStyle =
+    page.rotation === 0
+      ? { inset: 0 }
+      : {
+          height: pageHeight,
+          left: (canvasWidth - pageWidth) / 2,
+          top: (canvasHeight - pageHeight) / 2,
+          transform: `rotate(${page.rotation}deg)`,
+          transformOrigin: "center center",
+          width: pageWidth,
+        };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -106,26 +149,30 @@ export const EditorViewport = () => {
       >
         <div className="flex min-h-full min-w-full items-center justify-center p-8">
           <div
-            className="relative shrink-0 shadow-lg"
-            style={{ height: frameHeight, width: frameWidth }}
+            className="relative flex shrink-0 items-center justify-center shadow-lg"
+            ref={frameRef}
+            style={{
+              height: frameHeight,
+              marginLeft: snap.x,
+              marginTop: snap.y,
+              width: frameWidth,
+            }}
           >
             <div
-              className="absolute top-1/2 left-1/2 origin-center"
+              className="relative"
               style={{
-                height: displayHeight,
-                transform: `translate(-50%, -50%) rotate(${page.rotation}deg)`,
-                width: displayWidth,
+                height: canvasHeight,
+                transform: previewing ? `scale(${rasterScale})` : undefined,
+                transformOrigin: "center center",
+                width: canvasWidth,
               }}
             >
-              <div
-                className="origin-top-left"
-                style={{
-                  height: page.height * zoom,
-                  transform: `scale(${rasterScale})`,
-                  width: page.width * zoom,
-                }}
-              >
-                <PdfCanvas scale={zoom} sourceIndex={page.sourceIndex} />
+              <PdfCanvas
+                rotation={canvasRotation}
+                scale={zoom}
+                sourceIndex={page.sourceIndex}
+              />
+              <div className="absolute" style={overlayStyle}>
                 <EditorOverlay page={page} zoom={zoom} />
               </div>
             </div>

@@ -7,6 +7,7 @@ import {
   textItemToDisplayedBox,
   userPointToDisplayed,
   pageToScreen,
+  pixelSnapOffset,
   resizeRotatedBox,
   rotatePoint,
   screenToPage,
@@ -245,4 +246,15 @@ test("textItemToDisplayedBox covers a descent floor under a high-ascent run", ()
   expect(user.y).toBeCloseTo(baselineY - belowBaseline);
   expect(user.height).toBeCloseTo(em * ascentRatio + belowBaseline);
   expect(user.y + user.height - em * ascentRatio).toBeCloseTo(baselineY);
+});
+
+test("pixelSnapOffset lands left and top on the device-pixel grid", () => {
+  for (const devicePixelRatio of [1, 1.25, 1.5, 2]) {
+    for (const position of [10, 10.2, 10.25, 40.4, 100.75]) {
+      const snapped = position + pixelSnapOffset(position, devicePixelRatio);
+      expect(snapped * devicePixelRatio).toBeCloseTo(
+        Math.round(position * devicePixelRatio)
+      );
+    }
+  }
 });
