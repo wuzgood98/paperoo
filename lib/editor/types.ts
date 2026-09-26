@@ -100,6 +100,39 @@ export type EditorObject =
 
 export type EditorObjectType = EditorObject["type"];
 
+export type PdfTextDir = "ltr" | "rtl" | "ttb";
+
+export type PdfTextTransform = readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
+
+export interface PdfTextObject {
+  dir: PdfTextDir;
+  fontFamily?: FontFamily;
+  fontName: string;
+  fontSize?: number;
+  hasEOL: boolean;
+  height: number;
+  id: string;
+  originalFontFamily?: FontFamily;
+  originalFontSize?: number;
+  originalText: string;
+  pageId: string;
+  rotation: number;
+  sourceIndex: number;
+  text: string;
+  transform: PdfTextTransform;
+  type: "pdf-text";
+  width: number;
+  x: number;
+  y: number;
+}
+
 export interface EditorPage {
   id: string;
   sourceIndex: number;
@@ -109,6 +142,7 @@ export interface EditorPage {
   sourceRotate: PageRotation;
   cropBox: CropBox;
   objects: EditorObject[];
+  pdfTextObjects: PdfTextObject[];
 }
 
 export interface EditorDocument {

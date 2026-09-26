@@ -4,6 +4,10 @@ import type { EditorPage } from "@/lib/editor/types";
 import { MAX_PDF_BYTES, MAX_PDF_PAGES } from "@/lib/editor/types";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
 import {
+  extractPdfTextObjects,
+  toExtractableTextContent,
+} from "@/lib/pdf/extract-text";
+import {
   ensurePdfjsWorker,
   getDocument,
   PasswordException,
@@ -75,31 +79,46 @@ class PdfSession {
       pageNumbers.map((number) => this.#doc?.getPage(number))
     );
 
-    return pages.flatMap((page, index) => {
-      if (!page) {
-        return [];
-      }
-      const viewport = page.getViewport({ scale: 1 });
-      const { view } = page;
-      page.cleanup();
-      return [
-        {
-          cropBox: {
-            height: view[3] - view[1],
-            width: view[2] - view[0],
-            x: view[0],
-            y: view[1],
-          },
+    const editorPages = await Promise.all(
+      pages.map(async (page, index) => {
+        if (!page) {
+          return null;
+        }
+        const viewport = page.getViewport({ scale: 1 });
+        const { view } = page;
+        const textContent = await page.getTextContent();
+        const cropBox = {
+          height: view[3] - view[1],
+          width: view[2] - view[0],
+          x: view[0],
+          y: view[1],
+        };
+        const id = createId();
+        const sourceRotate = normalizeRotation(page.rotate);
+        const editorPage = {
+          cropBox,
           height: viewport.height,
-          id: createId(),
+          id,
           objects: [],
+          pdfTextObjects: extractPdfTextObjects(
+            toExtractableTextContent(textContent),
+            {
+              cropBox,
+              id,
+              sourceRotate,
+            }
+          ),
           rotation: 0,
           sourceIndex: index,
-          sourceRotate: normalizeRotation(page.rotate),
+          sourceRotate,
           width: viewport.width,
-        } satisfies EditorPage,
-      ];
-    });
+        } satisfies EditorPage;
+        page.cleanup();
+        return editorPage;
+      })
+    );
+
+    return editorPages.filter((page) => page !== null);
   }
 
   async getPage(sourceIndex: number): Promise<PDFPageProxy | null> {

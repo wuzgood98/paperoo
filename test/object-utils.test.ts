@@ -3,6 +3,8 @@ import { expect, test } from "vitest";
 import { resizeRotatedBox, rotatePoint } from "@/lib/editor/coordinates";
 import {
   boundsFromPoints,
+  fittedPdfTextBox,
+  fittedPdfTextWidth,
   scaleObjectToBox,
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
@@ -159,6 +161,26 @@ test("scaleSignaturePoints centers a bottom-right stroke in the place box", () =
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(
     SIGNATURE_PLACE_SIZE.height - 1
   );
+});
+
+test("fittedPdfTextWidth never shrinks below the original run", () => {
+  expect(fittedPdfTextWidth(90, 40)).toBe(90);
+  expect(fittedPdfTextWidth(90, 90)).toBe(90);
+  expect(fittedPdfTextWidth(90, 160)).toBe(160);
+});
+
+test("fittedPdfTextBox grows left for rtl and right for ltr", () => {
+  const ltr = fittedPdfTextBox(
+    { dir: "ltr", height: 18, width: 90, x: 72, y: 74 },
+    160
+  );
+  expect(ltr).toEqual({ height: 18, width: 160, x: 72, y: 74 });
+
+  const rtl = fittedPdfTextBox(
+    { dir: "rtl", height: 18, width: 90, x: 72, y: 74 },
+    160
+  );
+  expect(rtl).toEqual({ height: 18, width: 160, x: 2, y: 74 });
 });
 
 test("scaleObjectToBox scales text font size with height", () => {

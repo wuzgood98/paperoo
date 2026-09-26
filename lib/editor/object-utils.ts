@@ -15,6 +15,7 @@ import type {
   HighlightObject,
   ImageMimeType,
   ImageObject,
+  PdfTextObject,
   Point,
   Rect,
   ShapeKind,
@@ -38,6 +39,54 @@ export const findObject = (
   objectId: string
 ): EditorObject | undefined =>
   page?.objects.find((object) => object.id === objectId);
+
+export const findPdfText = (
+  page: EditorPage | undefined,
+  objectId: string | null
+): PdfTextObject | undefined =>
+  page?.pdfTextObjects.find((object) => object.id === objectId);
+
+export const isPdfTextDirty = (object: PdfTextObject): boolean =>
+  object.text !== object.originalText ||
+  object.fontFamily !== object.originalFontFamily ||
+  object.fontSize !== object.originalFontSize;
+
+export const fittedPdfTextWidth = (
+  originalWidth: number,
+  measuredWidth: number
+): number => Math.max(originalWidth, measuredWidth);
+
+export const fittedPdfTextBox = (
+  object: Pick<PdfTextObject, "dir" | "height" | "width" | "x" | "y">,
+  measuredWidth: number
+): Rect => {
+  const width = fittedPdfTextWidth(object.width, measuredWidth);
+  return {
+    height: object.height,
+    width,
+    x: object.dir === "rtl" ? object.x - (width - object.width) : object.x,
+    y: object.y,
+  };
+};
+
+export const hitTestPdfText = (
+  objects: readonly PdfTextObject[],
+  point: Point
+): PdfTextObject | undefined => {
+  for (const object of objects.toReversed()) {
+    if (
+      object.width > 0 &&
+      object.height > 0 &&
+      point.x >= object.x &&
+      point.x <= object.x + object.width &&
+      point.y >= object.y &&
+      point.y <= object.y + object.height
+    ) {
+      return object;
+    }
+  }
+  return undefined;
+};
 
 export const mapPageObjects = (
   pages: readonly EditorPage[],

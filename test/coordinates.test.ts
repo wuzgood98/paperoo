@@ -2,12 +2,16 @@ import { expect, test } from "vitest";
 
 import {
   centerRotateCtm,
+  DEFAULT_DESCENT_FLOOR,
   displayedToUserSpace,
+  textItemToDisplayedBox,
+  userPointToDisplayed,
   pageToScreen,
   resizeRotatedBox,
   rotatePoint,
   screenToPage,
 } from "@/lib/editor/coordinates";
+import type { CropBox, PageRotation } from "@/lib/editor/types";
 
 test("screenToPage and pageToScreen are inverses at zoom 1, 2, and 0.5", () => {
   const bounds = { height: 792, left: 40, top: 80, width: 612 };
@@ -129,4 +133,116 @@ test("resizeRotatedBox keeps the opposite corner fixed at several angles", () =>
     expect(next.width).toBeCloseTo(100);
     expect(next.height).toBeCloseTo(50);
   }
+});
+
+const letterCrop: CropBox = { height: 792, width: 612, x: 0, y: 0 };
+const offsetCropBox: CropBox = { height: 700, width: 500, x: 12, y: 24 };
+
+test("userPointToDisplayed inverts displayedPointToUserSpace on an unrotated page", () => {
+  const displayed = { x: 120, y: 80 };
+  const user = {
+    x: letterCrop.x + displayed.x,
+    y: letterCrop.y + letterCrop.height - displayed.y,
+  };
+  expect(userPointToDisplayed(user, letterCrop, 0)).toEqual(displayed);
+});
+
+test("textItemToDisplayedBox places top, middle, and bottom baselines", () => {
+  const width = 80;
+  const height = 20;
+  const ascentRatio = 0.8;
+  const cases = [
+    { displayedY: 4, name: "top", userY: 772 },
+    { displayedY: 380, name: "middle", userY: 396 },
+    { displayedY: 736, name: "bottom", userY: 40 },
+  ] as const;
+
+  for (const item of cases) {
+    const box = textItemToDisplayedBox(
+      [height, 0, 0, height, 100, item.userY],
+      width,
+      height,
+      ascentRatio,
+      letterCrop,
+      0
+    );
+    expect(box.x, item.name).toBeCloseTo(100);
+    expect(box.y, item.name).toBeCloseTo(item.displayedY);
+    expect(box.width, item.name).toBeCloseTo(width);
+    expect(box.height, item.name).toBeCloseTo(
+      height * ascentRatio + height * DEFAULT_DESCENT_FLOOR
+    );
+    expect(box.fontSize, item.name).toBeCloseTo(height);
+    expect(box.rotation, item.name).toBeCloseTo(0);
+  }
+});
+
+test("textItemToDisplayedBox uses a non-zero crop origin", () => {
+  const box = textItemToDisplayedBox(
+    [12, 0, 0, 12, 32, 80],
+    40,
+    12,
+    0.8,
+    offsetCropBox,
+    0
+  );
+  const user = displayedToUserSpace(box, offsetCropBox, 0);
+  expect(user.x).toBeCloseTo(32);
+  expect(user.y + user.height - 12 * 0.8).toBeCloseTo(80);
+});
+
+test("textItemToDisplayedBox round-trips through displayedToUserSpace for page rotates", () => {
+  const height = 20;
+  const width = 40;
+  const ascentRatio = 0.8;
+  const transform = [height, 0, 0, height, 100, 200] as const;
+  const belowBaseline = height * DEFAULT_DESCENT_FLOOR;
+  const userBox = {
+    height: height * ascentRatio + belowBaseline,
+    width,
+    x: 100,
+    y: 200 - belowBaseline,
+  };
+
+  const rotates: PageRotation[] = [0, 90, 180, 270];
+  for (const rotate of rotates) {
+    const displayed = textItemToDisplayedBox(
+      transform,
+      width,
+      height,
+      ascentRatio,
+      letterCrop,
+      rotate
+    );
+    const user = displayedToUserSpace(displayed, letterCrop, rotate);
+    expect(user.x).toBeCloseTo(userBox.x);
+    expect(user.y).toBeCloseTo(userBox.y);
+    expect(user.width).toBeCloseTo(userBox.width);
+    expect(user.height).toBeCloseTo(userBox.height);
+  }
+});
+
+test("textItemToDisplayedBox covers a descent floor under a high-ascent run", () => {
+  const em = 20;
+  const ascentRatio = 0.95;
+  const descentRatio = -0.2;
+  const baselineY = 200;
+  const belowBaseline = em * DEFAULT_DESCENT_FLOOR;
+  const box = textItemToDisplayedBox(
+    [em, 0, 0, em, 100, baselineY],
+    40,
+    em,
+    ascentRatio,
+    letterCrop,
+    0,
+    descentRatio
+  );
+  const user = displayedToUserSpace(box, letterCrop, 0);
+
+  expect(box.y).toBeCloseTo(letterCrop.height - baselineY - em * ascentRatio);
+  expect(box.height).toBeCloseTo(em * ascentRatio + belowBaseline);
+  expect(box.fontSize).toBeCloseTo(em);
+  expect(user.y).toBeCloseTo(baselineY - belowBaseline);
+  expect(user.height).toBeCloseTo(em * ascentRatio + belowBaseline);
+  expect(user.y + user.height - em * ascentRatio).toBeCloseTo(baselineY);
 });

@@ -12,10 +12,12 @@ import type {
 } from "@/components/editor/overlay-gestures";
 import { OverlayObject } from "@/components/editor/overlay-object";
 import { OverlayPreviews } from "@/components/editor/overlay-previews";
+import { PdfTextLayer } from "@/components/editor/pdf-text-layer";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import {
   createSignatureObject,
   createTextObject,
+  hitTestPdfText,
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
@@ -33,6 +35,7 @@ export const EditorOverlay = ({
 }) => {
   const tool = useEditorStore((state) => state.tool);
   const selectedObjectIds = useEditorStore((state) => state.selectedObjectIds);
+  const selectedPdfTextId = useEditorStore((state) => state.selectedPdfTextId);
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
   const shapeStyle = useEditorStore((state) => state.shapeStyle);
@@ -46,6 +49,7 @@ export const EditorOverlay = ({
   const gestureRef = useRef<Gesture | null>(null);
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
   const [draft, setDraft] = useState<OverlayDraft | null>(null);
   const [previewPoint, setPreviewPoint] = useState<Point | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -147,6 +151,14 @@ export const EditorOverlay = ({
         }
 
         if (event.target === event.currentTarget) {
+          if (tool === "select") {
+            const hit = hitTestPdfText(page.pdfTextObjects, point);
+            if (hit) {
+              editorStore.selectPdfText(hit.id);
+              setEditingId(null);
+              return;
+            }
+          }
           editorStore.clearSelection();
           setEditingId(null);
         }
@@ -156,7 +168,20 @@ export const EditorOverlay = ({
           setPreviewPoint(toPage(event));
         }
       }}
-      onPointerMove={onPointerMove}
+      onPointerLeave={() => {
+        setHoveredPdfTextId(null);
+      }}
+      onPointerMove={(event) => {
+        onPointerMove(event);
+        if (tool !== "select" || gestureRef.current) {
+          return;
+        }
+        const hit = hitTestPdfText(page.pdfTextObjects, toPage(event));
+        const nextId = hit?.id ?? null;
+        setHoveredPdfTextId((current) =>
+          current === nextId ? current : nextId
+        );
+      }}
       onPointerUp={onPointerUp}
       ref={rootRef}
     >
@@ -169,6 +194,12 @@ export const EditorOverlay = ({
         }}
         ref={imageInputRef}
         type="file"
+      />
+      <PdfTextLayer
+        hoveredId={hoveredPdfTextId}
+        objects={page.pdfTextObjects}
+        selectedId={selectedPdfTextId}
+        zoom={zoom}
       />
       {page.objects.map((object) => (
         <OverlayObject
