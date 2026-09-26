@@ -1,7 +1,12 @@
 import { expect, test } from "vitest";
 
 import { resizeRotatedBox, rotatePoint } from "@/lib/editor/coordinates";
-import { scaleObjectToBox } from "@/lib/editor/object-utils";
+import {
+  boundsFromPoints,
+  scaleObjectToBox,
+  scaleSignaturePoints,
+  SIGNATURE_PLACE_SIZE,
+} from "@/lib/editor/object-utils";
 import { EDITOR_OBJECT_SOURCE } from "@/lib/editor/types";
 import type { DrawingObject, TextObject } from "@/lib/editor/types";
 
@@ -130,6 +135,30 @@ test("resize then scale keeps the opposite corner fixed and points inside", () =
   );
   expect(next.x).toBeCloseTo(opposite.x);
   expect(next.y).toBeCloseTo(opposite.y);
+});
+
+test("scaleSignaturePoints centers a bottom-right stroke in the place box", () => {
+  const points = [
+    { x: 300, y: 100 },
+    { x: 400, y: 140 },
+  ];
+  const scaled = scaleSignaturePoints(points, SIGNATURE_PLACE_SIZE);
+  const bounds = boundsFromPoints(scaled);
+
+  expect(bounds.x + bounds.width / 2).toBeCloseTo(
+    SIGNATURE_PLACE_SIZE.width / 2
+  );
+  expect(bounds.y + bounds.height / 2).toBeCloseTo(
+    SIGNATURE_PLACE_SIZE.height / 2
+  );
+  expect(bounds.x).toBeGreaterThanOrEqual(1);
+  expect(bounds.y).toBeGreaterThanOrEqual(1);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(
+    SIGNATURE_PLACE_SIZE.width - 1
+  );
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(
+    SIGNATURE_PLACE_SIZE.height - 1
+  );
 });
 
 test("scaleObjectToBox scales text font size with height", () => {
