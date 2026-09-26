@@ -157,16 +157,28 @@ export const createDrawingObject = (
 };
 
 export const SIGNATURE_PLACE_SIZE = { height: 48, width: 160 } as const;
+const PLACED_SIGNATURE_STROKE_WIDTH = 2;
+const STROKE_HALF_WIDTH = PLACED_SIGNATURE_STROKE_WIDTH / 2;
 
 export const scaleSignaturePoints = (
   points: readonly Point[],
   size: Size
 ): Point[] => {
-  const maxX = Math.max(...points.map((item) => item.x), 1);
-  const maxY = Math.max(...points.map((item) => item.y), 1);
+  const bounds = boundsFromPoints(points);
+  const availableWidth = Math.max(1, size.width - STROKE_HALF_WIDTH * 2);
+  const availableHeight = Math.max(1, size.height - STROKE_HALF_WIDTH * 2);
+  const scale = Math.min(
+    availableWidth / bounds.width,
+    availableHeight / bounds.height
+  );
+  const drawnWidth = bounds.width * scale;
+  const drawnHeight = bounds.height * scale;
+  const offsetX = STROKE_HALF_WIDTH + (availableWidth - drawnWidth) / 2;
+  const offsetY = STROKE_HALF_WIDTH + (availableHeight - drawnHeight) / 2;
+
   return points.map((item) => ({
-    x: (item.x / maxX) * size.width,
-    y: (item.y / maxY) * size.height,
+    x: (item.x - bounds.x) * scale + offsetX,
+    y: (item.y - bounds.y) * scale + offsetY,
   }));
 };
 
