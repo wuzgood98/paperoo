@@ -26,7 +26,9 @@ import {
   displayedPointToUserSpace,
   displayedToUserSpace,
   normalizeRotation,
+  textBaselineY,
 } from "@/lib/editor/coordinates";
+import { fittedPdfTextBox, isPdfTextDirty } from "@/lib/editor/object-utils";
 import type {
   DrawingObject,
   EditorDocument,
@@ -36,12 +38,14 @@ import type {
   FontWeight,
   HighlightObject,
   ImageObject,
+  PdfTextObject,
   Point,
   ShapeObject,
   SignatureObject,
   TextObject,
 } from "@/lib/editor/types";
 import { FONT_FILES, wrapText } from "@/lib/fonts/measure-text";
+import { resolvePdfFont } from "@/lib/pdf/extract-text";
 
 export interface ExportAsset {
   bytes: Uint8Array;
@@ -157,6 +161,60 @@ const drawTextObject = async (
     });
   }
   page.pushOperators(popGraphicsState());
+};
+
+const REPLACEMENT_TEXT_COLOR = "#111827";
+
+const drawDirtyPdfText = async (
+  page: PDFPage,
+  object: PdfTextObject,
+  editorPage: EditorPage,
+  fonts: Map<string, PDFFont>,
+  doc: PDFDocument,
+  fontBytes: Record<string, Uint8Array>
+): Promise<void> => {
+  const family = object.fontFamily ?? resolvePdfFont();
+  const size = object.fontSize ?? object.height;
+  const key = fontKey(family, 400, false);
+  let font = fonts.get(key);
+  if (!font) {
+    const bytes = fontBytes[key];
+    if (bytes) {
+      font = await doc.embedFont(bytes, { subset: true });
+    } else if (family === "serif") {
+      font = await doc.embedFont(StandardFonts.TimesRoman);
+    } else if (family === "mono") {
+      font = await doc.embedFont(StandardFonts.Courier);
+    } else {
+      font = await doc.embedFont(StandardFonts.Helvetica);
+    }
+    fonts.set(key, font);
+  }
+
+  const user = displayedToUserSpace(
+    fittedPdfTextBox(object, font.widthOfTextAtSize(object.text, size)),
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  // White cover leaves the original operators in the page stream. It fails on
+  // non-white and image backgrounds. Width grows with a longer replacement so
+  // the extra glyphs stay on a white field.
+  page.drawRectangle({
+    color: rgb(1, 1, 1),
+    height: user.height,
+    width: user.width,
+    x: user.x,
+    y: user.y,
+  });
+
+  const ascent = font.heightAtSize(size, { descender: false });
+  page.drawText(object.text, {
+    color: color(REPLACEMENT_TEXT_COLOR),
+    font,
+    size,
+    x: user.x,
+    y: user.y + textBaselineY(user.height, ascent),
+  });
 };
 
 const drawImageObject = async (
@@ -375,6 +433,20 @@ export const exportDocument = async (
 
     const fonts = new Map<string, PDFFont>();
     const images = new Map<string, PDFImage>();
+    for (const object of editorPage.pdfTextObjects) {
+      if (!isPdfTextDirty(object)) {
+        continue;
+      }
+      // oxlint-disable-next-line eslint/no-await-in-loop -- font cache is filled in order
+      await drawDirtyPdfText(
+        page,
+        object,
+        editorPage,
+        fonts,
+        output,
+        input.fontBytes
+      );
+    }
     for (const object of editorPage.objects) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- font and image caches are filled in order
       await drawObject(page, object, editorPage, {

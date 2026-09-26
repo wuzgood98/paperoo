@@ -1,19 +1,24 @@
 "use client";
 
 import { ColorField } from "@/components/editor/color-field";
+import { ToolbarTip } from "@/components/editor/editor-toolbar";
+import { PdfTextInspector } from "@/components/editor/pdf-text-inspector";
+import { FONT_FAMILIES, fontFamilyFromSelect } from "@/components/editor/utils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { findPage, findPdfText } from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
-import type { FontFamily, TextAlign } from "@/lib/editor/types";
+import type { TextAlign } from "@/lib/editor/types";
 
 const TEXT_ALIGNS: TextAlign[] = ["left", "center", "right"];
-
-const fontFamilyFromSelect = (value: string): FontFamily => {
-  if (value === "serif" || value === "mono") {
-    return value;
-  }
-  return "sans";
-};
 
 export const InspectorBar = () => {
   const selected = useEditorStore((state) => {
@@ -23,6 +28,15 @@ export const InspectorBar = () => {
     const [id] = state.selectedObjectIds;
     return page?.objects.find((object) => object.id === id);
   });
+  const selectedPdfText = useEditorStore((state) =>
+    findPdfText(
+      findPage(state.document.pages, state.currentPageId),
+      state.selectedPdfTextId
+    )
+  );
+  if (selectedPdfText) {
+    return <PdfTextInspector object={selectedPdfText} />;
+  }
 
   if (!selected) {
     return null;
@@ -32,66 +46,82 @@ export const InspectorBar = () => {
     <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
       {selected.type === "text" ? (
         <>
-          <select
-            className="border-input h-7 rounded-md border bg-transparent px-2 text-xs"
-            onChange={(event) =>
-              editorStore.patchSelected((object) =>
-                object.type === "text"
-                  ? {
-                      ...object,
-                      fontFamily: fontFamilyFromSelect(event.target.value),
-                    }
-                  : object
-              )
-            }
-            value={selected.fontFamily}
-          >
-            <option value="sans">Sans</option>
-            <option value="serif">Serif</option>
-            <option value="mono">Mono</option>
-          </select>
-          <input
-            className="border-input h-7 w-14 rounded-md border px-2 text-xs"
-            min={8}
-            onChange={(event) =>
-              editorStore.patchSelected((object) =>
-                object.type === "text"
-                  ? { ...object, fontSize: Number(event.target.value) }
-                  : object
-              )
-            }
-            type="number"
-            value={selected.fontSize}
-          />
-          <Button
-            onClick={() =>
-              editorStore.patchSelected((object) =>
-                object.type === "text"
-                  ? {
-                      ...object,
-                      fontWeight: object.fontWeight === 700 ? 400 : 700,
-                    }
-                  : object
-              )
-            }
-            size="xs"
-            variant={selected.fontWeight === 700 ? "secondary" : "ghost"}
-          >
-            B
-          </Button>
-          <Button
-            onClick={() =>
-              editorStore.patchSelected((object) =>
-                object.type === "text"
-                  ? { ...object, italic: !object.italic }
-                  : object
-              )
-            }
-            size="xs"
-            variant={selected.italic ? "secondary" : "ghost"}
-          >
-            I
-          </Button>
+          <div className="flex items-center gap-2">
+            <Select
+              onValueChange={(value) =>
+                editorStore.patchSelected((object) =>
+                  object.type === "text"
+                    ? {
+                        ...object,
+                        fontFamily: fontFamilyFromSelect(value ?? "sans"),
+                      }
+                    : object
+                )
+              }
+              value={selected.fontFamily}
+              items={FONT_FAMILIES}
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="Select a font family" />
+              </SelectTrigger>
+              <SelectContent>
+                {FONT_FAMILIES.map(({ label, value }) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              min={8}
+              onValueChange={(value) =>
+                editorStore.patchSelected((object) =>
+                  object.type === "text"
+                    ? { ...object, fontSize: Number(value) }
+                    : object
+                )
+              }
+              type="number"
+              value={selected.fontSize}
+              className="w-24"
+            />
+          </div>
+          <ToolbarTip label="Bold">
+            <Button
+              onClick={() =>
+                editorStore.patchSelected((object) =>
+                  object.type === "text"
+                    ? {
+                        ...object,
+                        fontWeight: object.fontWeight === 700 ? 400 : 700,
+                      }
+                    : object
+                )
+              }
+              size="xs"
+              variant={selected.fontWeight === 700 ? "secondary" : "ghost"}
+              aria-label="Bold"
+            >
+              B
+            </Button>
+          </ToolbarTip>
+          <ToolbarTip label="Italic">
+            <Button
+              onClick={() =>
+                editorStore.patchSelected((object) =>
+                  object.type === "text"
+                    ? { ...object, italic: !object.italic }
+                    : object
+                )
+              }
+              size="xs"
+              variant={selected.italic ? "secondary" : "ghost"}
+              decoration="italic"
+              aria-label="Italic"
+            >
+              I
+            </Button>
+          </ToolbarTip>
           {TEXT_ALIGNS.map((align) => (
             <Button
               key={align}

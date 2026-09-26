@@ -1,6 +1,5 @@
 import type {
   CropBox,
-  EditorObject,
   PageRotation,
   Point,
   Rect,
@@ -151,6 +150,148 @@ export const displayedPointToUserSpace = (
   return { x: box.x, y: box.y };
 };
 
+export const DEFAULT_ASCENT_RATIO = 0.8;
+export const DEFAULT_DESCENT_FLOOR = 0.25;
+
+export const textDescentBelowBaseline = (
+  em: number,
+  ascentRatio: number,
+  descentRatio: number
+): number =>
+  em * Math.max(1 - ascentRatio, Math.abs(descentRatio), DEFAULT_DESCENT_FLOOR);
+
+export const userPointToDisplayed = (
+  point: Point,
+  crop: CropBox,
+  rotate: PageRotation
+): Point => {
+  switch (rotate) {
+    case 90: {
+      return { x: point.y - crop.y, y: point.x - crop.x };
+    }
+    case 180: {
+      return {
+        x: crop.x + crop.width - point.x,
+        y: point.y - crop.y,
+      };
+    }
+    case 270: {
+      return {
+        x: crop.y + crop.height - point.y,
+        y: crop.x + crop.width - point.x,
+      };
+    }
+    default: {
+      return {
+        x: point.x - crop.x,
+        y: crop.y + crop.height - point.y,
+      };
+    }
+  }
+};
+
+export const userBoxToDisplayed = (
+  box: Rect,
+  crop: CropBox,
+  rotate: PageRotation
+): Rect => {
+  switch (rotate) {
+    case 90: {
+      return {
+        height: box.width,
+        width: box.height,
+        x: box.y - crop.y,
+        y: box.x - crop.x,
+      };
+    }
+    case 180: {
+      return {
+        height: box.height,
+        width: box.width,
+        x: crop.x + crop.width - box.x - box.width,
+        y: box.y - crop.y,
+      };
+    }
+    case 270: {
+      return {
+        height: box.width,
+        width: box.height,
+        x: crop.y + crop.height - box.y - box.height,
+        y: crop.x + crop.width - box.x - box.width,
+      };
+    }
+    default: {
+      return {
+        height: box.height,
+        width: box.width,
+        x: box.x - crop.x,
+        y: crop.y + crop.height - box.y - box.height,
+      };
+    }
+  }
+};
+
+export type TextItemTransform = readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
+
+export interface DisplayedTextBox extends Rect {
+  fontSize: number;
+  rotation: number;
+}
+
+export const textItemToDisplayedBox = (
+  transform: TextItemTransform,
+  userWidth: number,
+  userHeight: number,
+  ascentRatio: number,
+  crop: CropBox,
+  sourceRotate: PageRotation,
+  descentRatio = 0
+): DisplayedTextBox => {
+  const ratio =
+    Number.isFinite(ascentRatio) && ascentRatio > 0
+      ? ascentRatio
+      : DEFAULT_ASCENT_RATIO;
+  const descent = Number.isFinite(descentRatio) ? descentRatio : 0;
+  const em = Math.abs(userHeight);
+  const ascent = em * ratio;
+  const belowBaseline = textDescentBelowBaseline(em, ratio, descent);
+  const baseline = { x: transform[4], y: transform[5] };
+  const userBox: Rect = {
+    height: ascent + belowBaseline,
+    width: Math.abs(userWidth),
+    x: baseline.x,
+    y: baseline.y - belowBaseline,
+  };
+  const displayed = userBoxToDisplayed(userBox, crop, sourceRotate);
+  const advance = userPointToDisplayed(
+    { x: baseline.x + transform[0], y: baseline.y + transform[1] },
+    crop,
+    sourceRotate
+  );
+  const origin = userPointToDisplayed(baseline, crop, sourceRotate);
+  const rotation =
+    (Math.atan2(advance.y - origin.y, advance.x - origin.x) * 180) / Math.PI;
+
+  return {
+    ...displayed,
+    fontSize: em,
+    rotation,
+  };
+};
+
+export const pointInRect = (point: Point, box: Rect): boolean =>
+  point.x >= box.x &&
+  point.x <= box.x + box.width &&
+  point.y >= box.y &&
+  point.y <= box.y + box.height;
+
 export type Ctm = readonly [number, number, number, number, number, number];
 
 export const multiplyCtm = (left: Ctm, right: Ctm): Ctm => [
@@ -259,10 +400,13 @@ export const resizeRotatedBox = (
   };
 };
 
-export const objectWrapperStyle = (object: EditorObject, zoom: number) => ({
+export const objectWrapperStyle = (
+  object: Rect & { opacity?: number; rotation: number },
+  zoom: number
+) => ({
   height: pageToCss(object.height, zoom),
   left: pageToCss(object.x, zoom),
-  opacity: object.opacity,
+  opacity: object.opacity ?? 1,
   top: pageToCss(object.y, zoom),
   transform: `rotate(${object.rotation}deg)`,
   width: pageToCss(object.width, zoom),

@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 interface ButtonProps extends useRender.ComponentProps<"button"> {
+  decoration?: VariantProps<typeof buttonVariants>["decoration"];
   variant?: VariantProps<typeof buttonVariants>["variant"];
   size?: VariantProps<typeof buttonVariants>["size"];
   loading?: boolean;
@@ -18,6 +19,7 @@ interface ButtonProps extends useRender.ComponentProps<"button"> {
 
 export const Button = ({
   className,
+  decoration,
   variant,
   size,
   render,
@@ -45,7 +47,7 @@ export const Button = ({
       </>
     ),
     className: cn(
-      buttonVariants({ className, size, variant }),
+      buttonVariants({ className, decoration, size, variant }),
       pressable && "editor-pressable"
     ),
     "data-loading": loading ? "" : undefined,

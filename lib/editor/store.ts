@@ -18,6 +18,7 @@ import { createId } from "@/lib/editor/ids";
 import {
   findObject,
   findPage,
+  findPdfText,
   mapPageObjects,
   removeObjects,
   updateObject,
@@ -41,6 +42,7 @@ import type {
   ImageAsset,
   ImageMimeType,
   PageRotation,
+  PdfTextObject,
   ShapeStyleDefaults,
   TextStyleDefaults,
   ZoomMode,
@@ -60,6 +62,7 @@ export interface EditorStoreState {
   highlightColor: string;
   isExporting: boolean;
   selectedObjectIds: readonly string[];
+  selectedPdfTextId: string | null;
   shapeStyle: ShapeStyleDefaults;
   status: EditorStatus;
   textStyle: TextStyleDefaults;
@@ -85,6 +88,7 @@ const initialState = (): EditorStoreState => ({
   highlightColor: DEFAULT_HIGHLIGHT_COLOR,
   isExporting: false,
   selectedObjectIds: [],
+  selectedPdfTextId: null,
   shapeStyle: { ...DEFAULT_SHAPE_STYLE },
   status: "idle",
   textStyle: { ...DEFAULT_TEXT_STYLE },
@@ -172,6 +176,7 @@ export const editorStore = {
         selectedObjectIds: select
           ? [object.id]
           : internal.state.selectedObjectIds,
+        selectedPdfTextId: select ? null : internal.state.selectedPdfTextId,
         tool: "select",
       };
     }, true);
@@ -188,7 +193,7 @@ export const editorStore = {
   },
 
   clearSelection: (): void => {
-    setState({ selectedObjectIds: [] });
+    setState({ selectedObjectIds: [], selectedPdfTextId: null });
   },
 
   commitObject: (
@@ -251,6 +256,31 @@ export const editorStore = {
   getAssets: (): ReadonlyMap<string, ImageAsset> => internal.assets,
 
   getState: (): EditorStoreState => internal.state,
+
+  patchPdfText: (updater: (object: PdfTextObject) => PdfTextObject): void => {
+    const pageId = internal.state.currentPageId;
+    const objectId = internal.state.selectedPdfTextId;
+    if (!pageId || !objectId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: internal.state.document.pages.map((page) =>
+            page.id === pageId
+              ? {
+                  ...page,
+                  pdfTextObjects: page.pdfTextObjects.map((object) =>
+                    object.id === objectId ? updater(object) : object
+                  ),
+                }
+              : page
+          ),
+        },
+      };
+    }, true);
+  },
 
   patchSelected: (updater: (object: EditorObject) => EditorObject): void => {
     const pageId = internal.state.currentPageId;
@@ -355,6 +385,7 @@ export const editorStore = {
       errorMessage: null,
       fileName,
       selectedObjectIds: [],
+      selectedPdfTextId: null,
       status: "ready",
       tool: "select",
       zoomMode: "fit-page",
@@ -388,7 +419,19 @@ export const editorStore = {
   },
 
   selectObjects: (objectIds: readonly string[]): void => {
-    setState({ selectedObjectIds: objectIds, tool: "select" });
+    setState({
+      selectedObjectIds: objectIds,
+      selectedPdfTextId: null,
+      tool: "select",
+    });
+  },
+
+  selectPdfText: (objectId: string | null): void => {
+    setState({
+      selectedObjectIds: [],
+      selectedPdfTextId: objectId,
+      tool: "select",
+    });
   },
 
   selectedObject: (): EditorObject | undefined => {
@@ -400,8 +443,15 @@ export const editorStore = {
     return findObject(page, id);
   },
 
+  selectedPdfText: (): PdfTextObject | undefined =>
+    findPdfText(currentPage(), internal.state.selectedPdfTextId),
+
   setCurrentPage: (pageId: string): void => {
-    setState({ currentPageId: pageId, selectedObjectIds: [] });
+    setState({
+      currentPageId: pageId,
+      selectedObjectIds: [],
+      selectedPdfTextId: null,
+    });
     if (internal.state.zoomMode !== "custom") {
       editorStore.recomputeFitZoom();
     }
@@ -435,6 +485,7 @@ export const editorStore = {
           : (pages[0]?.id ?? null),
         document: { pages },
         selectedObjectIds: [],
+        selectedPdfTextId: null,
       };
     }, recordHistory);
   },
@@ -458,6 +509,8 @@ export const editorStore = {
     setState({
       selectedObjectIds:
         tool === "select" ? internal.state.selectedObjectIds : [],
+      selectedPdfTextId:
+        tool === "select" ? internal.state.selectedPdfTextId : null,
       tool,
     });
   },
