@@ -15,7 +15,7 @@ GlobalWorkerOptions.workerSrc = pathToFileURL(
 
 export const loadPdfJsDocument = (data: Uint8Array) =>
   getDocument({
-    data,
+    data: Uint8Array.from(data),
     standardFontDataUrl: `${
       pathToFileURL(
         path.join(process.cwd(), "node_modules/pdfjs-dist/standard_fonts")

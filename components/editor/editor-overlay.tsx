@@ -12,11 +12,13 @@ import type {
 } from "@/components/editor/overlay-gestures";
 import { OverlayObject } from "@/components/editor/overlay-object";
 import { OverlayPreviews } from "@/components/editor/overlay-previews";
+import { PdfImageLayer } from "@/components/editor/pdf-image-layer";
 import { PdfTextLayer } from "@/components/editor/pdf-text-layer";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import {
   createSignatureObject,
   createTextObject,
+  hitTestPdfImage,
   hitTestPdfText,
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
@@ -24,6 +26,7 @@ import {
 import { pendingSignature } from "@/lib/editor/pending";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage, Point } from "@/lib/editor/types";
+import { ensurePdfImagePreview } from "@/lib/pdf/pdf-image-preview";
 import { cn } from "@/lib/utils";
 
 export const EditorOverlay = ({
@@ -35,6 +38,9 @@ export const EditorOverlay = ({
 }) => {
   const tool = useEditorStore((state) => state.tool);
   const selectedObjectIds = useEditorStore((state) => state.selectedObjectIds);
+  const selectedPdfImageId = useEditorStore(
+    (state) => state.selectedPdfImageId
+  );
   const selectedPdfTextId = useEditorStore((state) => state.selectedPdfTextId);
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
@@ -49,6 +55,9 @@ export const EditorOverlay = ({
   const gestureRef = useRef<Gesture | null>(null);
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [hoveredPdfImageId, setHoveredPdfImageId] = useState<string | null>(
+    null
+  );
   const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
   const [draft, setDraft] = useState<OverlayDraft | null>(null);
   const [previewPoint, setPreviewPoint] = useState<Point | null>(null);
@@ -152,9 +161,16 @@ export const EditorOverlay = ({
 
         if (event.target === event.currentTarget) {
           if (tool === "select") {
-            const hit = hitTestPdfText(page.pdfTextObjects, point);
-            if (hit) {
-              editorStore.selectPdfText(hit.id);
+            const textHit = hitTestPdfText(page.pdfTextObjects, point);
+            if (textHit) {
+              editorStore.selectPdfText(textHit.id);
+              setEditingId(null);
+              return;
+            }
+            const imageHit = hitTestPdfImage(page.pdfImageObjects, point);
+            if (imageHit) {
+              editorStore.selectPdfImage(imageHit.id);
+              void ensurePdfImagePreview(imageHit, page.sourceIndex);
               setEditingId(null);
               return;
             }
@@ -169,6 +185,7 @@ export const EditorOverlay = ({
         }
       }}
       onPointerLeave={() => {
+        setHoveredPdfImageId(null);
         setHoveredPdfTextId(null);
       }}
       onPointerMove={(event) => {
@@ -176,10 +193,18 @@ export const EditorOverlay = ({
         if (tool !== "select" || gestureRef.current) {
           return;
         }
-        const hit = hitTestPdfText(page.pdfTextObjects, toPage(event));
-        const nextId = hit?.id ?? null;
+        const point = toPage(event);
+        const textHit = hitTestPdfText(page.pdfTextObjects, point);
+        const nextTextId = textHit?.id ?? null;
         setHoveredPdfTextId((current) =>
-          current === nextId ? current : nextId
+          current === nextTextId ? current : nextTextId
+        );
+        const imageHit = textHit
+          ? undefined
+          : hitTestPdfImage(page.pdfImageObjects, point);
+        const nextImageId = imageHit?.id ?? null;
+        setHoveredPdfImageId((current) =>
+          current === nextImageId ? current : nextImageId
         );
       }}
       onPointerUp={onPointerUp}
@@ -194,6 +219,17 @@ export const EditorOverlay = ({
         }}
         ref={imageInputRef}
         type="file"
+      />
+      <PdfImageLayer
+        boundsRef={boundsRef}
+        gestureRef={gestureRef}
+        hoveredId={hoveredPdfImageId}
+        nodeRefs={nodeRefs}
+        objects={page.pdfImageObjects}
+        rootRef={rootRef}
+        selectedId={selectedPdfImageId}
+        toPage={toPage}
+        zoom={zoom}
       />
       <PdfTextLayer
         hoveredId={hoveredPdfTextId}

@@ -1,3 +1,4 @@
+import { objectCenter, rotatePoint } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
 import {
   DEFAULT_DRAW_STYLE,
@@ -15,6 +16,7 @@ import type {
   HighlightObject,
   ImageMimeType,
   ImageObject,
+  PdfImageObject,
   PdfTextObject,
   Point,
   Rect,
@@ -46,10 +48,48 @@ export const findPdfText = (
 ): PdfTextObject | undefined =>
   page?.pdfTextObjects.find((object) => object.id === objectId);
 
+export const findPdfImage = (
+  page: EditorPage | undefined,
+  objectId: string | null
+): PdfImageObject | undefined =>
+  page?.pdfImageObjects.find((object) => object.id === objectId);
+
 export const isPdfTextDirty = (object: PdfTextObject): boolean =>
   object.text !== object.originalText ||
   object.fontFamily !== object.originalFontFamily ||
   object.fontSize !== object.originalFontSize;
+
+export const isPdfImageDirty = (object: PdfImageObject): boolean =>
+  object.deleted ||
+  object.replacementAssetId !== null ||
+  object.x !== object.originalX ||
+  object.y !== object.originalY ||
+  object.width !== object.originalWidth ||
+  object.height !== object.originalHeight ||
+  object.rotation !== object.originalRotation;
+
+export const pdfImageOriginalBox = (
+  object: PdfImageObject
+): Rect & { rotation: number } => ({
+  height: object.originalHeight,
+  rotation: object.originalRotation,
+  width: object.originalWidth,
+  x: object.originalX,
+  y: object.originalY,
+});
+
+export const pointInRotatedRect = (
+  point: Point,
+  box: Rect & { rotation: number }
+): boolean => {
+  const local = rotatePoint(point, objectCenter(box), -box.rotation);
+  return (
+    local.x >= box.x &&
+    local.x <= box.x + box.width &&
+    local.y >= box.y &&
+    local.y <= box.y + box.height
+  );
+};
 
 export const fittedPdfTextWidth = (
   originalWidth: number,
@@ -87,6 +127,34 @@ export const hitTestPdfText = (
   }
   return undefined;
 };
+
+export const hitTestPdfImage = (
+  objects: readonly PdfImageObject[],
+  point: Point
+): PdfImageObject | undefined => {
+  for (const object of objects.toReversed()) {
+    if (
+      !object.deleted &&
+      object.width > 0 &&
+      object.height > 0 &&
+      pointInRotatedRect(point, object)
+    ) {
+      return object;
+    }
+  }
+  return undefined;
+};
+
+export const mapPagePdfImages = (
+  pages: readonly EditorPage[],
+  pageId: string,
+  mapper: (objects: PdfImageObject[]) => PdfImageObject[]
+): EditorPage[] =>
+  pages.map((page) =>
+    page.id === pageId
+      ? { ...page, pdfImageObjects: mapper(page.pdfImageObjects) }
+      : page
+  );
 
 export const mapPageObjects = (
   pages: readonly EditorPage[],

@@ -10,6 +10,22 @@ import {
 } from "@/lib/editor/types";
 import { bindHotkeys } from "@/lib/hotkeys";
 
+const nudgeSelected = (deltaX: number, deltaY: number): void => {
+  if (editorStore.getState().selectedPdfImageId) {
+    editorStore.patchPdfImage((object) => ({
+      ...object,
+      x: object.x + deltaX,
+      y: object.y + deltaY,
+    }));
+    return;
+  }
+  editorStore.patchSelected((object) => ({
+    ...object,
+    x: object.x + deltaX,
+    y: object.y + deltaY,
+  }));
+};
+
 export const EditorHotkeys = () => {
   useEffect(
     () =>
@@ -39,10 +55,7 @@ export const EditorHotkeys = () => {
             const distance = event.shiftKey
               ? NUDGE_DISTANCE_SHIFT
               : NUDGE_DISTANCE;
-            editorStore.patchSelected((object) => ({
-              ...object,
-              y: object.y - distance,
-            }));
+            nudgeSelected(0, -distance);
           },
           key: "ArrowUp",
         },
@@ -51,10 +64,7 @@ export const EditorHotkeys = () => {
             const distance = event.shiftKey
               ? NUDGE_DISTANCE_SHIFT
               : NUDGE_DISTANCE;
-            editorStore.patchSelected((object) => ({
-              ...object,
-              y: object.y + distance,
-            }));
+            nudgeSelected(0, distance);
           },
           key: "ArrowDown",
         },
@@ -63,10 +73,7 @@ export const EditorHotkeys = () => {
             const distance = event.shiftKey
               ? NUDGE_DISTANCE_SHIFT
               : NUDGE_DISTANCE;
-            editorStore.patchSelected((object) => ({
-              ...object,
-              x: object.x - distance,
-            }));
+            nudgeSelected(-distance, 0);
           },
           key: "ArrowLeft",
         },
@@ -75,10 +82,7 @@ export const EditorHotkeys = () => {
             const distance = event.shiftKey
               ? NUDGE_DISTANCE_SHIFT
               : NUDGE_DISTANCE;
-            editorStore.patchSelected((object) => ({
-              ...object,
-              x: object.x + distance,
-            }));
+            nudgeSelected(distance, 0);
           },
           key: "ArrowRight",
         },

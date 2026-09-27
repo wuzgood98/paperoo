@@ -143,6 +143,10 @@ export const EditorViewport = () => {
         }}
         onDrop={async (event) => {
           event.preventDefault();
+          const [file] = event.dataTransfer.files;
+          if (file?.type && file.type !== "application/pdf") {
+            return;
+          }
           await openPdfFromList(event.dataTransfer.files);
         }}
         ref={scrollerRef}

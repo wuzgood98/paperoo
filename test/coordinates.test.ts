@@ -4,6 +4,7 @@ import {
   centerRotateCtm,
   DEFAULT_DESCENT_FLOOR,
   displayedToUserSpace,
+  imageCtmToDisplayedBox,
   textItemToDisplayedBox,
   userPointToDisplayed,
   pageToScreen,
@@ -246,6 +247,32 @@ test("textItemToDisplayedBox covers a descent floor under a high-ascent run", ()
   expect(user.y).toBeCloseTo(baselineY - belowBaseline);
   expect(user.height).toBeCloseTo(em * ascentRatio + belowBaseline);
   expect(user.y + user.height - em * ascentRatio).toBeCloseTo(baselineY);
+});
+
+test("imageCtmToDisplayedBox maps a unit-square CTM into displayed space", () => {
+  const crop = { height: 792, width: 612, x: 0, y: 0 };
+  const box = imageCtmToDisplayedBox([80, 0, 0, 40, 72, 600], crop, 0);
+  expect(box).not.toBeNull();
+  expect(box?.width).toBeCloseTo(80);
+  expect(box?.height).toBeCloseTo(40);
+  expect(box?.x).toBeCloseTo(72);
+  expect(box?.y).toBeCloseTo(152);
+  expect(box?.rotation).toBeCloseTo(0);
+
+  const user = displayedToUserSpace(
+    box ?? { height: 0, width: 0, x: 0, y: 0 },
+    crop,
+    0
+  );
+  expect(user.x).toBeCloseTo(72);
+  expect(user.y).toBeCloseTo(600);
+  expect(user.width).toBeCloseTo(80);
+  expect(user.height).toBeCloseTo(40);
+});
+
+test("imageCtmToDisplayedBox skips a skewed CTM", () => {
+  const crop = { height: 792, width: 612, x: 0, y: 0 };
+  expect(imageCtmToDisplayedBox([80, 20, 10, 40, 72, 600], crop, 0)).toBeNull();
 });
 
 test("pixelSnapOffset lands left and top on the device-pixel grid", () => {

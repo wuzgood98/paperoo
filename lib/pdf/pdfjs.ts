@@ -3,6 +3,7 @@ import { GlobalWorkerOptions } from "pdfjs-dist";
 export {
   AnnotationMode,
   getDocument,
+  OPS,
   OutputScale,
   PasswordException,
   PixelsPerInch,

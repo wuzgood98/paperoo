@@ -53,8 +53,12 @@ export const ObjectView = ({
         <div className="relative h-full w-full">
           <Image
             alt=""
-            className="object-fill"
+            className="pointer-events-none object-fill [-webkit-user-drag:none]"
+            draggable={false}
             fill
+            onDragStart={(event) => {
+              event.preventDefault();
+            }}
             sizes="400px"
             src={asset.objectUrl}
             unoptimized

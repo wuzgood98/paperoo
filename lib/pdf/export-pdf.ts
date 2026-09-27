@@ -28,7 +28,12 @@ import {
   normalizeRotation,
   textBaselineY,
 } from "@/lib/editor/coordinates";
-import { fittedPdfTextBox, isPdfTextDirty } from "@/lib/editor/object-utils";
+import {
+  fittedPdfTextBox,
+  isPdfImageDirty,
+  isPdfTextDirty,
+  pdfImageOriginalBox,
+} from "@/lib/editor/object-utils";
 import type {
   DrawingObject,
   EditorDocument,
@@ -38,6 +43,7 @@ import type {
   FontWeight,
   HighlightObject,
   ImageObject,
+  PdfImageObject,
   PdfTextObject,
   Point,
   ShapeObject,
@@ -79,7 +85,7 @@ const color = (hex: string) => {
 
 const applyCtm = (
   page: PDFPage,
-  box: EditorObject,
+  box: { rotation: number },
   user: ReturnType<typeof displayedToUserSpace>
 ): void => {
   const ctm = centerRotateCtm(
@@ -217,25 +223,26 @@ const drawDirtyPdfText = async (
   });
 };
 
-const drawImageObject = async (
+const drawEmbeddedImage = async (
   page: PDFPage,
-  object: ImageObject,
+  object: { opacity: number; rotation: number },
   user: ReturnType<typeof displayedToUserSpace>,
+  assetId: string,
   assets: Record<string, ExportAsset>,
   images: Map<string, PDFImage>,
   doc: PDFDocument
 ): Promise<void> => {
-  const asset = assets[object.assetId];
+  const asset = assets[assetId];
   if (!asset) {
     return;
   }
-  let image = images.get(object.assetId);
+  let image = images.get(assetId);
   if (!image) {
     image =
       asset.mimeType === "image/jpeg"
         ? await doc.embedJpg(asset.bytes)
         : await doc.embedPng(asset.bytes);
-    images.set(object.assetId, image);
+    images.set(assetId, image);
   }
   applyCtm(page, object, user);
   page.drawImage(image, {
@@ -246,6 +253,72 @@ const drawImageObject = async (
     y: 0,
   });
   page.pushOperators(popGraphicsState());
+};
+
+const drawDirtyPdfImage = async (
+  page: PDFPage,
+  object: PdfImageObject,
+  editorPage: EditorPage,
+  assets: Record<string, ExportAsset>,
+  images: Map<string, PDFImage>,
+  doc: PDFDocument
+): Promise<void> => {
+  const original = displayedToUserSpace(
+    pdfImageOriginalBox(object),
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  applyCtm(page, { rotation: object.originalRotation }, original);
+  page.drawRectangle({
+    color: rgb(1, 1, 1),
+    height: original.height,
+    width: original.width,
+    x: 0,
+    y: 0,
+  });
+  page.pushOperators(popGraphicsState());
+
+  if (object.deleted) {
+    return;
+  }
+
+  const assetId = object.replacementAssetId ?? object.previewAssetId;
+  if (!assetId) {
+    return;
+  }
+  const current = displayedToUserSpace(
+    object,
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  await drawEmbeddedImage(
+    page,
+    { opacity: 1, rotation: object.rotation },
+    current,
+    assetId,
+    assets,
+    images,
+    doc
+  );
+};
+
+const drawImageObject = async (
+  page: PDFPage,
+  object: ImageObject,
+  user: ReturnType<typeof displayedToUserSpace>,
+  assets: Record<string, ExportAsset>,
+  images: Map<string, PDFImage>,
+  doc: PDFDocument
+): Promise<void> => {
+  await drawEmbeddedImage(
+    page,
+    object,
+    user,
+    object.assetId,
+    assets,
+    images,
+    doc
+  );
 };
 
 const drawStrokePoints = (
@@ -447,8 +520,22 @@ export const exportDocument = async (
         input.fontBytes
       );
     }
+    for (const object of editorPage.pdfImageObjects) {
+      if (!isPdfImageDirty(object)) {
+        continue;
+      }
+      // oxlint-disable-next-line react-doctor/async-await-in-loop  no-await-in-loop-- image cache is filled in order
+      await drawDirtyPdfImage(
+        page,
+        object,
+        editorPage,
+        input.assets,
+        images,
+        output
+      );
+    }
     for (const object of editorPage.objects) {
-      // oxlint-disable-next-line eslint/no-await-in-loop -- font and image caches are filled in order
+      // oxlint-disable-next-line eslint/no-await-in-loop  no-await-in-loop-- font and image caches are filled in order
       await drawObject(page, object, editorPage, {
         assets: input.assets,
         doc: output,

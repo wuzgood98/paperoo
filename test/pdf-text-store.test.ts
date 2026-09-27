@@ -30,6 +30,7 @@ const page = (): EditorPage => ({
   height: 792,
   id: "page-1",
   objects: [],
+  pdfImageObjects: [],
   pdfTextObjects: [pdfText()],
   rotation: 0,
   sourceIndex: 0,

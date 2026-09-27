@@ -133,6 +133,27 @@ export interface PdfTextObject {
   y: number;
 }
 
+export interface PdfImageObject {
+  deleted: boolean;
+  height: number;
+  id: string;
+  originalHeight: number;
+  originalRotation: number;
+  originalWidth: number;
+  originalX: number;
+  originalY: number;
+  pageId: string;
+  previewAssetId: string | null;
+  replacementAssetId: string | null;
+  rotation: number;
+  sourceId: string;
+  sourceIndex: number;
+  type: "pdf-image";
+  width: number;
+  x: number;
+  y: number;
+}
+
 export interface EditorPage {
   id: string;
   sourceIndex: number;
@@ -142,6 +163,7 @@ export interface EditorPage {
   sourceRotate: PageRotation;
   cropBox: CropBox;
   objects: EditorObject[];
+  pdfImageObjects: PdfImageObject[];
   pdfTextObjects: PdfTextObject[];
 }
 
