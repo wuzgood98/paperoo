@@ -1,6 +1,7 @@
 import { editorStore } from "@/lib/editor/store";
 import { FONT_FILES } from "@/lib/fonts/measure-text";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
+import { ensureDirtyPdfImageAssets } from "@/lib/pdf/pdf-image-preview";
 import { pdfSession } from "@/lib/pdf/session";
 
 const fetchBytes = async (url: string): Promise<ArrayBuffer> => {
@@ -35,6 +36,8 @@ export const runExport = async (): Promise<void> => {
         fontBytes[url] = buffer;
       }
     }
+
+    await ensureDirtyPdfImageAssets();
 
     const assets: Record<string, { buffer: ArrayBuffer; mimeType: string }> =
       {};

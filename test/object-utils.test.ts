@@ -5,12 +5,18 @@ import {
   boundsFromPoints,
   fittedPdfTextBox,
   fittedPdfTextWidth,
+  hitTestPdfImage,
+  isPdfImageDirty,
   scaleObjectToBox,
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
+import type {
+  PdfImageObject,
+  DrawingObject,
+  TextObject,
+} from "@/lib/editor/types";
 import { EDITOR_OBJECT_SOURCE } from "@/lib/editor/types";
-import type { DrawingObject, TextObject } from "@/lib/editor/types";
 
 const drawing = (overrides: Partial<DrawingObject> = {}): DrawingObject => ({
   height: 40,
@@ -197,4 +203,44 @@ test("scaleObjectToBox scales text font size with height", () => {
   expect(next.fontSize).toBe(32);
   expect(next.width).toBe(160);
   expect(next.height).toBe(80);
+});
+
+const pdfImage = (overrides: Partial<PdfImageObject> = {}): PdfImageObject => ({
+  deleted: false,
+  height: 40,
+  id: "img-1",
+  originalHeight: 40,
+  originalRotation: 0,
+  originalWidth: 80,
+  originalX: 72,
+  originalY: 152,
+  pageId: "page-1",
+  previewAssetId: null,
+  replacementAssetId: null,
+  rotation: 0,
+  sourceId: "Im0",
+  sourceIndex: 0,
+  type: "pdf-image",
+  width: 80,
+  x: 72,
+  y: 152,
+  ...overrides,
+});
+
+test("isPdfImageDirty is false until geometry, delete, or replace changes", () => {
+  expect(isPdfImageDirty(pdfImage())).toBe(false);
+  expect(isPdfImageDirty(pdfImage({ x: 90 }))).toBe(true);
+  expect(isPdfImageDirty(pdfImage({ deleted: true }))).toBe(true);
+  expect(isPdfImageDirty(pdfImage({ replacementAssetId: "a" }))).toBe(true);
+});
+
+test("hitTestPdfImage skips deleted images and hits the topmost box", () => {
+  const objects = [
+    pdfImage(),
+    pdfImage({ id: "img-2", sourceIndex: 1, x: 80, y: 160 }),
+  ];
+  expect(hitTestPdfImage(objects, { x: 90, y: 170 })?.id).toBe("img-2");
+  expect(
+    hitTestPdfImage([pdfImage({ deleted: true })], { x: 80, y: 160 })
+  ).toBeUndefined();
 });

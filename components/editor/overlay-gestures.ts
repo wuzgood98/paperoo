@@ -22,10 +22,13 @@ import type {
   DrawStyleDefaults,
   EditorObject,
   EditorTool,
+  PdfImageObject,
   Point,
   ShapeStyleDefaults,
 } from "@/lib/editor/types";
 import { readImageFile } from "@/lib/pdf/image-file";
+
+export type GestureTarget = EditorObject | PdfImageObject;
 
 export type OverlayDraft =
   | { kind: "draw"; points: Point[] }
@@ -35,15 +38,15 @@ export type Gesture =
   | {
       handle: ResizeHandle;
       kind: "resize";
-      object: EditorObject;
+      object: GestureTarget;
       start: Point;
     }
   | { kind: "draw"; points: Point[] }
-  | { kind: "drag"; object: EditorObject; start: Point; origin: Point }
+  | { kind: "drag"; object: GestureTarget; start: Point; origin: Point }
   | { kind: "rect"; start: Point }
   | {
       kind: "rotate";
-      object: EditorObject;
+      object: GestureTarget;
       startAngle: number;
       originRotation: number;
     };
@@ -108,7 +111,12 @@ export const useOverlayGestures = ({
     return screenToPage({ x: event.clientX, y: event.clientY }, bounds, zoom);
   };
 
-  const writeNodeBox = (object: EditorObject): void => {
+  const writeNodeBox = (
+    object: Pick<
+      GestureTarget,
+      "height" | "id" | "rotation" | "width" | "x" | "y"
+    >
+  ): void => {
     const node = nodeRefs.current.get(object.id);
     if (!node) {
       return;
@@ -121,7 +129,7 @@ export const useOverlayGestures = ({
     node.style.transform = `rotate(${object.rotation}deg)`;
   };
 
-  const finishGesture = (object: EditorObject | null): void => {
+  const finishGesture = (object: GestureTarget | null): void => {
     const gesture = gestureRef.current;
     gestureRef.current = null;
     if (!object || !gesture) {
@@ -138,6 +146,10 @@ export const useOverlayGestures = ({
       return;
     }
     if (gesture.kind === "rect") {
+      return;
+    }
+    if (object.type === "pdf-image") {
+      editorStore.commitPdfImage(object, true);
       return;
     }
     editorStore.commitObject(object.id, object, true);
@@ -170,7 +182,10 @@ export const useOverlayGestures = ({
         gesture.handle,
         point,
         {
-          lockAspect: event.shiftKey || gesture.object.type === "image",
+          lockAspect:
+            event.shiftKey ||
+            gesture.object.type === "image" ||
+            gesture.object.type === "pdf-image",
           minSize: MIN_OBJECT_SIZE,
         }
       );
@@ -232,10 +247,17 @@ export const useOverlayGestures = ({
         gesture.handle,
         point,
         {
-          lockAspect: event.shiftKey || gesture.object.type === "image",
+          lockAspect:
+            event.shiftKey ||
+            gesture.object.type === "image" ||
+            gesture.object.type === "pdf-image",
           minSize: MIN_OBJECT_SIZE,
         }
       );
+      if (gesture.object.type === "pdf-image") {
+        finishGesture({ ...gesture.object, ...nextBox });
+        return;
+      }
       finishGesture(scaleObjectToBox(gesture.object, nextBox));
       return;
     }

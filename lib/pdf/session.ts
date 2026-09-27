@@ -4,12 +4,18 @@ import type { EditorPage } from "@/lib/editor/types";
 import { MAX_PDF_BYTES, MAX_PDF_PAGES } from "@/lib/editor/types";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
 import {
+  extractPdfImageObjects,
+  toPdfImageOps,
+} from "@/lib/pdf/extract-images";
+import {
   extractPdfTextObjects,
   toExtractableTextContent,
 } from "@/lib/pdf/extract-text";
 import {
+  AnnotationMode,
   ensurePdfjsWorker,
   getDocument,
+  OPS,
   PasswordException,
   PDFJS_CMAP_URL,
   PDFJS_ICC_URL,
@@ -86,7 +92,10 @@ class PdfSession {
         }
         const viewport = page.getViewport({ scale: 1 });
         const { view } = page;
-        const textContent = await page.getTextContent();
+        const [textContent, operatorList] = await Promise.all([
+          page.getTextContent(),
+          page.getOperatorList({ annotationMode: AnnotationMode.DISABLE }),
+        ]);
         const cropBox = {
           height: view[3] - view[1],
           width: view[2] - view[0],
@@ -95,18 +104,24 @@ class PdfSession {
         };
         const id = createId();
         const sourceRotate = normalizeRotation(page.rotate);
+        const extractPage = {
+          cropBox,
+          id,
+          sourceRotate,
+        };
         const editorPage = {
           cropBox,
           height: viewport.height,
           id,
           objects: [],
+          pdfImageObjects: extractPdfImageObjects(
+            operatorList,
+            extractPage,
+            toPdfImageOps(OPS)
+          ),
           pdfTextObjects: extractPdfTextObjects(
             toExtractableTextContent(textContent),
-            {
-              cropBox,
-              id,
-              sourceRotate,
-            }
+            extractPage
           ),
           rotation: 0,
           sourceIndex: index,

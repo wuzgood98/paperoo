@@ -304,6 +304,67 @@ export const pointInRect = (point: Point, box: Rect): boolean =>
 
 export type Ctm = readonly [number, number, number, number, number, number];
 
+export const IDENTITY_CTM: Ctm = [1, 0, 0, 1, 0, 0];
+export const IMAGE_SKEW_EPSILON = 1e-3;
+export const IMAGE_MIN_AXIS = 1e-4;
+
+export const imageCtmToDisplayedBox = (
+  ctm: Ctm,
+  crop: CropBox,
+  sourceRotate: PageRotation
+): (Rect & { rotation: number }) | null => {
+  const [a, b, c, d, e, f] = ctm;
+  const widthLen = Math.hypot(a, b);
+  const heightLen = Math.hypot(c, d);
+  if (widthLen < IMAGE_MIN_AXIS || heightLen < IMAGE_MIN_AXIS) {
+    return null;
+  }
+  const dot = a * c + b * d;
+  if (Math.abs(dot) > IMAGE_SKEW_EPSILON * widthLen * heightLen) {
+    return null;
+  }
+
+  const bottomLeft = userPointToDisplayed({ x: e, y: f }, crop, sourceRotate);
+  const bottomRight = userPointToDisplayed(
+    { x: e + a, y: f + b },
+    crop,
+    sourceRotate
+  );
+  const topLeft = userPointToDisplayed(
+    { x: e + c, y: f + d },
+    crop,
+    sourceRotate
+  );
+  const topRight = userPointToDisplayed(
+    { x: e + a + c, y: f + b + d },
+    crop,
+    sourceRotate
+  );
+  const width = Math.hypot(
+    bottomRight.x - bottomLeft.x,
+    bottomRight.y - bottomLeft.y
+  );
+  const height = Math.hypot(topLeft.x - bottomLeft.x, topLeft.y - bottomLeft.y);
+  if (width < IMAGE_MIN_AXIS || height < IMAGE_MIN_AXIS) {
+    return null;
+  }
+
+  const rotation =
+    (Math.atan2(bottomRight.y - bottomLeft.y, bottomRight.x - bottomLeft.x) *
+      180) /
+    Math.PI;
+  const centerX = (bottomLeft.x + bottomRight.x + topLeft.x + topRight.x) / 4;
+  const centerY = (bottomLeft.y + bottomRight.y + topLeft.y + topRight.y) / 4;
+
+  return {
+    height,
+    rotation,
+    width,
+    x: centerX - width / 2,
+    y: centerY - height / 2,
+  };
+};
+
 export const multiplyCtm = (left: Ctm, right: Ctm): Ctm => [
   left[0] * right[0] + left[2] * right[1],
   left[1] * right[0] + left[3] * right[1],
