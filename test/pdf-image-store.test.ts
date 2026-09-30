@@ -56,8 +56,9 @@ test("committing a stale gesture box keeps the store preview", () => {
   }
   editorStore.commitPdfImage(
     pdfImageWithGestureBox(current, {
-      ...current,
-      previewAssetId: null,
+      height: current.height,
+      rotation: current.rotation,
+      width: current.width,
       x: 90,
       y: 160,
     }),
