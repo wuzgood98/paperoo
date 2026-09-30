@@ -7,6 +7,12 @@ import {
   fittedPdfTextWidth,
   hitTestPdfImage,
   isPdfImageDirty,
+  PDF_IMAGE_COVER_BLEED,
+  pdfImageCoverBox,
+  pdfImageOriginalBox,
+  pdfImageWithGestureBox,
+  shouldPaintPdfImageCover,
+  shouldPaintPdfImagePreview,
   scaleObjectToBox,
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
@@ -232,6 +238,56 @@ test("isPdfImageDirty is false until geometry, delete, or replace changes", () =
   expect(isPdfImageDirty(pdfImage({ x: 90 }))).toBe(true);
   expect(isPdfImageDirty(pdfImage({ deleted: true }))).toBe(true);
   expect(isPdfImageDirty(pdfImage({ replacementAssetId: "a" }))).toBe(true);
+});
+
+test("pdfImageCoverBox outsets the original box equally on each side", () => {
+  const object = pdfImage();
+  const original = pdfImageOriginalBox(object);
+  const cover = pdfImageCoverBox(object);
+  expect(cover.x).toBe(original.x - PDF_IMAGE_COVER_BLEED);
+  expect(cover.y).toBe(original.y - PDF_IMAGE_COVER_BLEED);
+  expect(cover.width).toBe(original.width + PDF_IMAGE_COVER_BLEED * 2);
+  expect(cover.height).toBe(original.height + PDF_IMAGE_COVER_BLEED * 2);
+  expect(cover.rotation).toBe(original.rotation);
+  expect(cover.x + cover.width / 2).toBeCloseTo(
+    original.x + original.width / 2
+  );
+  expect(cover.y + cover.height / 2).toBeCloseTo(
+    original.y + original.height / 2
+  );
+});
+
+test("PDF image cover and preview wait for pixels and stay off a clean selection", () => {
+  const clean = pdfImage();
+  expect(shouldPaintPdfImageCover(clean, null)).toBe(false);
+  expect(shouldPaintPdfImagePreview(clean, null)).toBe(false);
+  expect(shouldPaintPdfImageCover(clean, "img-1")).toBe(false);
+  expect(shouldPaintPdfImagePreview(clean, "img-1")).toBe(false);
+
+  const previewed = pdfImage({ previewAssetId: "preview-1" });
+  expect(shouldPaintPdfImageCover(previewed, null)).toBe(false);
+  expect(shouldPaintPdfImagePreview(previewed, null)).toBe(false);
+  expect(shouldPaintPdfImageCover(previewed, "img-1")).toBe(true);
+  expect(shouldPaintPdfImagePreview(previewed, "img-1")).toBe(true);
+
+  const moved = pdfImage({ previewAssetId: "preview-1", x: 90 });
+  expect(shouldPaintPdfImageCover(moved, null)).toBe(true);
+  expect(shouldPaintPdfImagePreview(moved, null)).toBe(true);
+
+  const deleted = pdfImage({ deleted: true });
+  expect(shouldPaintPdfImageCover(deleted, null)).toBe(true);
+  expect(shouldPaintPdfImagePreview(deleted, null)).toBe(false);
+});
+
+test("pdfImageWithGestureBox keeps the store preview when the gesture object is stale", () => {
+  const current = pdfImage({ previewAssetId: "preview-1" });
+  const gesture = pdfImage({ previewAssetId: null, x: 90, y: 160 });
+  const next = pdfImageWithGestureBox(current, gesture);
+  expect(next.previewAssetId).toBe("preview-1");
+  expect(next.x).toBe(90);
+  expect(next.y).toBe(160);
+  expect(next.originalX).toBe(72);
+  expect(next.originalY).toBe(152);
 });
 
 test("hitTestPdfImage skips deleted images and hits the topmost box", () => {

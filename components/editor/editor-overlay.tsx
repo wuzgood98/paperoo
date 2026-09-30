@@ -59,6 +59,9 @@ export const EditorOverlay = ({
     null
   );
   const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
+  const [transformingPdfImageId, setTransformingPdfImageId] = useState<
+    string | null
+  >(null);
   const [draft, setDraft] = useState<OverlayDraft | null>(null);
   const [previewPoint, setPreviewPoint] = useState<Point | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -81,6 +84,7 @@ export const EditorOverlay = ({
       rootRef,
       setDraft,
       setPreviewPoint,
+      setTransformingId: setTransformingPdfImageId,
       shapeStyle,
       tool,
       zoom,
@@ -101,6 +105,7 @@ export const EditorOverlay = ({
       onPointerCancel={(event) => {
         gestureRef.current = null;
         setDraft(null);
+        setTransformingPdfImageId(null);
         event.currentTarget.releasePointerCapture(event.pointerId);
       }}
       onPointerDown={(event) => {
@@ -203,6 +208,9 @@ export const EditorOverlay = ({
           ? undefined
           : hitTestPdfImage(page.pdfImageObjects, point);
         const nextImageId = imageHit?.id ?? null;
+        if (imageHit && imageHit.id !== hoveredPdfImageId) {
+          void ensurePdfImagePreview(imageHit, page.sourceIndex);
+        }
         setHoveredPdfImageId((current) =>
           current === nextImageId ? current : nextImageId
         );
@@ -226,9 +234,12 @@ export const EditorOverlay = ({
         hoveredId={hoveredPdfImageId}
         nodeRefs={nodeRefs}
         objects={page.pdfImageObjects}
+        onTransformStart={setTransformingPdfImageId}
+        pageSourceIndex={page.sourceIndex}
         rootRef={rootRef}
         selectedId={selectedPdfImageId}
         toPage={toPage}
+        transformingId={transformingPdfImageId}
         zoom={zoom}
       />
       <PdfTextLayer

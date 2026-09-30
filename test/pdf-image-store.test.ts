@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 
+import { pdfImageWithGestureBox } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfImageObject } from "@/lib/editor/types";
 
@@ -40,6 +41,33 @@ const page = (image = pdfImage()): EditorPage => ({
 
 afterEach(() => {
   editorStore.clearDocument();
+});
+
+test("committing a stale gesture box keeps the store preview", () => {
+  editorStore.resetDocument(
+    [page(pdfImage({ previewAssetId: "preview-1" }))],
+    "demo.pdf"
+  );
+  editorStore.selectPdfImage("img-1");
+  const current = editorStore.selectedPdfImage();
+  expect(current).toBeDefined();
+  if (!current) {
+    return;
+  }
+  editorStore.commitPdfImage(
+    pdfImageWithGestureBox(current, {
+      height: current.height,
+      rotation: current.rotation,
+      width: current.width,
+      x: 90,
+      y: 160,
+    }),
+    true
+  );
+  const next = editorStore.selectedPdfImage();
+  expect(next?.previewAssetId).toBe("preview-1");
+  expect(next?.x).toBe(90);
+  expect(next?.y).toBe(160);
 });
 
 test("moving a PDF image then undo restores the original box", () => {

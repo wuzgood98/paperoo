@@ -32,7 +32,7 @@ import {
   fittedPdfTextBox,
   isPdfImageDirty,
   isPdfTextDirty,
-  pdfImageOriginalBox,
+  pdfImageCoverBox,
 } from "@/lib/editor/object-utils";
 import type {
   DrawingObject,
@@ -263,16 +263,16 @@ const drawDirtyPdfImage = async (
   images: Map<string, PDFImage>,
   doc: PDFDocument
 ): Promise<void> => {
-  const original = displayedToUserSpace(
-    pdfImageOriginalBox(object),
+  const cover = displayedToUserSpace(
+    pdfImageCoverBox(object),
     editorPage.cropBox,
     editorPage.sourceRotate
   );
-  applyCtm(page, { rotation: object.originalRotation }, original);
+  applyCtm(page, { rotation: object.originalRotation }, cover);
   page.drawRectangle({
     color: rgb(1, 1, 1),
-    height: original.height,
-    width: original.width,
+    height: cover.height,
+    width: cover.width,
     x: 0,
     y: 0,
   });
