@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import type { Dispatch, PointerEvent, SetStateAction } from "react";
 
 import { toastManager } from "@/components/ui/toast-manager";
@@ -14,6 +15,7 @@ import {
   createImageObject,
   createShapeObject,
   normalizedRect,
+  pdfImageWithGestureBox,
   scaleObjectToBox,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
@@ -86,6 +88,7 @@ export const useOverlayGestures = ({
   rootRef,
   setDraft,
   setPreviewPoint,
+  setTransformingId,
   shapeStyle,
   tool,
   zoom,
@@ -101,6 +104,7 @@ export const useOverlayGestures = ({
   rootRef: RefBox<HTMLDivElement | null>;
   setDraft: Dispatch<SetStateAction<OverlayDraft | null>>;
   setPreviewPoint: Dispatch<SetStateAction<Point | null>>;
+  setTransformingId: Dispatch<SetStateAction<string | null>>;
   shapeStyle: ShapeStyleDefaults;
   tool: EditorTool;
   zoom: number;
@@ -129,9 +133,23 @@ export const useOverlayGestures = ({
     node.style.transform = `rotate(${object.rotation}deg)`;
   };
 
+  useLayoutEffect(() => {
+    const gesture = gestureRef.current;
+    if (
+      !gesture ||
+      (gesture.kind !== "drag" &&
+        gesture.kind !== "resize" &&
+        gesture.kind !== "rotate")
+    ) {
+      return;
+    }
+    writeNodeBox(gesture.object);
+  });
+
   const finishGesture = (object: GestureTarget | null): void => {
     const gesture = gestureRef.current;
     gestureRef.current = null;
+    setTransformingId(null);
     if (!object || !gesture) {
       return;
     }
@@ -149,7 +167,13 @@ export const useOverlayGestures = ({
       return;
     }
     if (object.type === "pdf-image") {
-      editorStore.commitPdfImage(object, true);
+      const current = editorStore.selectedPdfImage();
+      editorStore.commitPdfImage(
+        current && current.id === object.id
+          ? pdfImageWithGestureBox(current, object)
+          : object,
+        true
+      );
       return;
     }
     editorStore.commitObject(object.id, object, true);
@@ -171,6 +195,7 @@ export const useOverlayGestures = ({
         x: gesture.origin.x + (point.x - gesture.start.x),
         y: gesture.origin.y + (point.y - gesture.start.y),
       };
+      gesture.object = next;
       writeNodeBox(next);
       return;
     }
@@ -189,7 +214,9 @@ export const useOverlayGestures = ({
           minSize: MIN_OBJECT_SIZE,
         }
       );
-      writeNodeBox({ ...gesture.object, ...nextBox });
+      const next = { ...gesture.object, ...nextBox };
+      gesture.object = next;
+      writeNodeBox(next);
       return;
     }
 

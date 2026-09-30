@@ -68,6 +68,25 @@ export const isPdfImageDirty = (object: PdfImageObject): boolean =>
   object.height !== object.originalHeight ||
   object.rotation !== object.originalRotation;
 
+export const pdfImageAssetId = (object: PdfImageObject): string | null =>
+  object.replacementAssetId ?? object.previewAssetId;
+
+export const shouldPaintPdfImageCover = (
+  object: PdfImageObject,
+  transformingId: string | null
+): boolean =>
+  object.deleted ||
+  (pdfImageAssetId(object) !== null &&
+    (isPdfImageDirty(object) || object.id === transformingId));
+
+export const shouldPaintPdfImagePreview = (
+  object: PdfImageObject,
+  transformingId: string | null
+): boolean =>
+  !object.deleted &&
+  pdfImageAssetId(object) !== null &&
+  (isPdfImageDirty(object) || object.id === transformingId);
+
 export const pdfImageOriginalBox = (
   object: PdfImageObject
 ): Rect & { rotation: number } => ({
@@ -76,6 +95,34 @@ export const pdfImageOriginalBox = (
   width: object.originalWidth,
   x: object.originalX,
   y: object.originalY,
+});
+
+/** Outset for white covers so scan-conversion / AA fringes of the original Do do not show. */
+export const PDF_IMAGE_COVER_BLEED = 1;
+
+export const pdfImageCoverBox = (
+  object: PdfImageObject
+): Rect & { rotation: number } => {
+  const box = pdfImageOriginalBox(object);
+  return {
+    height: box.height + PDF_IMAGE_COVER_BLEED * 2,
+    rotation: box.rotation,
+    width: box.width + PDF_IMAGE_COVER_BLEED * 2,
+    x: box.x - PDF_IMAGE_COVER_BLEED,
+    y: box.y - PDF_IMAGE_COVER_BLEED,
+  };
+};
+
+export const pdfImageWithGestureBox = (
+  current: PdfImageObject,
+  gesture: Pick<PdfImageObject, "height" | "rotation" | "width" | "x" | "y">
+): PdfImageObject => ({
+  ...current,
+  height: gesture.height,
+  rotation: gesture.rotation,
+  width: gesture.width,
+  x: gesture.x,
+  y: gesture.y,
 });
 
 export const pointInRotatedRect = (

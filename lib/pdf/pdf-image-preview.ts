@@ -1,4 +1,5 @@
-import { isPdfImageDirty } from "@/lib/editor/object-utils";
+import { pageToCss } from "@/lib/editor/coordinates";
+import { isPdfImageDirty, pdfImageAssetId } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type { PdfImageObject } from "@/lib/editor/types";
 import { AnnotationMode } from "@/lib/pdf/pdfjs";
@@ -13,7 +14,7 @@ interface PdfJsImageData {
   width?: number;
 }
 
-interface PdfJsObjectStore {
+export interface PdfJsObjectStore {
   get: (
     id: string,
     callback?: (data: PdfJsImageData) => void
@@ -23,6 +24,7 @@ interface PdfJsObjectStore {
 
 const RGBA_KIND = 3;
 const RGB_KIND = 2;
+const IMAGE_RESOLVE_MS = 4000;
 
 const parseImageData = (
   value: PdfJsImageData | undefined
@@ -44,14 +46,36 @@ const parseImageData = (
   };
 };
 
-const IMAGE_RESOLVE_MS = 4000;
+const hasImagePixels = (value: PdfJsImageData | null): boolean =>
+  value !== null && (value.bitmap !== undefined || value.data !== undefined);
 
-const waitForObj = (
+const readResolved = (
   store: PdfJsObjectStore,
   id: string
-): Promise<PdfJsImageData | null> =>
+): PdfJsImageData | null => {
+  if (!store.has(id)) {
+    return null;
+  }
+  try {
+    return parseImageData(store.get(id));
+  } catch {
+    return null;
+  }
+};
+
+export const resolvePdfJsImageFromStores = (
+  pageStore: PdfJsObjectStore,
+  commonStore: PdfJsObjectStore,
+  sourceId: string
+): Promise<PdfJsImageData | null> => {
+  const ready =
+    readResolved(pageStore, sourceId) ?? readResolved(commonStore, sourceId);
+  if (hasImagePixels(ready)) {
+    return Promise.resolve(ready);
+  }
+
   // oxlint-disable-next-line promise/avoid-new -- PDFObjects.get only notifies through a callback
-  new Promise((resolve) => {
+  return new Promise((resolve) => {
     let settled = false;
     const finish = (value: PdfJsImageData | null): void => {
       if (settled) {
@@ -61,25 +85,25 @@ const waitForObj = (
       resolve(value);
     };
 
-    if (store.has(id)) {
-      try {
-        finish(parseImageData(store.get(id)));
-      } catch {
-        finish(null);
-      }
-      return;
-    }
-
     const timer = setTimeout(() => {
       finish(null);
     }, IMAGE_RESOLVE_MS);
-    store.get(id, (data) => {
-      clearTimeout(timer);
-      finish(parseImageData(data));
-    });
-  });
 
-const resolvePageImage = async (
+    const onData = (data: PdfJsImageData): void => {
+      const parsed = parseImageData(data);
+      if (!hasImagePixels(parsed)) {
+        return;
+      }
+      clearTimeout(timer);
+      finish(parsed);
+    };
+
+    pageStore.get(sourceId, onData);
+    commonStore.get(sourceId, onData);
+  });
+};
+
+const resolvePageImage = (
   page: PDFPageProxy,
   sourceId: string
 ): Promise<PdfJsImageData | null> => {
@@ -88,14 +112,7 @@ const resolvePageImage = async (
   const pageStore = page.objs as PdfJsObjectStore;
   // SAFETY: commonObjs uses the same PDFObjects.get contract as page.objs.
   const commonStore = page.commonObjs as PdfJsObjectStore;
-  const preferred = sourceId.startsWith("g_") ? commonStore : pageStore;
-  const fallback = sourceId.startsWith("g_") ? pageStore : commonStore;
-  if (fallback.has(sourceId) && !preferred.has(sourceId)) {
-    return waitForObj(fallback, sourceId);
-  }
-  return (
-    (await waitForObj(preferred, sourceId)) ?? waitForObj(fallback, sourceId)
-  );
+  return resolvePdfJsImageFromStores(pageStore, commonStore, sourceId);
 };
 
 const toRgba = (
@@ -216,23 +233,134 @@ const encodePdfJsImage = async (
   return await canvasToPng(canvas);
 };
 
+export const pageBoxToCanvasCrop = (
+  box: { height: number; width: number; x: number; y: number },
+  zoom: number,
+  canvas: {
+    cssHeight: number;
+    cssWidth: number;
+    height: number;
+    width: number;
+  }
+): { height: number; width: number; x: number; y: number } | null => {
+  if (canvas.cssWidth < 1 || canvas.cssHeight < 1) {
+    return null;
+  }
+  const scaleX = canvas.width / canvas.cssWidth;
+  const scaleY = canvas.height / canvas.cssHeight;
+  const left = pageToCss(box.x, zoom) * scaleX;
+  const top = pageToCss(box.y, zoom) * scaleY;
+  const right = left + pageToCss(box.width, zoom) * scaleX;
+  const bottom = top + pageToCss(box.height, zoom) * scaleY;
+  const cropLeft = Math.max(0, Math.min(canvas.width, left));
+  const cropTop = Math.max(0, Math.min(canvas.height, top));
+  const cropRight = Math.max(cropLeft, Math.min(canvas.width, right));
+  const cropBottom = Math.max(cropTop, Math.min(canvas.height, bottom));
+  const width = Math.round(cropRight - cropLeft);
+  const height = Math.round(cropBottom - cropTop);
+  if (width < 1 || height < 1) {
+    return null;
+  }
+  return {
+    height,
+    width,
+    x: Math.round(cropLeft),
+    y: Math.round(cropTop),
+  };
+};
+
+const pngFromDataUrl = (dataUrl: string): Uint8Array | null => {
+  const comma = dataUrl.indexOf(",");
+  if (comma === -1) {
+    return null;
+  }
+  const binary = atob(dataUrl.slice(comma + 1));
+  return Uint8Array.from(binary, (char) => char.codePointAt(0) ?? 0);
+};
+
+const pageCanvasFromOverlay = (
+  overlayRoot: HTMLElement | null
+): HTMLCanvasElement | null => {
+  const sibling = overlayRoot?.parentElement?.previousElementSibling;
+  return sibling instanceof HTMLCanvasElement ? sibling : null;
+};
+
+export const capturePdfImagePreviewFromCanvas = (
+  object: PdfImageObject,
+  overlayRoot: HTMLElement | null,
+  zoom: number
+): string | null => {
+  if (pdfImageAssetId(object)) {
+    return pdfImageAssetId(object);
+  }
+  const canvas = pageCanvasFromOverlay(overlayRoot);
+  if (!canvas) {
+    return null;
+  }
+  const crop = pageBoxToCanvasCrop(object, zoom, {
+    cssHeight: canvas.clientHeight,
+    cssWidth: canvas.clientWidth,
+    height: canvas.height,
+    width: canvas.width,
+  });
+  if (!crop) {
+    return null;
+  }
+  const copy = document.createElement("canvas");
+  copy.width = crop.width;
+  copy.height = crop.height;
+  const context = copy.getContext("2d");
+  if (!context) {
+    return null;
+  }
+  context.drawImage(
+    canvas,
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
+    0,
+    0,
+    crop.width,
+    crop.height
+  );
+  const bytes = pngFromDataUrl(copy.toDataURL("image/png"));
+  if (!bytes) {
+    return null;
+  }
+  const asset = editorStore.addAsset(bytes, "image/png", { provisional: true });
+  editorStore.setPdfImagePreview(object.id, asset.id);
+  return asset.id;
+};
+
+const livePdfImage = (object: PdfImageObject): PdfImageObject =>
+  editorStore
+    .getState()
+    .document.pages.flatMap((page) => page.pdfImageObjects)
+    .find((item) => item.id === object.id) ?? object;
+
 export const ensurePdfImagePreview = async (
   object: PdfImageObject,
   pageSourceIndex: number
 ): Promise<string | null> => {
-  if (object.replacementAssetId) {
-    return object.replacementAssetId;
+  const live = livePdfImage(object);
+  if (live.replacementAssetId) {
+    return live.replacementAssetId;
   }
-  if (object.previewAssetId) {
-    return object.previewAssetId;
+  if (
+    live.previewAssetId &&
+    !editorStore.isProvisionalAsset(live.previewAssetId)
+  ) {
+    return live.previewAssetId;
   }
 
   const page = await pdfSession.getPage(pageSourceIndex);
   if (!page) {
     return null;
   }
+  const pending = resolvePageImage(page, live.sourceId);
   await page.getOperatorList({ annotationMode: AnnotationMode.DISABLE });
-  const raw = await resolvePageImage(page, object.sourceId);
+  const raw = await pending;
   if (!raw) {
     return null;
   }
@@ -241,7 +369,7 @@ export const ensurePdfImagePreview = async (
     return null;
   }
   const asset = editorStore.addAsset(bytes, "image/png");
-  editorStore.setPdfImagePreview(object.id, asset.id);
+  editorStore.setPdfImagePreview(live.id, asset.id);
   return asset.id;
 };
 

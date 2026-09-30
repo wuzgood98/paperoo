@@ -176,6 +176,7 @@ export interface ImageAsset {
   bytes: Uint8Array;
   mimeType: ImageMimeType;
   objectUrl: string;
+  provisional?: boolean;
 }
 
 export type EditorStatus = "idle" | "loading" | "ready" | "error";

@@ -149,7 +149,11 @@ const currentPage = (): EditorPage | undefined =>
   findPage(internal.state.document.pages, internal.state.currentPageId);
 
 export const editorStore = {
-  addAsset: (bytes: Uint8Array, mimeType: ImageMimeType): ImageAsset => {
+  addAsset: (
+    bytes: Uint8Array,
+    mimeType: ImageMimeType,
+    options: { provisional?: boolean } = {}
+  ): ImageAsset => {
     const copy = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
     const blob = new Blob([copy], { type: mimeType });
@@ -159,6 +163,9 @@ export const editorStore = {
       mimeType,
       objectUrl: URL.createObjectURL(blob),
     };
+    if (options.provisional) {
+      asset.provisional = true;
+    }
     internal.assets.set(asset.id, asset);
     return asset;
   },
@@ -306,6 +313,9 @@ export const editorStore = {
   getAssets: (): ReadonlyMap<string, ImageAsset> => internal.assets,
 
   getState: (): EditorStoreState => internal.state,
+
+  isProvisionalAsset: (assetId: string): boolean =>
+    internal.assets.get(assetId)?.provisional === true,
 
   patchPdfImage: (
     updater: (object: PdfImageObject) => PdfImageObject
@@ -596,14 +606,24 @@ export const editorStore = {
             }
             return {
               ...page,
-              pdfImageObjects: page.pdfImageObjects.map((object) =>
-                object.id === objectId || object.sourceId === target.sourceId
-                  ? {
-                      ...object,
-                      previewAssetId: object.previewAssetId ?? previewAssetId,
-                    }
-                  : object
-              ),
+              pdfImageObjects: page.pdfImageObjects.map((object) => {
+                if (
+                  object.id !== objectId &&
+                  object.sourceId !== target.sourceId
+                ) {
+                  return object;
+                }
+                const current = object.previewAssetId;
+                if (current && current !== previewAssetId) {
+                  const existing = internal.assets.get(current);
+                  if (!existing?.provisional) {
+                    return object;
+                  }
+                  URL.revokeObjectURL(existing.objectUrl);
+                  internal.assets.delete(current);
+                }
+                return { ...object, previewAssetId };
+              }),
             };
           }),
         },

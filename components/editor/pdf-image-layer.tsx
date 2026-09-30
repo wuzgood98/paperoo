@@ -12,11 +12,17 @@ import { SelectionBox } from "@/components/editor/selection-box";
 import { objectCenter, objectWrapperStyle } from "@/lib/editor/coordinates";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import {
-  isPdfImageDirty,
-  pdfImageOriginalBox,
+  pdfImageAssetId,
+  pdfImageCoverBox,
+  shouldPaintPdfImageCover,
+  shouldPaintPdfImagePreview,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type { PdfImageObject, Point } from "@/lib/editor/types";
+import {
+  capturePdfImagePreviewFromCanvas,
+  ensurePdfImagePreview,
+} from "@/lib/pdf/pdf-image-preview";
 import { cn } from "@/lib/utils";
 
 interface RefBox<T> {
@@ -30,10 +36,10 @@ const PdfImagePreview = ({
   object: PdfImageObject;
   zoom: number;
 }) => {
-  const assetId = object.replacementAssetId ?? object.previewAssetId;
+  const assetId = pdfImageAssetId(object);
   const asset = assetId ? editorStore.getAsset(assetId) : undefined;
   if (!asset) {
-    return <div className="bg-muted h-full w-full" />;
+    return null;
   }
   return (
     <div className="relative h-full w-full">
@@ -59,9 +65,12 @@ export const PdfImageLayer = ({
   hoveredId,
   nodeRefs,
   objects,
+  onTransformStart,
+  pageSourceIndex,
   rootRef,
   selectedId,
   toPage,
+  transformingId,
   zoom,
 }: {
   boundsRef: RefBox<PageBounds | null>;
@@ -69,27 +78,29 @@ export const PdfImageLayer = ({
   hoveredId: string | null;
   nodeRefs: RefBox<Map<string, HTMLDivElement>>;
   objects: readonly PdfImageObject[];
+  onTransformStart: (objectId: string) => void;
+  pageSourceIndex: number;
   rootRef: RefObject<HTMLDivElement | null>;
   selectedId: string | null;
   toPage: (event: { clientX: number; clientY: number }) => Point;
+  transformingId: string | null;
   zoom: number;
 }) => (
   <>
     {objects.map((object) =>
-      isPdfImageDirty(object) ? (
+      shouldPaintPdfImageCover(object, transformingId) ? (
         <div
           className="pointer-events-none absolute origin-center bg-white"
           key={`cover-${object.id}`}
-          style={objectWrapperStyle(pdfImageOriginalBox(object), zoom)}
+          style={objectWrapperStyle(pdfImageCoverBox(object), zoom)}
         />
       ) : null
     )}
     {objects.map((object) => {
-      if (object.deleted || !isPdfImageDirty(object)) {
+      if (object.id === selectedId) {
         return null;
       }
-      const selected = object.id === selectedId;
-      if (selected) {
+      if (!shouldPaintPdfImagePreview(object, transformingId)) {
         return null;
       }
       return (
@@ -120,6 +131,9 @@ export const PdfImageLayer = ({
               );
               rootRef.current?.setPointerCapture(event.pointerId);
               editorStore.selectPdfImage(object.id);
+              capturePdfImagePreviewFromCanvas(object, rootRef.current, zoom);
+              void ensurePdfImagePreview(object, pageSourceIndex);
+              onTransformStart(object.id);
               gestureRef.current = {
                 kind: "drag",
                 object,
@@ -136,7 +150,9 @@ export const PdfImageLayer = ({
             }}
             style={objectWrapperStyle(object, zoom)}
           >
-            <PdfImagePreview object={object} zoom={zoom} />
+            {shouldPaintPdfImagePreview(object, transformingId) ? (
+              <PdfImagePreview object={object} zoom={zoom} />
+            ) : null}
             <SelectionBox
               onResizePointerDown={(handle, event) => {
                 event.stopPropagation();
@@ -144,6 +160,9 @@ export const PdfImageLayer = ({
                   requireOverlayRoot(rootRef.current)
                 );
                 rootRef.current?.setPointerCapture(event.pointerId);
+                capturePdfImagePreviewFromCanvas(object, rootRef.current, zoom);
+                void ensurePdfImagePreview(object, pageSourceIndex);
+                onTransformStart(object.id);
                 gestureRef.current = {
                   handle,
                   kind: "resize",
@@ -157,6 +176,9 @@ export const PdfImageLayer = ({
                   requireOverlayRoot(rootRef.current)
                 );
                 rootRef.current?.setPointerCapture(event.pointerId);
+                capturePdfImagePreviewFromCanvas(object, rootRef.current, zoom);
+                void ensurePdfImagePreview(object, pageSourceIndex);
+                onTransformStart(object.id);
                 const center = objectCenter(object);
                 const point = toPage(event);
                 gestureRef.current = {
