@@ -3,6 +3,12 @@ import { expect, test } from "vitest";
 
 import type { EditorDocument, PdfTextObject } from "@/lib/editor/types";
 import { exportDocument } from "@/lib/pdf/export-pdf";
+import {
+  collectPdfFontFaces,
+  extractPdfTextObjects,
+  toExtractableTextContent,
+} from "@/lib/pdf/extract-text";
+import type { PdfJsFontObjectStore } from "@/lib/pdf/extract-text";
 
 import { loadPdfJsDocument } from "./pdfjs-node";
 
@@ -11,9 +17,11 @@ const pdfText = (overrides: Partial<PdfTextObject> = {}): PdfTextObject => ({
   fontFamily: "sans",
   fontName: "g_d0_f1",
   fontSize: 18,
+  fontWeight: 400,
   hasEOL: false,
   height: 18,
   id: "pdf-1",
+  italic: false,
   originalFontFamily: "sans",
   originalFontSize: 18,
   originalText: "Hello World",
@@ -72,5 +80,75 @@ test("export leaves the source bytes unchanged and writes replacement text", asy
     .map((item) => ("str" in item ? item.str : ""))
     .join(" ");
   expect(strings).toContain("Hello Gideon and more");
+  await task.destroy();
+});
+
+test("export redraws dirty PDF text with bold StandardFonts weight", async () => {
+  const source = await PDFDocument.create();
+  const page = source.addPage([612, 792]);
+  const font = await source.embedFont(StandardFonts.HelveticaBold);
+  page.drawText("Hello World", { font, size: 18, x: 72, y: 700 });
+  const bytes = await source.save();
+
+  const document: EditorDocument = {
+    pages: [
+      {
+        cropBox: { height: 792, width: 612, x: 0, y: 0 },
+        height: 792,
+        id: "page-1",
+        objects: [],
+        pdfImageObjects: [],
+        pdfTextObjects: [
+          pdfText({
+            fontWeight: 700,
+            originalText: "Hello World",
+            text: "Hello Bold Edit",
+          }),
+        ],
+        pdfVectorObjects: [],
+        rotation: 0,
+        sourceIndex: 0,
+        sourceRotate: 0,
+        width: 612,
+      },
+    ],
+  };
+
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document,
+    fontBytes: {},
+  });
+
+  const task = loadPdfJsDocument(output);
+  const documentProxy = await task.promise;
+  const pdfPage = await documentProxy.getPage(1);
+  // Fonts are posted to commonObjs during operator-list translation, not
+  // getTextContent alone (same order as PdfSession.open).
+  const [content] = await Promise.all([
+    pdfPage.getTextContent(),
+    pdfPage.getOperatorList(),
+  ]);
+  const extractable = toExtractableTextContent(content);
+  const fontFaces = await collectPdfFontFaces(
+    // SAFETY: commonObjs uses the same PDFObjects.get contract as page.objs.
+    pdfPage.commonObjs as PdfJsFontObjectStore,
+    extractable.items
+  );
+  const objects = extractPdfTextObjects(
+    extractable,
+    {
+      cropBox: { height: 792, width: 612, x: 0, y: 0 },
+      id: "page-1",
+      sourceRotate: 0,
+    },
+    fontFaces
+  );
+
+  const replaced = objects.find((object) =>
+    object.text.includes("Hello Bold Edit")
+  );
+  expect(replaced?.fontWeight).toBe(700);
   await task.destroy();
 });

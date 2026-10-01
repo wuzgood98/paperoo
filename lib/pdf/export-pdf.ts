@@ -114,19 +114,81 @@ const fontKey = (
   weight: FontWeight,
   italic: boolean
 ): string => {
-  if (family !== "sans") {
-    return family;
+  if (family === "sans") {
+    if (italic && weight === 700) {
+      return FONT_FILES.sans.italic700;
+    }
+    if (italic) {
+      return FONT_FILES.sans.italic400;
+    }
+    if (weight === 700) {
+      return FONT_FILES.sans[700];
+    }
+    return FONT_FILES.sans[400];
+  }
+  return `${family}:${weight}:${italic ? "i" : "n"}`;
+};
+
+const standardFontFor = (
+  family: FontFamily,
+  weight: FontWeight,
+  italic: boolean
+): StandardFonts => {
+  if (family === "serif") {
+    if (italic && weight === 700) {
+      return StandardFonts.TimesRomanBoldItalic;
+    }
+    if (italic) {
+      return StandardFonts.TimesRomanItalic;
+    }
+    if (weight === 700) {
+      return StandardFonts.TimesRomanBold;
+    }
+    return StandardFonts.TimesRoman;
+  }
+  if (family === "mono") {
+    if (italic && weight === 700) {
+      return StandardFonts.CourierBoldOblique;
+    }
+    if (italic) {
+      return StandardFonts.CourierOblique;
+    }
+    if (weight === 700) {
+      return StandardFonts.CourierBold;
+    }
+    return StandardFonts.Courier;
   }
   if (italic && weight === 700) {
-    return FONT_FILES.sans.italic700;
+    return StandardFonts.HelveticaBoldOblique;
   }
   if (italic) {
-    return FONT_FILES.sans.italic400;
+    return StandardFonts.HelveticaOblique;
   }
   if (weight === 700) {
-    return FONT_FILES.sans[700];
+    return StandardFonts.HelveticaBold;
   }
-  return FONT_FILES.sans[400];
+  return StandardFonts.Helvetica;
+};
+
+const embedFontForStyle = async (
+  family: FontFamily,
+  weight: FontWeight,
+  italic: boolean,
+  fonts: Map<string, PDFFont>,
+  doc: PDFDocument,
+  fontBytes: Record<string, Uint8Array>
+): Promise<PDFFont> => {
+  const key = fontKey(family, weight, italic);
+  const cached = fonts.get(key);
+  if (cached) {
+    return cached;
+  }
+  const bytes = fontBytes[key];
+  const font = bytes
+    ? await doc.embedFont(bytes, { subset: true })
+    : await doc.embedFont(standardFontFor(family, weight, italic));
+  fonts.set(key, font);
+  return font;
 };
 
 const drawTextObject = async (
@@ -137,21 +199,14 @@ const drawTextObject = async (
   doc: PDFDocument,
   fontBytes: Record<string, Uint8Array>
 ): Promise<void> => {
-  const key = fontKey(object.fontFamily, object.fontWeight, object.italic);
-  let font = fonts.get(key);
-  if (!font) {
-    const bytes = fontBytes[key];
-    if (bytes) {
-      font = await doc.embedFont(bytes, { subset: true });
-    } else if (object.fontFamily === "serif") {
-      font = await doc.embedFont(StandardFonts.TimesRoman);
-    } else if (object.fontFamily === "mono") {
-      font = await doc.embedFont(StandardFonts.Courier);
-    } else {
-      font = await doc.embedFont(StandardFonts.Helvetica);
-    }
-    fonts.set(key, font);
-  }
+  const font = await embedFontForStyle(
+    object.fontFamily,
+    object.fontWeight,
+    object.italic,
+    fonts,
+    doc,
+    fontBytes
+  );
 
   const ascent = font.heightAtSize(object.fontSize, { descender: false });
   const lines = wrapText(object.content, object.width, (line) =>
@@ -192,21 +247,16 @@ const drawDirtyPdfText = async (
 ): Promise<void> => {
   const family = object.fontFamily ?? resolvePdfFont();
   const size = object.fontSize ?? object.height;
-  const key = fontKey(family, 400, false);
-  let font = fonts.get(key);
-  if (!font) {
-    const bytes = fontBytes[key];
-    if (bytes) {
-      font = await doc.embedFont(bytes, { subset: true });
-    } else if (family === "serif") {
-      font = await doc.embedFont(StandardFonts.TimesRoman);
-    } else if (family === "mono") {
-      font = await doc.embedFont(StandardFonts.Courier);
-    } else {
-      font = await doc.embedFont(StandardFonts.Helvetica);
-    }
-    fonts.set(key, font);
-  }
+  const weight = object.fontWeight ?? 400;
+  const italic = object.italic === true;
+  const font = await embedFontForStyle(
+    family,
+    weight,
+    italic,
+    fonts,
+    doc,
+    fontBytes
+  );
 
   const user = displayedToUserSpace(
     fittedPdfTextBox(object, font.widthOfTextAtSize(object.text, size)),

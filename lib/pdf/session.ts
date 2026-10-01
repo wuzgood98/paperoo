@@ -8,9 +8,11 @@ import {
   toPdfImageOps,
 } from "@/lib/pdf/extract-images";
 import {
+  collectPdfFontFaces,
   extractPdfTextObjects,
   toExtractableTextContent,
 } from "@/lib/pdf/extract-text";
+import type { PdfJsFontObjectStore } from "@/lib/pdf/extract-text";
 import {
   extractPdfVectorObjects,
   toPdfVectorOps,
@@ -113,6 +115,12 @@ class PdfSession {
           id,
           sourceRotate,
         };
+        const extractableText = toExtractableTextContent(textContent);
+        // SAFETY: commonObjs uses the same PDFObjects.get contract as page.objs.
+        const fontFaces = await collectPdfFontFaces(
+          page.commonObjs as PdfJsFontObjectStore,
+          extractableText.items
+        );
         const editorPage = {
           cropBox,
           height: viewport.height,
@@ -124,8 +132,9 @@ class PdfSession {
             toPdfImageOps(OPS)
           ),
           pdfTextObjects: extractPdfTextObjects(
-            toExtractableTextContent(textContent),
-            extractPage
+            extractableText,
+            extractPage,
+            fontFaces
           ),
           pdfVectorObjects: extractPdfVectorObjects(
             operatorList,

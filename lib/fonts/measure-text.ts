@@ -23,6 +23,30 @@ export const fontFamilyCss = (family: FontFamily): string => {
   }
 };
 
+const EDITOR_FONT_LOADS = [
+  '400 16px "Liberation Sans"',
+  '700 16px "Liberation Sans"',
+  'italic 400 16px "Liberation Sans"',
+  'italic 700 16px "Liberation Sans"',
+] as const;
+
+let editorFontsPromise: Promise<void> | null = null;
+
+/** Ensure Liberation @font-face variants are ready before dirty PDF text paints. */
+export const ensureEditorFonts = (): Promise<void> => {
+  if (typeof document === "undefined" || !document.fonts) {
+    return Promise.resolve();
+  }
+  if (!editorFontsPromise) {
+    editorFontsPromise = (async () => {
+      await Promise.all(
+        EDITOR_FONT_LOADS.map((descriptor) => document.fonts.load(descriptor))
+      );
+    })();
+  }
+  return editorFontsPromise;
+};
+
 export const wrapText = (
   text: string,
   maxWidth: number,

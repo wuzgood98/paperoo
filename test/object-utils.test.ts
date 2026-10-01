@@ -7,11 +7,13 @@ import {
   fittedPdfTextWidth,
   hitTestPdfImage,
   isPdfImageDirty,
+  isPdfTextDirty,
   PDF_IMAGE_COVER_BLEED,
   PDF_VECTOR_COVER_BLEED,
   pdfImageCoverBox,
   pdfImageOriginalBox,
   pdfImageWithGestureBox,
+  pdfTextOverlayBox,
   pdfVectorCoverBox,
   pdfVectorCoverGeometry,
   pdfVectorCoverPathStyle,
@@ -25,6 +27,7 @@ import {
 } from "@/lib/editor/object-utils";
 import type {
   PdfImageObject,
+  PdfTextObject,
   PdfVectorObject,
   DrawingObject,
   TextObject,
@@ -200,6 +203,72 @@ test("fittedPdfTextBox grows left for rtl and right for ltr", () => {
     160
   );
   expect(rtl).toEqual({ height: 18, width: 160, x: 2, y: 74 });
+});
+
+test("pdfTextOverlayBox keeps source geometry when clean", () => {
+  const object: PdfTextObject = {
+    dir: "ltr",
+    fontFamily: "sans",
+    fontName: "g_d0_f1",
+    fontSize: 18,
+    fontWeight: 700,
+    hasEOL: false,
+    height: 18,
+    id: "pdf-1",
+    italic: false,
+    originalFontFamily: "sans",
+    originalFontSize: 18,
+    originalText: "Hello",
+    pageId: "page-1",
+    rotation: 0,
+    sourceIndex: 0,
+    text: "Hello",
+    transform: [18, 0, 0, 18, 72, 700],
+    type: "pdf-text",
+    width: 90,
+    x: 72,
+    y: 74,
+  };
+  expect(isPdfTextDirty(object)).toBe(false);
+  expect(pdfTextOverlayBox(object, 160)).toEqual({
+    height: 18,
+    width: 90,
+    x: 72,
+    y: 74,
+  });
+});
+
+test("pdfTextOverlayBox grows when dirty text measures wider", () => {
+  const object: PdfTextObject = {
+    dir: "ltr",
+    fontFamily: "sans",
+    fontName: "g_d0_f1",
+    fontSize: 18,
+    fontWeight: 700,
+    hasEOL: false,
+    height: 18,
+    id: "pdf-1",
+    italic: false,
+    originalFontFamily: "sans",
+    originalFontSize: 18,
+    originalText: "Hello",
+    pageId: "page-1",
+    rotation: 0,
+    sourceIndex: 0,
+    text: "Hello World and more",
+    transform: [18, 0, 0, 18, 72, 700],
+    type: "pdf-text",
+    width: 90,
+    x: 72,
+    y: 74,
+  };
+  expect(isPdfTextDirty(object)).toBe(true);
+  expect(pdfTextOverlayBox(object, 160)).toEqual({
+    height: 18,
+    width: 160,
+    x: 72,
+    y: 74,
+  });
 });
 
 test("scaleObjectToBox scales text font size with height", () => {

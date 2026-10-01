@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 
+import { isPdfTextDirty } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
 
@@ -76,4 +77,37 @@ test("overlay undo still works after a PDF text edit", () => {
   expect(editorStore.getState().document.pages[0]?.objects).toHaveLength(1);
   editorStore.undo();
   expect(editorStore.getState().document.pages[0]?.objects).toHaveLength(0);
+});
+
+test("setting the same fontSize or fontFamily does not mark PDF text dirty", () => {
+  editorStore.resetDocument([page()], "demo.pdf");
+  editorStore.selectPdfText("pdf-1");
+  const before = editorStore.selectedPdfText();
+  expect(before).toBeDefined();
+  if (!before) {
+    return;
+  }
+
+  editorStore.patchPdfText((object) => {
+    if (object.fontSize === 16) {
+      return object;
+    }
+    return { ...object, fontSize: 16 };
+  });
+  editorStore.patchPdfText((object) => {
+    if (object.fontFamily === "sans") {
+      return object;
+    }
+    return { ...object, fontFamily: "sans" };
+  });
+
+  const after = editorStore.selectedPdfText();
+  expect(after?.fontSize).toBe(16);
+  expect(after?.originalFontSize).toBe(16);
+  expect(after?.fontFamily).toBe("sans");
+  expect(after?.originalFontFamily).toBe("sans");
+  expect(after).toBeDefined();
+  if (after) {
+    expect(isPdfTextDirty(after)).toBe(false);
+  }
 });

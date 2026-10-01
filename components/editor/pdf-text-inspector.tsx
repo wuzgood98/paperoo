@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { editorStore } from "@/lib/editor/store";
 import type { PdfTextObject } from "@/lib/editor/types";
+import { fontFamilyCss } from "@/lib/fonts/measure-text";
 
 export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => (
   <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
@@ -21,16 +22,22 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => (
         const text = event.currentTarget.value;
         editorStore.patchPdfText((current) => ({ ...current, text }));
       }}
+      style={{
+        fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
+        fontStyle: object.italic === true ? "italic" : "normal",
+        fontWeight: object.fontWeight ?? 400,
+      }}
       value={object.text}
     />
     {object.fontFamily ? (
       <Select
-        onValueChange={(value) =>
-          editorStore.patchPdfText((current) => ({
-            ...current,
-            fontFamily: fontFamilyFromSelect(value ?? "sans"),
-          }))
-        }
+        onValueChange={(value) => {
+          const fontFamily = fontFamilyFromSelect(value ?? "sans");
+          if (fontFamily === object.fontFamily) {
+            return;
+          }
+          editorStore.patchPdfText((current) => ({ ...current, fontFamily }));
+        }}
         value={object.fontFamily}
         items={FONT_FAMILIES}
       >
@@ -50,12 +57,13 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => (
       <Input
         className="w-18"
         min={4}
-        onValueChange={(value) =>
-          editorStore.patchPdfText((current) => ({
-            ...current,
-            fontSize: Number(value ?? 4),
-          }))
-        }
+        onValueChange={(value) => {
+          const fontSize = Number(value ?? 4);
+          if (!Number.isFinite(fontSize) || fontSize === object.fontSize) {
+            return;
+          }
+          editorStore.patchPdfText((current) => ({ ...current, fontSize }));
+        }}
         type="number"
         value={object.fontSize}
       />
