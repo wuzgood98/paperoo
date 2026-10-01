@@ -116,9 +116,11 @@ export interface PdfTextObject {
   fontFamily?: FontFamily;
   fontName: string;
   fontSize?: number;
+  fontWeight?: FontWeight;
   hasEOL: boolean;
   height: number;
   id: string;
+  italic?: boolean;
   originalFontFamily?: FontFamily;
   originalFontSize?: number;
   originalText: string;

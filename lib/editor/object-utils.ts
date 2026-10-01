@@ -336,6 +336,20 @@ export const fittedPdfTextBox = (
   };
 };
 
+/** Overlay box for PDF text: source geometry when clean, Liberation-fitted when dirty. */
+export const pdfTextOverlayBox = (
+  object: PdfTextObject,
+  measuredWidth: number
+): Rect =>
+  isPdfTextDirty(object)
+    ? fittedPdfTextBox(object, measuredWidth)
+    : {
+        height: object.height,
+        width: object.width,
+        x: object.x,
+        y: object.y,
+      };
+
 export const hitTestPdfText = (
   objects: readonly PdfTextObject[],
   point: Point

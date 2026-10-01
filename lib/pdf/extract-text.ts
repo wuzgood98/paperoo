@@ -6,6 +6,7 @@ import { createId } from "@/lib/editor/ids";
 import type {
   CropBox,
   FontFamily,
+  FontWeight,
   PageRotation,
   PdfTextDir,
   PdfTextObject,
@@ -47,6 +48,116 @@ export interface PdfJsTextContent {
   styles: Record<string, ExtractableTextStyle | undefined>;
 }
 
+export interface PdfFontFaceMeta {
+  bold?: boolean;
+  italic?: boolean;
+  name?: string;
+}
+
+/** Shape of a PDF.js FontFaceObject exported onto commonObjs. */
+export interface PdfJsFontFaceData {
+  black?: boolean;
+  bold?: boolean;
+  italic?: boolean;
+  name?: string;
+}
+
+export interface PdfJsFontObjectStore {
+  get: (
+    id: string,
+    callback?: (data: PdfJsFontFaceData) => void
+  ) => PdfJsFontFaceData | undefined;
+  has: (id: string) => boolean;
+}
+
+const FONT_FACE_RESOLVE_MS = 2000;
+
+const parseFontFace = (
+  value: PdfJsFontFaceData | undefined
+): PdfFontFaceMeta | null => {
+  if (!value) {
+    return null;
+  }
+  return {
+    bold: value.bold === true || value.black === true,
+    italic: value.italic === true,
+    name: value.name,
+  };
+};
+
+const readResolvedFontFace = (
+  store: PdfJsFontObjectStore,
+  loadedName: string
+): PdfFontFaceMeta | null => {
+  if (!store.has(loadedName)) {
+    return null;
+  }
+  try {
+    return parseFontFace(store.get(loadedName));
+  } catch {
+    return null;
+  }
+};
+
+const resolveFontFace = (
+  store: PdfJsFontObjectStore,
+  loadedName: string
+): Promise<PdfFontFaceMeta | null> => {
+  const ready = readResolvedFontFace(store, loadedName);
+  if (ready) {
+    return Promise.resolve(ready);
+  }
+
+  // oxlint-disable-next-line promise/avoid-new -- PDFObjects.get only notifies through a callback
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: PdfFontFaceMeta | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+
+    const timer = setTimeout(() => {
+      finish(null);
+    }, FONT_FACE_RESOLVE_MS);
+
+    store.get(loadedName, (data) => {
+      const parsed = parseFontFace(data);
+      if (!parsed) {
+        return;
+      }
+      clearTimeout(timer);
+      finish(parsed);
+    });
+  });
+};
+
+/** Resolve PDF.js Font records from commonObjs for each text-item loadedName. */
+export const collectPdfFontFaces = async (
+  store: PdfJsFontObjectStore,
+  items: readonly ExtractableTextItem[]
+): Promise<Record<string, PdfFontFaceMeta>> => {
+  const loadedNames = new Set<string>();
+  for (const item of items) {
+    if (item.fontName) {
+      loadedNames.add(item.fontName);
+    }
+  }
+
+  const faces: Record<string, PdfFontFaceMeta> = {};
+  await Promise.all(
+    [...loadedNames].map(async (loadedName) => {
+      const face = await resolveFontFace(store, loadedName);
+      if (face) {
+        faces[loadedName] = face;
+      }
+    })
+  );
+  return faces;
+};
+
 const isTextItem = (
   entry: ExtractableTextEntry
 ): entry is ExtractableTextItem => !("type" in entry);
@@ -66,6 +177,31 @@ export const resolvePdfFont = (fontFamily?: string): FontFamily => {
     return "mono";
   }
   return "sans";
+};
+
+/** Match PDF.js Font.fallbackToSystemFont: /bold/i on the face name. */
+export const resolvePdfFontWeight = (
+  faceName?: string,
+  bold?: boolean
+): FontWeight => {
+  if (bold === true) {
+    return 700;
+  }
+  if (faceName && /bold|black/iu.test(faceName)) {
+    return 700;
+  }
+  return 400;
+};
+
+/** Match PDF.js Font.fallbackToSystemFont: /oblique|italic/i on the face name. */
+export const resolvePdfFontItalic = (
+  faceName?: string,
+  italic?: boolean
+): boolean => {
+  if (italic === true) {
+    return true;
+  }
+  return Boolean(faceName && /oblique|italic/iu.test(faceName));
 };
 
 const toDir = (value: string | undefined): PdfTextDir => {
@@ -102,7 +238,8 @@ export const extractPdfTextObjects = (
     cropBox: CropBox;
     id: string;
     sourceRotate: PageRotation;
-  }
+  },
+  fontFaces: Readonly<Record<string, PdfFontFaceMeta | undefined>> = {}
 ): PdfTextObject[] => {
   const objects: PdfTextObject[] = [];
 
@@ -113,7 +250,10 @@ export const extractPdfTextObjects = (
     }
 
     const style = item.fontName ? content.styles[item.fontName] : undefined;
+    const face = item.fontName ? fontFaces[item.fontName] : undefined;
     const fontFamily = resolvePdfFont(style?.fontFamily);
+    const fontWeight = resolvePdfFontWeight(face?.name, face?.bold);
+    const italic = resolvePdfFontItalic(face?.name, face?.italic);
     const box = textItemToDisplayedBox(
       transform,
       item.width ?? 0,
@@ -129,9 +269,11 @@ export const extractPdfTextObjects = (
       fontFamily,
       fontName: item.fontName ?? "",
       fontSize: box.fontSize,
+      fontWeight,
       hasEOL: item.hasEOL === true,
       height: box.height,
       id: createId(),
+      italic,
       originalFontFamily: fontFamily,
       originalFontSize: box.fontSize,
       originalText: item.str,
