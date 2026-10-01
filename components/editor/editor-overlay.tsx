@@ -14,12 +14,14 @@ import { OverlayObject } from "@/components/editor/overlay-object";
 import { OverlayPreviews } from "@/components/editor/overlay-previews";
 import { PdfImageLayer } from "@/components/editor/pdf-image-layer";
 import { PdfTextLayer } from "@/components/editor/pdf-text-layer";
+import { PdfVectorLayer } from "@/components/editor/pdf-vector-layer";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import {
   createSignatureObject,
   createTextObject,
   hitTestPdfImage,
   hitTestPdfText,
+  hitTestPdfVector,
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
@@ -42,6 +44,9 @@ export const EditorOverlay = ({
     (state) => state.selectedPdfImageId
   );
   const selectedPdfTextId = useEditorStore((state) => state.selectedPdfTextId);
+  const selectedPdfVectorId = useEditorStore(
+    (state) => state.selectedPdfVectorId
+  );
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
   const shapeStyle = useEditorStore((state) => state.shapeStyle);
@@ -59,9 +64,10 @@ export const EditorOverlay = ({
     null
   );
   const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
-  const [transformingPdfImageId, setTransformingPdfImageId] = useState<
-    string | null
-  >(null);
+  const [hoveredPdfVectorId, setHoveredPdfVectorId] = useState<string | null>(
+    null
+  );
+  const [transformingId, setTransformingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<OverlayDraft | null>(null);
   const [previewPoint, setPreviewPoint] = useState<Point | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -84,7 +90,7 @@ export const EditorOverlay = ({
       rootRef,
       setDraft,
       setPreviewPoint,
-      setTransformingId: setTransformingPdfImageId,
+      setTransformingId,
       shapeStyle,
       tool,
       zoom,
@@ -105,7 +111,7 @@ export const EditorOverlay = ({
       onPointerCancel={(event) => {
         gestureRef.current = null;
         setDraft(null);
-        setTransformingPdfImageId(null);
+        setTransformingId(null);
         event.currentTarget.releasePointerCapture(event.pointerId);
       }}
       onPointerDown={(event) => {
@@ -179,6 +185,17 @@ export const EditorOverlay = ({
               setEditingId(null);
               return;
             }
+            const vectorHit = hitTestPdfVector(
+              page.pdfVectorObjects,
+              point,
+              page.cropBox,
+              page.sourceRotate
+            );
+            if (vectorHit) {
+              editorStore.selectPdfVector(vectorHit.id);
+              setEditingId(null);
+              return;
+            }
           }
           editorStore.clearSelection();
           setEditingId(null);
@@ -192,6 +209,7 @@ export const EditorOverlay = ({
       onPointerLeave={() => {
         setHoveredPdfImageId(null);
         setHoveredPdfTextId(null);
+        setHoveredPdfVectorId(null);
       }}
       onPointerMove={(event) => {
         onPointerMove(event);
@@ -214,6 +232,19 @@ export const EditorOverlay = ({
         setHoveredPdfImageId((current) =>
           current === nextImageId ? current : nextImageId
         );
+        const vectorHit =
+          textHit || imageHit
+            ? undefined
+            : hitTestPdfVector(
+                page.pdfVectorObjects,
+                point,
+                page.cropBox,
+                page.sourceRotate
+              );
+        const nextVectorId = vectorHit?.id ?? null;
+        setHoveredPdfVectorId((current) =>
+          current === nextVectorId ? current : nextVectorId
+        );
       }}
       onPointerUp={onPointerUp}
       ref={rootRef}
@@ -228,18 +259,33 @@ export const EditorOverlay = ({
         ref={imageInputRef}
         type="file"
       />
+      <PdfVectorLayer
+        boundsRef={boundsRef}
+        crop={page.cropBox}
+        gestureRef={gestureRef}
+        hoveredId={hoveredPdfVectorId}
+        nodeRefs={nodeRefs}
+        objects={page.pdfVectorObjects}
+        onTransformStart={setTransformingId}
+        rootRef={rootRef}
+        selectedId={selectedPdfVectorId}
+        sourceRotate={page.sourceRotate}
+        toPage={toPage}
+        transformingId={transformingId}
+        zoom={zoom}
+      />
       <PdfImageLayer
         boundsRef={boundsRef}
         gestureRef={gestureRef}
         hoveredId={hoveredPdfImageId}
         nodeRefs={nodeRefs}
         objects={page.pdfImageObjects}
-        onTransformStart={setTransformingPdfImageId}
+        onTransformStart={setTransformingId}
         pageSourceIndex={page.sourceIndex}
         rootRef={rootRef}
         selectedId={selectedPdfImageId}
         toPage={toPage}
-        transformingId={transformingPdfImageId}
+        transformingId={transformingId}
         zoom={zoom}
       />
       <PdfTextLayer

@@ -8,9 +8,15 @@ import {
   hitTestPdfImage,
   isPdfImageDirty,
   PDF_IMAGE_COVER_BLEED,
+  PDF_VECTOR_COVER_BLEED,
   pdfImageCoverBox,
   pdfImageOriginalBox,
   pdfImageWithGestureBox,
+  pdfVectorCoverBox,
+  pdfVectorCoverGeometry,
+  pdfVectorCoverPathStyle,
+  pdfVectorPreviewBox,
+  pdfVectorStrokePad,
   shouldPaintPdfImageCover,
   shouldPaintPdfImagePreview,
   scaleObjectToBox,
@@ -19,6 +25,7 @@ import {
 } from "@/lib/editor/object-utils";
 import type {
   PdfImageObject,
+  PdfVectorObject,
   DrawingObject,
   TextObject,
 } from "@/lib/editor/types";
@@ -299,4 +306,127 @@ test("hitTestPdfImage skips deleted images and hits the topmost box", () => {
   expect(
     hitTestPdfImage([pdfImage({ deleted: true })], { x: 80, y: 160 })
   ).toBeUndefined();
+});
+
+const pdfVector = (
+  overrides: Partial<PdfVectorObject> = {}
+): PdfVectorObject => ({
+  commands: [
+    { type: "moveTo", x: 72, y: 700 },
+    { type: "lineTo", x: 200, y: 700 },
+  ],
+  deleted: false,
+  fill: null,
+  height: 1e-4,
+  id: "vec-1",
+  kind: "line",
+  originalFill: null,
+  originalHeight: 1e-4,
+  originalRotation: 0,
+  originalStroke: {
+    color: "#0000ff",
+    lineCap: 0,
+    lineJoin: 0,
+    width: 2,
+  },
+  originalWidth: 128,
+  originalX: 72,
+  originalY: 90,
+  pageId: "page-1",
+  paint: "stroke",
+  rotation: 0,
+  sourceIndex: 0,
+  sourceOperatorIndices: [0],
+  stroke: {
+    color: "#0000ff",
+    lineCap: 0,
+    lineJoin: 0,
+    width: 2,
+  },
+  type: "pdf-vector",
+  width: 128,
+  x: 72,
+  y: 90,
+  ...overrides,
+});
+
+test("pdfVectorStrokePad uses half width with a hairline floor", () => {
+  expect(pdfVectorStrokePad(null)).toBe(0);
+  expect(pdfVectorStrokePad()).toBe(0);
+  expect(pdfVectorStrokePad(2)).toBe(1);
+  expect(pdfVectorStrokePad(0.5)).toBe(0.5);
+  expect(pdfVectorStrokePad(0.2)).toBe(0.5);
+});
+
+test("pdfVectorCoverBox and preview box pad a hairline stroke enough to paint", () => {
+  const object = pdfVector();
+  const strokePad = pdfVectorStrokePad(2);
+  const coverPad = PDF_VECTOR_COVER_BLEED + strokePad;
+  const cover = pdfVectorCoverBox(object);
+  const preview = pdfVectorPreviewBox(object);
+
+  expect(strokePad).toBe(1);
+  expect(cover.height).toBeGreaterThanOrEqual(2);
+  expect(cover.height).toBeCloseTo(object.originalHeight + coverPad * 2);
+  expect(cover.width).toBeCloseTo(object.originalWidth + coverPad * 2);
+  expect(cover.x).toBeCloseTo(object.originalX - coverPad);
+  expect(cover.y).toBeCloseTo(object.originalY - coverPad);
+
+  expect(preview.height).toBeGreaterThanOrEqual(2);
+  expect(preview.height).toBeCloseTo(object.height + strokePad * 2);
+  expect(preview.width).toBeCloseTo(object.width + strokePad * 2);
+  expect(preview.x).toBeCloseTo(object.x - strokePad);
+  expect(preview.y).toBeCloseTo(object.y - strokePad);
+  expect(preview.rotation).toBe(object.rotation);
+});
+
+test("pdfVectorPreviewBox follows current stroke width, not original", () => {
+  const object = pdfVector({
+    stroke: {
+      color: "#ff0000",
+      lineCap: 0,
+      lineJoin: 0,
+      width: 4,
+    },
+  });
+  const preview = pdfVectorPreviewBox(object);
+  expect(preview.height).toBeCloseTo(object.height + 4);
+  expect(pdfVectorCoverBox(object).height).toBeCloseTo(
+    object.originalHeight + (PDF_VECTOR_COVER_BLEED + 1) * 2
+  );
+});
+
+test("pdfVectorCoverPathStyle paints white along original path, not a rect", () => {
+  const stroked = pdfVector({
+    stroke: {
+      color: "#ff0000",
+      lineCap: 1,
+      lineJoin: 1,
+      width: 4,
+    },
+  });
+  const style = pdfVectorCoverPathStyle(stroked);
+  expect(style.fill).toBeNull();
+  expect(style.stroke).toBe("#ffffff");
+  expect(style.strokeWidth).toBe(2 + PDF_VECTOR_COVER_BLEED * 2);
+  expect(style.lineCap).toBe(0);
+  expect(style.lineJoin).toBe(0);
+
+  const geometry = pdfVectorCoverGeometry(stroked);
+  expect(geometry.x).toBe(stroked.originalX);
+  expect(geometry.y).toBe(stroked.originalY);
+  expect(geometry.width).toBe(stroked.originalWidth);
+  expect(geometry.height).toBe(stroked.originalHeight);
+
+  const filled = pdfVector({
+    fill: { color: "#00ff00" },
+    originalFill: { color: "#00ff00" },
+    originalStroke: null,
+    paint: "fill",
+    stroke: null,
+  });
+  const fillStyle = pdfVectorCoverPathStyle(filled);
+  expect(fillStyle.fill).toBe("#ffffff");
+  expect(fillStyle.stroke).toBeNull();
+  expect(fillStyle.strokeWidth).toBe(0);
 });

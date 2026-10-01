@@ -154,6 +154,76 @@ export interface PdfImageObject {
   y: number;
 }
 
+export type PdfPathCommand =
+  | { type: "moveTo"; x: number; y: number }
+  | { type: "lineTo"; x: number; y: number }
+  | {
+      type: "curveTo";
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      x3: number;
+      y3: number;
+    }
+  | {
+      type: "quadraticCurveTo";
+      x1: number;
+      y1: number;
+      x: number;
+      y: number;
+    }
+  | { type: "closePath" };
+
+export type PdfVectorKind = "line" | "rect" | "path";
+
+export type PdfVectorPaint =
+  | "stroke"
+  | "closeStroke"
+  | "fill"
+  | "eoFill"
+  | "fillStroke"
+  | "eoFillStroke"
+  | "closeFillStroke"
+  | "closeEOFillStroke";
+
+export interface PdfVectorFillStyle {
+  color: string;
+}
+
+export interface PdfVectorStrokeStyle {
+  color: string;
+  lineCap: number;
+  lineJoin: number;
+  width: number;
+}
+
+export interface PdfVectorObject {
+  commands: PdfPathCommand[];
+  deleted: boolean;
+  fill: PdfVectorFillStyle | null;
+  height: number;
+  id: string;
+  kind: PdfVectorKind;
+  originalFill: PdfVectorFillStyle | null;
+  originalHeight: number;
+  originalRotation: number;
+  originalStroke: PdfVectorStrokeStyle | null;
+  originalWidth: number;
+  originalX: number;
+  originalY: number;
+  pageId: string;
+  paint: PdfVectorPaint;
+  rotation: number;
+  sourceIndex: number;
+  sourceOperatorIndices: number[];
+  stroke: PdfVectorStrokeStyle | null;
+  type: "pdf-vector";
+  width: number;
+  x: number;
+  y: number;
+}
+
 export interface EditorPage {
   id: string;
   sourceIndex: number;
@@ -165,6 +235,7 @@ export interface EditorPage {
   objects: EditorObject[];
   pdfImageObjects: PdfImageObject[];
   pdfTextObjects: PdfTextObject[];
+  pdfVectorObjects: PdfVectorObject[];
 }
 
 export interface EditorDocument {

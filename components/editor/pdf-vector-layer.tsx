@@ -1,0 +1,457 @@
+"use client";
+
+import type { RefObject } from "react";
+
+import {
+  requireOverlayRoot,
+  snapshotBounds,
+} from "@/components/editor/overlay-gestures";
+import type { Gesture } from "@/components/editor/overlay-gestures";
+import { SelectionBox } from "@/components/editor/selection-box";
+import {
+  objectCenter,
+  objectWrapperStyle,
+  userPointToDisplayed,
+} from "@/lib/editor/coordinates";
+import type { PageBounds } from "@/lib/editor/coordinates";
+import {
+  pdfVectorCoverGeometry,
+  pdfVectorCoverPathStyle,
+  pdfVectorPreviewBox,
+  pdfVectorStrokePad,
+  shouldPaintPdfVectorCover,
+  shouldPaintPdfVectorPreview,
+} from "@/lib/editor/object-utils";
+import { editorStore } from "@/lib/editor/store";
+import type {
+  CropBox,
+  PageRotation,
+  PdfPathCommand,
+  PdfVectorObject,
+  Point,
+} from "@/lib/editor/types";
+import { cn } from "@/lib/utils";
+
+interface RefBox<T> {
+  current: T;
+}
+
+type PathBox = Pick<
+  PdfVectorObject,
+  | "height"
+  | "originalHeight"
+  | "originalWidth"
+  | "originalX"
+  | "originalY"
+  | "width"
+  | "x"
+  | "y"
+>;
+
+const mapCommandPoint = (
+  point: Point,
+  box: PathBox,
+  crop: CropBox,
+  sourceRotate: PageRotation,
+  pad: number
+): Point => {
+  const displayed = userPointToDisplayed(point, crop, sourceRotate);
+  const sx = box.originalWidth > 1e-6 ? box.width / box.originalWidth : 1;
+  const sy = box.originalHeight > 1e-6 ? box.height / box.originalHeight : 1;
+  return {
+    x: (displayed.x - box.originalX) * sx + pad,
+    y: (displayed.y - box.originalY) * sy + pad,
+  };
+};
+
+const commandsToSvgPath = (
+  commands: readonly PdfPathCommand[],
+  box: PathBox,
+  crop: CropBox,
+  sourceRotate: PageRotation,
+  pad: number
+): string => {
+  const parts: string[] = [];
+  for (const command of commands) {
+    if (command.type === "moveTo") {
+      const point = mapCommandPoint(command, box, crop, sourceRotate, pad);
+      parts.push(`M ${point.x} ${point.y}`);
+      continue;
+    }
+    if (command.type === "lineTo") {
+      const point = mapCommandPoint(command, box, crop, sourceRotate, pad);
+      parts.push(`L ${point.x} ${point.y}`);
+      continue;
+    }
+    if (command.type === "curveTo") {
+      const c1 = mapCommandPoint(
+        { x: command.x1, y: command.y1 },
+        box,
+        crop,
+        sourceRotate,
+        pad
+      );
+      const c2 = mapCommandPoint(
+        { x: command.x2, y: command.y2 },
+        box,
+        crop,
+        sourceRotate,
+        pad
+      );
+      const end = mapCommandPoint(
+        { x: command.x3, y: command.y3 },
+        box,
+        crop,
+        sourceRotate,
+        pad
+      );
+      parts.push(`C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${end.x} ${end.y}`);
+      continue;
+    }
+    if (command.type === "quadraticCurveTo") {
+      const control = mapCommandPoint(
+        { x: command.x1, y: command.y1 },
+        box,
+        crop,
+        sourceRotate,
+        pad
+      );
+      const end = mapCommandPoint(
+        { x: command.x, y: command.y },
+        box,
+        crop,
+        sourceRotate,
+        pad
+      );
+      parts.push(`Q ${control.x} ${control.y} ${end.x} ${end.y}`);
+      continue;
+    }
+    parts.push("Z");
+  }
+  return parts.join(" ");
+};
+
+const strokeLinecap = (
+  lineCap: number | undefined
+): "butt" | "round" | "square" => {
+  if (lineCap === 1) {
+    return "round";
+  }
+  if (lineCap === 2) {
+    return "square";
+  }
+  return "butt";
+};
+
+const strokeLinejoin = (
+  lineJoin: number | undefined
+): "miter" | "round" | "bevel" => {
+  if (lineJoin === 1) {
+    return "round";
+  }
+  if (lineJoin === 2) {
+    return "bevel";
+  }
+  return "miter";
+};
+
+const PdfVectorPathSvg = ({
+  box,
+  commands,
+  crop,
+  fill,
+  lineCap,
+  lineJoin,
+  sourceRotate,
+  stroke,
+  strokeWidth,
+  zoom,
+}: {
+  box: PathBox & { rotation: number };
+  commands: readonly PdfPathCommand[];
+  crop: CropBox;
+  fill: string | null;
+  lineCap: number;
+  lineJoin: number;
+  sourceRotate: PageRotation;
+  stroke: string | null;
+  strokeWidth: number;
+  zoom: number;
+}) => {
+  const pad = pdfVectorStrokePad(strokeWidth > 0 ? strokeWidth : undefined);
+  const paddedWidth = box.width + pad * 2;
+  const paddedHeight = box.height + pad * 2;
+  const d = commandsToSvgPath(commands, box, crop, sourceRotate, pad);
+  return (
+    <svg
+      aria-hidden
+      className="pointer-events-none absolute inset-0 overflow-visible"
+      height={paddedHeight * zoom}
+      viewBox={`0 0 ${Math.max(paddedWidth, 1e-3)} ${Math.max(paddedHeight, 1e-3)}`}
+      width={paddedWidth * zoom}
+    >
+      <path
+        d={d}
+        fill={fill ?? "none"}
+        stroke={stroke ?? "none"}
+        strokeLinecap={strokeLinecap(lineCap)}
+        strokeLinejoin={strokeLinejoin(lineJoin)}
+        strokeWidth={strokeWidth}
+      />
+    </svg>
+  );
+};
+
+const PdfVectorPreview = ({
+  crop,
+  nested,
+  object,
+  sourceRotate,
+  zoom,
+}: {
+  crop: CropBox;
+  nested?: boolean;
+  object: PdfVectorObject;
+  sourceRotate: PageRotation;
+  zoom: number;
+}) => {
+  const pad = pdfVectorStrokePad(object.stroke?.width);
+  const svg = (
+    <PdfVectorPathSvg
+      box={object}
+      commands={object.commands}
+      crop={crop}
+      fill={object.fill?.color ?? null}
+      lineCap={object.stroke?.lineCap ?? 0}
+      lineJoin={object.stroke?.lineJoin ?? 0}
+      sourceRotate={sourceRotate}
+      stroke={object.stroke?.color ?? null}
+      strokeWidth={object.stroke?.width ?? 0}
+      zoom={zoom}
+    />
+  );
+  if (!nested) {
+    return svg;
+  }
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        height: (object.height + pad * 2) * zoom,
+        left: -pad * zoom,
+        top: -pad * zoom,
+        width: (object.width + pad * 2) * zoom,
+      }}
+    >
+      {svg}
+    </div>
+  );
+};
+
+const PdfVectorCover = ({
+  crop,
+  object,
+  sourceRotate,
+  zoom,
+}: {
+  crop: CropBox;
+  object: PdfVectorObject;
+  sourceRotate: PageRotation;
+  zoom: number;
+}) => {
+  const style = pdfVectorCoverPathStyle(object);
+  const geometry = {
+    ...pdfVectorCoverGeometry(object),
+    rotation: object.originalRotation,
+  };
+  const pad = pdfVectorStrokePad(
+    style.strokeWidth > 0 ? style.strokeWidth : undefined
+  );
+  const wrapper = {
+    height: geometry.height + pad * 2,
+    rotation: geometry.rotation,
+    width: geometry.width + pad * 2,
+    x: geometry.x - pad,
+    y: geometry.y - pad,
+  };
+  return (
+    <div
+      className="pointer-events-none absolute origin-center"
+      style={objectWrapperStyle(wrapper, zoom)}
+    >
+      <PdfVectorPathSvg
+        box={geometry}
+        commands={object.commands}
+        crop={crop}
+        fill={style.fill}
+        lineCap={style.lineCap}
+        lineJoin={style.lineJoin}
+        sourceRotate={sourceRotate}
+        stroke={style.stroke}
+        strokeWidth={style.strokeWidth}
+        zoom={zoom}
+      />
+    </div>
+  );
+};
+
+export const PdfVectorLayer = ({
+  boundsRef,
+  crop,
+  gestureRef,
+  hoveredId,
+  nodeRefs,
+  objects,
+  onTransformStart,
+  rootRef,
+  selectedId,
+  sourceRotate,
+  toPage,
+  transformingId,
+  zoom,
+}: {
+  boundsRef: RefBox<PageBounds | null>;
+  crop: CropBox;
+  gestureRef: RefBox<Gesture | null>;
+  hoveredId: string | null;
+  nodeRefs: RefBox<Map<string, HTMLDivElement>>;
+  objects: readonly PdfVectorObject[];
+  onTransformStart: (objectId: string) => void;
+  rootRef: RefObject<HTMLDivElement | null>;
+  selectedId: string | null;
+  sourceRotate: PageRotation;
+  toPage: (event: { clientX: number; clientY: number }) => Point;
+  transformingId: string | null;
+  zoom: number;
+}) => (
+  <>
+    {objects.map((object) =>
+      shouldPaintPdfVectorCover(object, transformingId) ? (
+        <PdfVectorCover
+          crop={crop}
+          key={`cover-${object.id}`}
+          object={object}
+          sourceRotate={sourceRotate}
+          zoom={zoom}
+        />
+      ) : null
+    )}
+    {objects.map((object) => {
+      if (object.id === selectedId) {
+        return null;
+      }
+      if (!shouldPaintPdfVectorPreview(object, transformingId)) {
+        return null;
+      }
+      return (
+        <div
+          className="pointer-events-none absolute origin-center"
+          key={`preview-${object.id}`}
+          style={objectWrapperStyle(pdfVectorPreviewBox(object), zoom)}
+        >
+          <PdfVectorPreview
+            crop={crop}
+            object={object}
+            sourceRotate={sourceRotate}
+            zoom={zoom}
+          />
+        </div>
+      );
+    })}
+    {objects.map((object) => {
+      if (object.deleted) {
+        return null;
+      }
+      const hovered = object.id === hoveredId;
+      const selected = object.id === selectedId;
+      if (selected) {
+        return (
+          <div
+            className="absolute origin-center cursor-move"
+            key={`selected-${object.id}`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              boundsRef.current = snapshotBounds(
+                requireOverlayRoot(rootRef.current)
+              );
+              rootRef.current?.setPointerCapture(event.pointerId);
+              editorStore.selectPdfVector(object.id);
+              onTransformStart(object.id);
+              gestureRef.current = {
+                kind: "drag",
+                object,
+                origin: { x: object.x, y: object.y },
+                start: toPage(event),
+              };
+            }}
+            ref={(node) => {
+              if (node) {
+                nodeRefs.current.set(object.id, node);
+              } else {
+                nodeRefs.current.delete(object.id);
+              }
+            }}
+            style={objectWrapperStyle(object, zoom)}
+          >
+            {shouldPaintPdfVectorPreview(object, transformingId) ? (
+              <PdfVectorPreview
+                crop={crop}
+                nested
+                object={object}
+                sourceRotate={sourceRotate}
+                zoom={zoom}
+              />
+            ) : null}
+            <SelectionBox
+              onResizePointerDown={(handle, event) => {
+                event.stopPropagation();
+                boundsRef.current = snapshotBounds(
+                  requireOverlayRoot(rootRef.current)
+                );
+                rootRef.current?.setPointerCapture(event.pointerId);
+                onTransformStart(object.id);
+                gestureRef.current = {
+                  handle,
+                  kind: "resize",
+                  object,
+                  start: toPage(event),
+                };
+              }}
+              onRotatePointerDown={(event) => {
+                event.stopPropagation();
+                boundsRef.current = snapshotBounds(
+                  requireOverlayRoot(rootRef.current)
+                );
+                rootRef.current?.setPointerCapture(event.pointerId);
+                onTransformStart(object.id);
+                const center = objectCenter(object);
+                const point = toPage(event);
+                gestureRef.current = {
+                  kind: "rotate",
+                  object,
+                  originRotation: object.rotation,
+                  startAngle:
+                    (Math.atan2(point.y - center.y, point.x - center.x) * 180) /
+                    Math.PI,
+                };
+              }}
+            />
+          </div>
+        );
+      }
+      if (!hovered) {
+        return null;
+      }
+      return (
+        <div
+          className={cn(
+            "pointer-events-none absolute origin-center",
+            "outline-primary/40 outline"
+          )}
+          key={`hover-${object.id}`}
+          style={objectWrapperStyle(object, zoom)}
+        />
+      );
+    })}
+  </>
+);
