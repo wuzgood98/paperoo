@@ -801,3 +801,17 @@ export const useEditorStore = <T>(
     () => selector(internal.state),
     () => selector(internal.state)
   );
+
+export const useCanUndo = (): boolean =>
+  useSyncExternalStore(
+    editorStore.subscribe,
+    editorStore.canUndo,
+    editorStore.canUndo
+  );
+
+export const useCanRedo = (): boolean =>
+  useSyncExternalStore(
+    editorStore.subscribe,
+    editorStore.canRedo,
+    editorStore.canRedo
+  );
