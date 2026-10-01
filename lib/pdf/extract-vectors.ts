@@ -447,8 +447,11 @@ export const pathMinMaxToDisplayedBox = (
   };
 };
 
-const isNumericBuffer = (value: OperatorArg): value is ArrayLike<number> =>
-  Array.isArray(value) || ArrayBuffer.isView(value);
+const isNumericBuffer = (
+  value: OperatorArg
+): value is ArrayLike<number> & Iterable<number> =>
+  Array.isArray(value) ||
+  (ArrayBuffer.isView(value) && !(value instanceof DataView));
 
 const readPathBuffer = (args: OperatorArg): ArrayLike<number> | null => {
   if (!Array.isArray(args) || args.length < 2) {
