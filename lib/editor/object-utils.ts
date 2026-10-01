@@ -1,4 +1,8 @@
-import { objectCenter, rotatePoint } from "@/lib/editor/coordinates";
+import {
+  objectCenter,
+  rotatePoint,
+  userPointToDisplayed,
+} from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
 import {
   DEFAULT_DRAW_STYLE,
@@ -18,6 +22,7 @@ import type {
   ImageObject,
   PdfImageObject,
   PdfTextObject,
+  PdfVectorObject,
   Point,
   Rect,
   ShapeKind,
@@ -54,6 +59,12 @@ export const findPdfImage = (
 ): PdfImageObject | undefined =>
   page?.pdfImageObjects.find((object) => object.id === objectId);
 
+export const findPdfVector = (
+  page: EditorPage | undefined,
+  objectId: string | null
+): PdfVectorObject | undefined =>
+  page?.pdfVectorObjects.find((object) => object.id === objectId);
+
 export const isPdfTextDirty = (object: PdfTextObject): boolean =>
   object.text !== object.originalText ||
   object.fontFamily !== object.originalFontFamily ||
@@ -67,6 +78,47 @@ export const isPdfImageDirty = (object: PdfImageObject): boolean =>
   object.width !== object.originalWidth ||
   object.height !== object.originalHeight ||
   object.rotation !== object.originalRotation;
+
+const sameFill = (
+  a: PdfVectorObject["fill"],
+  b: PdfVectorObject["fill"]
+): boolean => {
+  if (a === null && b === null) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a.color === b.color;
+};
+
+const sameStroke = (
+  a: PdfVectorObject["stroke"],
+  b: PdfVectorObject["stroke"]
+): boolean => {
+  if (a === null && b === null) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return (
+    a.color === b.color &&
+    a.width === b.width &&
+    a.lineCap === b.lineCap &&
+    a.lineJoin === b.lineJoin
+  );
+};
+
+export const isPdfVectorDirty = (object: PdfVectorObject): boolean =>
+  object.deleted ||
+  object.x !== object.originalX ||
+  object.y !== object.originalY ||
+  object.width !== object.originalWidth ||
+  object.height !== object.originalHeight ||
+  object.rotation !== object.originalRotation ||
+  !sameFill(object.fill, object.originalFill) ||
+  !sameStroke(object.stroke, object.originalStroke);
 
 export const pdfImageAssetId = (object: PdfImageObject): string | null =>
   object.replacementAssetId ?? object.previewAssetId;
@@ -112,6 +164,134 @@ export const pdfImageCoverBox = (
     y: box.y - PDF_IMAGE_COVER_BLEED,
   };
 };
+
+export const PDF_VECTOR_COVER_BLEED = 1;
+
+/** Half stroke width (page space), floored so hairlines still paint in preview. */
+export const pdfVectorStrokePad = (strokeWidth?: number | null): number => {
+  if (strokeWidth === null || strokeWidth === undefined) {
+    return 0;
+  }
+  return Math.max(strokeWidth / 2, 0.5);
+};
+
+export const expandRect = (box: Rect, pad: number): Rect => ({
+  height: box.height + pad * 2,
+  width: box.width + pad * 2,
+  x: box.x - pad,
+  y: box.y - pad,
+});
+
+export const pdfVectorOriginalBox = (
+  object: PdfVectorObject
+): Rect & { rotation: number } => ({
+  height: object.originalHeight,
+  rotation: object.originalRotation,
+  width: object.originalWidth,
+  x: object.originalX,
+  y: object.originalY,
+});
+
+export const pdfVectorCoverBox = (
+  object: PdfVectorObject
+): Rect & { rotation: number } => {
+  const box = pdfVectorOriginalBox(object);
+  const pad =
+    PDF_VECTOR_COVER_BLEED + pdfVectorStrokePad(object.originalStroke?.width);
+  return {
+    ...expandRect(box, pad),
+    rotation: box.rotation,
+  };
+};
+
+/** Original placement used to map cover path commands (scale 1). */
+export const pdfVectorCoverGeometry = (
+  object: PdfVectorObject
+): Pick<
+  PdfVectorObject,
+  | "height"
+  | "originalHeight"
+  | "originalWidth"
+  | "originalX"
+  | "originalY"
+  | "rotation"
+  | "width"
+  | "x"
+  | "y"
+> => ({
+  height: object.originalHeight,
+  originalHeight: object.originalHeight,
+  originalWidth: object.originalWidth,
+  originalX: object.originalX,
+  originalY: object.originalY,
+  rotation: object.originalRotation,
+  width: object.originalWidth,
+  x: object.originalX,
+  y: object.originalY,
+});
+
+/**
+ * White path paint that hides original ink without an AABB rect.
+ * Stroke is slightly thicker than the original for AA fringe coverage.
+ */
+export interface PdfVectorCoverPathStyle {
+  fill: string | null;
+  lineCap: number;
+  lineJoin: number;
+  stroke: string | null;
+  strokeWidth: number;
+}
+
+export const pdfVectorCoverPathStyle = (
+  object: PdfVectorObject
+): PdfVectorCoverPathStyle => {
+  const originalWidth = object.originalStroke?.width;
+  return {
+    fill: object.originalFill ? "#ffffff" : null,
+    lineCap: object.originalStroke?.lineCap ?? 0,
+    lineJoin: object.originalStroke?.lineJoin ?? 0,
+    stroke: object.originalStroke ? "#ffffff" : null,
+    strokeWidth:
+      originalWidth === undefined || originalWidth === null
+        ? 0
+        : originalWidth + PDF_VECTOR_COVER_BLEED * 2,
+  };
+};
+
+/** Current geometry expanded so SVG stroke ink stays inside the preview wrapper. */
+export const pdfVectorPreviewBox = (
+  object: PdfVectorObject
+): Rect & { rotation: number } => {
+  const pad = pdfVectorStrokePad(object.stroke?.width);
+  return {
+    ...expandRect(object, pad),
+    rotation: object.rotation,
+  };
+};
+
+export const shouldPaintPdfVectorCover = (
+  object: PdfVectorObject,
+  transformingId: string | null
+): boolean =>
+  object.deleted || isPdfVectorDirty(object) || object.id === transformingId;
+
+export const shouldPaintPdfVectorPreview = (
+  object: PdfVectorObject,
+  transformingId: string | null
+): boolean =>
+  !object.deleted && (isPdfVectorDirty(object) || object.id === transformingId);
+
+export const pdfVectorWithGestureBox = (
+  current: PdfVectorObject,
+  gesture: Pick<PdfVectorObject, "height" | "rotation" | "width" | "x" | "y">
+): PdfVectorObject => ({
+  ...current,
+  height: gesture.height,
+  rotation: gesture.rotation,
+  width: gesture.width,
+  x: gesture.x,
+  y: gesture.y,
+});
 
 export const pdfImageWithGestureBox = (
   current: PdfImageObject,
@@ -192,6 +372,166 @@ export const hitTestPdfImage = (
   return undefined;
 };
 
+const distanceToSegment = (point: Point, a: Point, b: Point): number => {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq < 1e-12) {
+    return Math.hypot(point.x - a.x, point.y - a.y);
+  }
+  const t = Math.min(
+    1,
+    Math.max(0, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq)
+  );
+  return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+};
+
+const mapUserPointToObjectDisplayed = (
+  point: Point,
+  object: PdfVectorObject,
+  crop: EditorPage["cropBox"],
+  sourceRotate: EditorPage["sourceRotate"]
+): Point => {
+  const displayed = userPointToDisplayed(point, crop, sourceRotate);
+  const sx =
+    object.originalWidth > 1e-6 ? object.width / object.originalWidth : 1;
+  const sy =
+    object.originalHeight > 1e-6 ? object.height / object.originalHeight : 1;
+  const local = {
+    x: object.x + (displayed.x - object.originalX) * sx,
+    y: object.y + (displayed.y - object.originalY) * sy,
+  };
+  if (object.rotation === 0) {
+    return local;
+  }
+  return rotatePoint(local, objectCenter(object), object.rotation);
+};
+
+const vectorStrokeHitThreshold = (object: PdfVectorObject): number =>
+  Math.max(4, (object.stroke?.width ?? 1) + 2);
+
+// oxlint-disable-next-line eslint/complexity -- path hit-test branches per command type
+const hitTestVectorCommands = (
+  object: PdfVectorObject,
+  point: Point,
+  crop: EditorPage["cropBox"],
+  sourceRotate: EditorPage["sourceRotate"]
+): boolean => {
+  const filledShape =
+    object.kind === "rect" || (object.fill !== null && object.kind !== "line");
+  if (filledShape && pointInRotatedRect(point, object)) {
+    return true;
+  }
+
+  const threshold = vectorStrokeHitThreshold(object);
+  let cursor: Point | null = null;
+  let start: Point | null = null;
+  for (const command of object.commands) {
+    if (command.type === "moveTo") {
+      cursor = mapUserPointToObjectDisplayed(
+        command,
+        object,
+        crop,
+        sourceRotate
+      );
+      start = cursor;
+      continue;
+    }
+    if (command.type === "lineTo" && cursor) {
+      const next = mapUserPointToObjectDisplayed(
+        command,
+        object,
+        crop,
+        sourceRotate
+      );
+      if (distanceToSegment(point, cursor, next) <= threshold) {
+        return true;
+      }
+      cursor = next;
+      continue;
+    }
+    if (command.type === "curveTo" && cursor) {
+      const end = mapUserPointToObjectDisplayed(
+        { x: command.x3, y: command.y3 },
+        object,
+        crop,
+        sourceRotate
+      );
+      const c1 = mapUserPointToObjectDisplayed(
+        { x: command.x1, y: command.y1 },
+        object,
+        crop,
+        sourceRotate
+      );
+      const c2 = mapUserPointToObjectDisplayed(
+        { x: command.x2, y: command.y2 },
+        object,
+        crop,
+        sourceRotate
+      );
+      if (
+        distanceToSegment(point, cursor, c1) <= threshold ||
+        distanceToSegment(point, c1, c2) <= threshold ||
+        distanceToSegment(point, c2, end) <= threshold
+      ) {
+        return true;
+      }
+      cursor = end;
+      continue;
+    }
+    if (command.type === "quadraticCurveTo" && cursor) {
+      const end = mapUserPointToObjectDisplayed(
+        { x: command.x, y: command.y },
+        object,
+        crop,
+        sourceRotate
+      );
+      const control = mapUserPointToObjectDisplayed(
+        { x: command.x1, y: command.y1 },
+        object,
+        crop,
+        sourceRotate
+      );
+      if (
+        distanceToSegment(point, cursor, control) <= threshold ||
+        distanceToSegment(point, control, end) <= threshold
+      ) {
+        return true;
+      }
+      cursor = end;
+      continue;
+    }
+    if (command.type === "closePath" && cursor && start) {
+      if (distanceToSegment(point, cursor, start) <= threshold) {
+        return true;
+      }
+      cursor = start;
+    }
+  }
+
+  if (object.kind === "line") {
+    return false;
+  }
+  return pointInRotatedRect(point, object);
+};
+
+export const hitTestPdfVector = (
+  objects: readonly PdfVectorObject[],
+  point: Point,
+  crop: EditorPage["cropBox"],
+  sourceRotate: EditorPage["sourceRotate"]
+): PdfVectorObject | undefined => {
+  for (const object of objects.toReversed()) {
+    if (object.deleted) {
+      continue;
+    }
+    if (hitTestVectorCommands(object, point, crop, sourceRotate)) {
+      return object;
+    }
+  }
+  return undefined;
+};
+
 export const mapPagePdfImages = (
   pages: readonly EditorPage[],
   pageId: string,
@@ -200,6 +540,17 @@ export const mapPagePdfImages = (
   pages.map((page) =>
     page.id === pageId
       ? { ...page, pdfImageObjects: mapper(page.pdfImageObjects) }
+      : page
+  );
+
+export const mapPagePdfVectors = (
+  pages: readonly EditorPage[],
+  pageId: string,
+  mapper: (objects: PdfVectorObject[]) => PdfVectorObject[]
+): EditorPage[] =>
+  pages.map((page) =>
+    page.id === pageId
+      ? { ...page, pdfVectorObjects: mapper(page.pdfVectorObjects) }
       : page
   );
 

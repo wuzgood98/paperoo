@@ -4,6 +4,7 @@ import { ColorField } from "@/components/editor/color-field";
 import { ToolbarTip } from "@/components/editor/editor-toolbar";
 import { PdfImageInspector } from "@/components/editor/pdf-image-inspector";
 import { PdfTextInspector } from "@/components/editor/pdf-text-inspector";
+import { PdfVectorInspector } from "@/components/editor/pdf-vector-inspector";
 import { FONT_FAMILIES, fontFamilyFromSelect } from "@/components/editor/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { findPage, findPdfImage, findPdfText } from "@/lib/editor/object-utils";
+import {
+  findPage,
+  findPdfImage,
+  findPdfText,
+  findPdfVector,
+} from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { TextAlign } from "@/lib/editor/types";
 
@@ -41,11 +47,20 @@ export const InspectorBar = () => {
       state.selectedPdfImageId
     )
   );
+  const selectedPdfVector = useEditorStore((state) =>
+    findPdfVector(
+      findPage(state.document.pages, state.currentPageId),
+      state.selectedPdfVectorId
+    )
+  );
   if (selectedPdfText) {
     return <PdfTextInspector object={selectedPdfText} />;
   }
   if (selectedPdfImage) {
     return <PdfImageInspector object={selectedPdfImage} />;
+  }
+  if (selectedPdfVector) {
+    return <PdfVectorInspector object={selectedPdfVector} />;
   }
 
   if (!selected) {

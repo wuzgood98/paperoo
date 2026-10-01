@@ -20,8 +20,10 @@ import {
   findPage,
   findPdfImage,
   findPdfText,
+  findPdfVector,
   mapPageObjects,
   mapPagePdfImages,
+  mapPagePdfVectors,
   removeObjects,
   updateObject,
 } from "@/lib/editor/object-utils";
@@ -46,6 +48,7 @@ import type {
   PageRotation,
   PdfImageObject,
   PdfTextObject,
+  PdfVectorObject,
   ShapeStyleDefaults,
   TextStyleDefaults,
   ZoomMode,
@@ -67,6 +70,7 @@ export interface EditorStoreState {
   selectedObjectIds: readonly string[];
   selectedPdfImageId: string | null;
   selectedPdfTextId: string | null;
+  selectedPdfVectorId: string | null;
   shapeStyle: ShapeStyleDefaults;
   status: EditorStatus;
   textStyle: TextStyleDefaults;
@@ -94,6 +98,7 @@ const initialState = (): EditorStoreState => ({
   selectedObjectIds: [],
   selectedPdfImageId: null,
   selectedPdfTextId: null,
+  selectedPdfVectorId: null,
   shapeStyle: { ...DEFAULT_SHAPE_STYLE },
   status: "idle",
   textStyle: { ...DEFAULT_TEXT_STYLE },
@@ -190,6 +195,7 @@ export const editorStore = {
           : internal.state.selectedObjectIds,
         selectedPdfImageId: select ? null : internal.state.selectedPdfImageId,
         selectedPdfTextId: select ? null : internal.state.selectedPdfTextId,
+        selectedPdfVectorId: select ? null : internal.state.selectedPdfVectorId,
         tool: "select",
       };
     }, true);
@@ -210,6 +216,7 @@ export const editorStore = {
       selectedObjectIds: [],
       selectedPdfImageId: null,
       selectedPdfTextId: null,
+      selectedPdfVectorId: null,
     });
   },
 
@@ -257,6 +264,26 @@ export const editorStore = {
     }, recordHistory);
   },
 
+  commitPdfVector: (object: PdfVectorObject, recordHistory: boolean): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: mapPagePdfVectors(
+            internal.state.document.pages,
+            pageId,
+            (objects) =>
+              objects.map((item) => (item.id === object.id ? object : item))
+          ),
+        },
+      };
+    }, recordHistory);
+  },
+
   deleteSelected: (): void => {
     const pageId = internal.state.currentPageId;
     const imageId = internal.state.selectedPdfImageId;
@@ -275,6 +302,26 @@ export const editorStore = {
             ),
           },
           selectedPdfImageId: null,
+        };
+      }, true);
+      return;
+    }
+    const vectorId = internal.state.selectedPdfVectorId;
+    if (pageId && vectorId) {
+      commit(() => {
+        internal.state = {
+          ...internal.state,
+          document: {
+            pages: mapPagePdfVectors(
+              internal.state.document.pages,
+              pageId,
+              (objects) =>
+                objects.map((object) =>
+                  object.id === vectorId ? { ...object, deleted: true } : object
+                )
+            ),
+          },
+          selectedPdfVectorId: null,
         };
       }, true);
       return;
@@ -361,6 +408,31 @@ export const editorStore = {
                   ),
                 }
               : page
+          ),
+        },
+      };
+    }, true);
+  },
+
+  patchPdfVector: (
+    updater: (object: PdfVectorObject) => PdfVectorObject
+  ): void => {
+    const pageId = internal.state.currentPageId;
+    const objectId = internal.state.selectedPdfVectorId;
+    if (!pageId || !objectId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: mapPagePdfVectors(
+            internal.state.document.pages,
+            pageId,
+            (objects) =>
+              objects.map((object) =>
+                object.id === objectId ? updater(object) : object
+              )
           ),
         },
       };
@@ -472,6 +544,7 @@ export const editorStore = {
       selectedObjectIds: [],
       selectedPdfImageId: null,
       selectedPdfTextId: null,
+      selectedPdfVectorId: null,
       status: "ready",
       tool: "select",
       zoomMode: "fit-page",
@@ -509,6 +582,7 @@ export const editorStore = {
       selectedObjectIds: objectIds,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
+      selectedPdfVectorId: null,
       tool: "select",
     });
   },
@@ -518,6 +592,7 @@ export const editorStore = {
       selectedObjectIds: [],
       selectedPdfImageId: objectId,
       selectedPdfTextId: null,
+      selectedPdfVectorId: null,
       tool: "select",
     });
   },
@@ -527,6 +602,17 @@ export const editorStore = {
       selectedObjectIds: [],
       selectedPdfImageId: null,
       selectedPdfTextId: objectId,
+      selectedPdfVectorId: null,
+      tool: "select",
+    });
+  },
+
+  selectPdfVector: (objectId: string | null): void => {
+    setState({
+      selectedObjectIds: [],
+      selectedPdfImageId: null,
+      selectedPdfTextId: null,
+      selectedPdfVectorId: objectId,
       tool: "select",
     });
   },
@@ -546,12 +632,16 @@ export const editorStore = {
   selectedPdfText: (): PdfTextObject | undefined =>
     findPdfText(currentPage(), internal.state.selectedPdfTextId),
 
+  selectedPdfVector: (): PdfVectorObject | undefined =>
+    findPdfVector(currentPage(), internal.state.selectedPdfVectorId),
+
   setCurrentPage: (pageId: string): void => {
     setState({
       currentPageId: pageId,
       selectedObjectIds: [],
       selectedPdfImageId: null,
       selectedPdfTextId: null,
+      selectedPdfVectorId: null,
     });
     if (internal.state.zoomMode !== "custom") {
       editorStore.recomputeFitZoom();
@@ -588,6 +678,7 @@ export const editorStore = {
         selectedObjectIds: [],
         selectedPdfImageId: null,
         selectedPdfTextId: null,
+        selectedPdfVectorId: null,
       };
     }, recordHistory);
   },
@@ -654,6 +745,8 @@ export const editorStore = {
         tool === "select" ? internal.state.selectedPdfImageId : null,
       selectedPdfTextId:
         tool === "select" ? internal.state.selectedPdfTextId : null,
+      selectedPdfVectorId:
+        tool === "select" ? internal.state.selectedPdfVectorId : null,
       tool,
     });
   },

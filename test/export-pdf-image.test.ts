@@ -61,6 +61,7 @@ const documentWith = (
       objects: [],
       pdfImageObjects: [object],
       pdfTextObjects: [],
+      pdfVectorObjects: [],
       rotation: 0,
       sourceIndex: 0,
       sourceRotate: 0,

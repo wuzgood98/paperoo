@@ -12,6 +12,10 @@ import {
   toExtractableTextContent,
 } from "@/lib/pdf/extract-text";
 import {
+  extractPdfVectorObjects,
+  toPdfVectorOps,
+} from "@/lib/pdf/extract-vectors";
+import {
   AnnotationMode,
   ensurePdfjsWorker,
   getDocument,
@@ -122,6 +126,11 @@ class PdfSession {
           pdfTextObjects: extractPdfTextObjects(
             toExtractableTextContent(textContent),
             extractPage
+          ),
+          pdfVectorObjects: extractPdfVectorObjects(
+            operatorList,
+            extractPage,
+            toPdfVectorOps(OPS)
           ),
           rotation: 0,
           sourceIndex: index,

@@ -46,6 +46,7 @@ test("export leaves the source bytes unchanged and writes replacement text", asy
         objects: [],
         pdfImageObjects: [],
         pdfTextObjects: [pdfText({ text: "Hello Gideon and more" })],
+        pdfVectorObjects: [],
         rotation: 0,
         sourceIndex: 0,
         sourceRotate: 0,

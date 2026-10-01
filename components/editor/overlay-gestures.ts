@@ -16,6 +16,7 @@ import {
   createShapeObject,
   normalizedRect,
   pdfImageWithGestureBox,
+  pdfVectorWithGestureBox,
   scaleObjectToBox,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
@@ -25,12 +26,13 @@ import type {
   EditorObject,
   EditorTool,
   PdfImageObject,
+  PdfVectorObject,
   Point,
   ShapeStyleDefaults,
 } from "@/lib/editor/types";
 import { readImageFile } from "@/lib/pdf/image-file";
 
-export type GestureTarget = EditorObject | PdfImageObject;
+export type GestureTarget = EditorObject | PdfImageObject | PdfVectorObject;
 
 export type OverlayDraft =
   | { kind: "draw"; points: Point[] }
@@ -176,6 +178,16 @@ export const useOverlayGestures = ({
       );
       return;
     }
+    if (object.type === "pdf-vector") {
+      const current = editorStore.selectedPdfVector();
+      editorStore.commitPdfVector(
+        current && current.id === object.id
+          ? pdfVectorWithGestureBox(current, object)
+          : object,
+        true
+      );
+      return;
+    }
     editorStore.commitObject(object.id, object, true);
   };
 
@@ -281,7 +293,10 @@ export const useOverlayGestures = ({
           minSize: MIN_OBJECT_SIZE,
         }
       );
-      if (gesture.object.type === "pdf-image") {
+      if (
+        gesture.object.type === "pdf-image" ||
+        gesture.object.type === "pdf-vector"
+      ) {
         finishGesture({ ...gesture.object, ...nextBox });
         return;
       }

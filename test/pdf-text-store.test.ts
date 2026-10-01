@@ -32,6 +32,7 @@ const page = (): EditorPage => ({
   objects: [],
   pdfImageObjects: [],
   pdfTextObjects: [pdfText()],
+  pdfVectorObjects: [],
   rotation: 0,
   sourceIndex: 0,
   sourceRotate: 0,

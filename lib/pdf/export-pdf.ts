@@ -6,11 +6,17 @@ import {
   StandardFonts,
   degrees,
   rgb,
+  appendBezierCurve,
+  appendQuadraticCurve,
+  closePath,
   concatTransformationMatrix,
+  fill as fillPath,
+  fillAndStroke,
   lineTo,
   moveTo,
   popGraphicsState,
   pushGraphicsState,
+  setFillingColor,
   setLineCap,
   setLineJoin,
   setLineWidth,
@@ -19,7 +25,7 @@ import {
   LineCapStyle,
   LineJoinStyle,
 } from "pdf-lib";
-import type { PDFFont, PDFImage, PDFPage } from "pdf-lib";
+import type { PDFFont, PDFImage, PDFOperator, PDFPage } from "pdf-lib";
 
 import {
   centerRotateCtm,
@@ -27,12 +33,15 @@ import {
   displayedToUserSpace,
   normalizeRotation,
   textBaselineY,
+  userPointToDisplayed,
 } from "@/lib/editor/coordinates";
 import {
   fittedPdfTextBox,
   isPdfImageDirty,
   isPdfTextDirty,
+  isPdfVectorDirty,
   pdfImageCoverBox,
+  pdfVectorCoverPathStyle,
 } from "@/lib/editor/object-utils";
 import type {
   DrawingObject,
@@ -44,7 +53,9 @@ import type {
   HighlightObject,
   ImageObject,
   PdfImageObject,
+  PdfPathCommand,
   PdfTextObject,
+  PdfVectorObject,
   Point,
   ShapeObject,
   SignatureObject,
@@ -302,6 +313,204 @@ const drawDirtyPdfImage = async (
   );
 };
 
+const mapVectorPointToLocal = (
+  point: Point,
+  object: PdfVectorObject,
+  editorPage: EditorPage,
+  local: ReturnType<typeof displayedToUserSpace>
+): Point => {
+  const displayed = userPointToDisplayed(
+    point,
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  const sx =
+    object.originalWidth > 1e-6 ? local.width / object.originalWidth : 1;
+  const sy =
+    object.originalHeight > 1e-6 ? local.height / object.originalHeight : 1;
+  return {
+    x: (displayed.x - object.originalX) * sx,
+    y: local.height - (displayed.y - object.originalY) * sy,
+  };
+};
+
+const lineCapStyle = (value: number): LineCapStyle => {
+  if (value === 1) {
+    return LineCapStyle.Round;
+  }
+  if (value === 2) {
+    return LineCapStyle.Projecting;
+  }
+  return LineCapStyle.Butt;
+};
+
+const lineJoinStyle = (value: number): LineJoinStyle => {
+  if (value === 1) {
+    return LineJoinStyle.Round;
+  }
+  if (value === 2) {
+    return LineJoinStyle.Bevel;
+  }
+  return LineJoinStyle.Miter;
+};
+
+const vectorPathOperators = (
+  commands: readonly PdfPathCommand[],
+  object: PdfVectorObject,
+  editorPage: EditorPage,
+  local: ReturnType<typeof displayedToUserSpace>
+): PDFOperator[] => {
+  const ops: PDFOperator[] = [];
+  for (const command of commands) {
+    if (command.type === "moveTo") {
+      const point = mapVectorPointToLocal(command, object, editorPage, local);
+      ops.push(moveTo(point.x, point.y));
+      continue;
+    }
+    if (command.type === "lineTo") {
+      const point = mapVectorPointToLocal(command, object, editorPage, local);
+      ops.push(lineTo(point.x, point.y));
+      continue;
+    }
+    if (command.type === "curveTo") {
+      const c1 = mapVectorPointToLocal(
+        { x: command.x1, y: command.y1 },
+        object,
+        editorPage,
+        local
+      );
+      const c2 = mapVectorPointToLocal(
+        { x: command.x2, y: command.y2 },
+        object,
+        editorPage,
+        local
+      );
+      const end = mapVectorPointToLocal(
+        { x: command.x3, y: command.y3 },
+        object,
+        editorPage,
+        local
+      );
+      ops.push(appendBezierCurve(c1.x, c1.y, c2.x, c2.y, end.x, end.y));
+      continue;
+    }
+    if (command.type === "quadraticCurveTo") {
+      const control = mapVectorPointToLocal(
+        { x: command.x1, y: command.y1 },
+        object,
+        editorPage,
+        local
+      );
+      const end = mapVectorPointToLocal(
+        { x: command.x, y: command.y },
+        object,
+        editorPage,
+        local
+      );
+      ops.push(appendQuadraticCurve(control.x, control.y, end.x, end.y));
+      continue;
+    }
+    ops.push(closePath());
+  }
+  return ops;
+};
+
+const paintVectorOperators = (object: PdfVectorObject): PDFOperator[] => {
+  const ops: PDFOperator[] = [];
+  if (object.fill) {
+    ops.push(setFillingColor(color(object.fill.color)));
+  }
+  if (object.stroke) {
+    const scale =
+      (object.width / Math.max(object.originalWidth, 1e-6) +
+        object.height / Math.max(object.originalHeight, 1e-6)) /
+      2;
+    ops.push(
+      setStrokingColor(color(object.stroke.color)),
+      setLineWidth(object.stroke.width * scale),
+      setLineCap(lineCapStyle(object.stroke.lineCap)),
+      setLineJoin(lineJoinStyle(object.stroke.lineJoin))
+    );
+  }
+  switch (object.paint) {
+    case "stroke":
+    case "closeStroke": {
+      ops.push(stroke());
+      break;
+    }
+    case "fill":
+    case "eoFill": {
+      ops.push(fillPath());
+      break;
+    }
+    default: {
+      ops.push(fillAndStroke());
+      break;
+    }
+  }
+  return ops;
+};
+
+const drawDirtyPdfVector = (
+  page: PDFPage,
+  object: PdfVectorObject,
+  editorPage: EditorPage
+): void => {
+  const coverStyle = pdfVectorCoverPathStyle(object);
+  const coverBox = {
+    height: object.originalHeight,
+    rotation: object.originalRotation,
+    width: object.originalWidth,
+    x: object.originalX,
+    y: object.originalY,
+  };
+  const coverLocal = displayedToUserSpace(
+    coverBox,
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  const coverObject: PdfVectorObject = {
+    ...object,
+    ...coverBox,
+    fill: coverStyle.fill ? { color: coverStyle.fill } : null,
+    stroke: coverStyle.stroke
+      ? {
+          color: coverStyle.stroke,
+          lineCap: coverStyle.lineCap,
+          lineJoin: coverStyle.lineJoin,
+          width: coverStyle.strokeWidth,
+        }
+      : null,
+  };
+  applyCtm(page, coverObject, coverLocal);
+  page.pushOperators(
+    ...vectorPathOperators(
+      object.commands,
+      coverObject,
+      editorPage,
+      coverLocal
+    ),
+    ...paintVectorOperators(coverObject)
+  );
+  page.pushOperators(popGraphicsState());
+
+  if (object.deleted) {
+    return;
+  }
+
+  const local = displayedToUserSpace(
+    object,
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  applyCtm(page, object, local);
+  page.pushOperators(
+    ...vectorPathOperators(object.commands, object, editorPage, local),
+    ...paintVectorOperators(object)
+  );
+  page.pushOperators(popGraphicsState());
+};
+
 const drawImageObject = async (
   page: PDFPage,
   object: ImageObject,
@@ -533,6 +742,12 @@ export const exportDocument = async (
         images,
         output
       );
+    }
+    for (const object of editorPage.pdfVectorObjects) {
+      if (!isPdfVectorDirty(object)) {
+        continue;
+      }
+      drawDirtyPdfVector(page, object, editorPage);
     }
     for (const object of editorPage.objects) {
       // oxlint-disable-next-line eslint/no-await-in-loop  no-await-in-loop-- font and image caches are filled in order

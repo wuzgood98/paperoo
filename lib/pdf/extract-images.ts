@@ -30,6 +30,7 @@ export type OperatorArg =
   | boolean
   | null
   | undefined
+  | ArrayLike<number>
   | readonly OperatorArg[];
 
 export interface ExtractableOperatorList {
