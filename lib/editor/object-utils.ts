@@ -168,9 +168,7 @@ export const pdfImageCoverBox = (
 export const PDF_VECTOR_COVER_BLEED = 1;
 
 /** Half stroke width (page space), floored so hairlines still paint in preview. */
-export const pdfVectorStrokePad = (
-  strokeWidth: number | null | undefined
-): number => {
+export const pdfVectorStrokePad = (strokeWidth?: number | null): number => {
   if (strokeWidth === null || strokeWidth === undefined) {
     return 0;
   }
