@@ -14,9 +14,15 @@ import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { toastManager } from "@/components/ui/toast-manager";
+import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
-import { editorStore, useEditorStore } from "@/lib/editor/store";
-import { ZOOM_STEP } from "@/lib/editor/types";
+import {
+  editorStore,
+  useCanRedo,
+  useCanUndo,
+  useEditorStore,
+} from "@/lib/editor/store";
+import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP } from "@/lib/editor/types";
 import { openPdfFromList } from "@/lib/pdf/open-pdf";
 import { runExport } from "@/lib/pdf/run-export";
 
@@ -62,7 +68,10 @@ export const EditorToolbar = () => {
   const fileName = useEditorStore((state) => state.fileName);
   const status = useEditorStore((state) => state.status);
   const zoom = useEditorStore((state) => state.zoom);
+  const zoomMode = useEditorStore((state) => state.zoomMode);
   const isExporting = useEditorStore((state) => state.isExporting);
+  const canUndo = useCanUndo();
+  const canRedo = useCanRedo();
   const ready = status === "ready";
 
   return (
@@ -99,7 +108,7 @@ export const EditorToolbar = () => {
       <ToolbarTip label="Undo" shortcut="⌘Z">
         <Button
           pressable
-          disabled={!ready}
+          disabled={!ready || !canUndo}
           onClick={() => editorStore.undo()}
           size="icon-sm"
           variant="ghost"
@@ -110,7 +119,7 @@ export const EditorToolbar = () => {
       <ToolbarTip label="Redo" shortcut="⇧⌘Z">
         <Button
           pressable
-          disabled={!ready}
+          disabled={!ready || !canRedo}
           onClick={() => editorStore.redo()}
           size="icon-sm"
           variant="ghost"
@@ -122,7 +131,7 @@ export const EditorToolbar = () => {
       <ToolbarTip label="Zoom out">
         <Button
           pressable
-          disabled={!ready}
+          disabled={!ready || zoom <= MIN_ZOOM}
           onClick={() => editorStore.zoomBy(-ZOOM_STEP)}
           size="icon-sm"
           variant="ghost"
@@ -136,7 +145,7 @@ export const EditorToolbar = () => {
       <ToolbarTip label="Zoom in">
         <Button
           pressable
-          disabled={!ready}
+          disabled={!ready || zoom >= MAX_ZOOM}
           onClick={() => editorStore.zoomBy(ZOOM_STEP)}
           size="icon-sm"
           variant="ghost"
@@ -144,24 +153,24 @@ export const EditorToolbar = () => {
           <ZoomInIcon />
         </Button>
       </ToolbarTip>
-      <Button
+      <Toggle
         pressable
         disabled={!ready}
-        onClick={() => editorStore.fitPage()}
-        size="xs"
-        variant="ghost"
+        onPressedChange={() => editorStore.fitPage()}
+        pressed={zoomMode === "fit-page"}
+        size="sm"
       >
         Fit
-      </Button>
-      <Button
+      </Toggle>
+      <Toggle
         pressable
         disabled={!ready}
-        onClick={() => editorStore.fitWidth()}
-        size="xs"
-        variant="ghost"
+        onPressedChange={() => editorStore.fitWidth()}
+        pressed={zoomMode === "fit-width"}
+        size="sm"
       >
         Width
-      </Button>
+      </Toggle>
       <div className="ml-auto">
         <Button
           pressable
