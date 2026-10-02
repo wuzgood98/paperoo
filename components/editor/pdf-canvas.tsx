@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 
 import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
 import type { RenderTask } from "@/lib/pdf/pdfjs";
-import { renderPdfPage } from "@/lib/pdf/render-page";
+import { releaseCanvas, renderPdfPage } from "@/lib/pdf/render-page";
 import { pdfSession } from "@/lib/pdf/session";
 
 export const PdfCanvas = ({
@@ -47,6 +47,7 @@ export const PdfCanvas = ({
     return () => {
       cancelled = true;
       taskRef.current?.cancel();
+      releaseCanvas(canvas);
     };
   }, [pixelRatio, rotation, scale, sourceIndex]);
 

@@ -1,34 +1,31 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { EditorOverlay } from "@/components/editor/editor-overlay";
+import { EditorPageFrame } from "@/components/editor/editor-page-frame";
 import { InspectorBar } from "@/components/editor/inspector-bar";
-import { PdfCanvas } from "@/components/editor/pdf-canvas";
-import {
-  clamp,
-  normalizeRotation,
-  pixelSnapOffset,
-} from "@/lib/editor/coordinates";
-import { findPage } from "@/lib/editor/object-utils";
+import { clamp } from "@/lib/editor/coordinates";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_SETTLE_MS } from "@/lib/editor/types";
-import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
 import { openPdfFromList } from "@/lib/pdf/open-pdf";
+
+const SCROLL_SPY_ROOT_MARGIN = "-35% 0px -35% 0px";
+const SCROLL_SPY_SUPPRESS_MS = 500;
+const SCROLL_SPY_THRESHOLDS = [0, 0.25, 0.5, 0.75, 1];
 
 export const EditorViewport = () => {
   const pages = useEditorStore((state) => state.document.pages);
   const currentPageId = useEditorStore((state) => state.currentPageId);
   const zoom = useEditorStore((state) => state.zoom);
-  const page = findPage(pages, currentPageId);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const frameRef = useRef<HTMLDivElement>(null);
+  const pageEls = useRef(new Map<string, HTMLDivElement>());
+  const fromScrollSpyRef = useRef(false);
+  const ignoreScrollSpyUntil = useRef(0);
+  const ratiosRef = useRef(new Map<string, number>());
   const [previewZoom, setPreviewZoom] = useState<number | null>(null);
   const [trackedZoom, setTrackedZoom] = useState(zoom);
-  const [snap, setSnap] = useState({ x: 0, y: 0 });
   const previewRef = useRef(zoom);
   const settleTimer = useRef<number>(0);
-  const pixelRatio = useDevicePixelRatio();
 
   if (zoom !== trackedZoom) {
     setTrackedZoom(zoom);
@@ -87,51 +84,103 @@ export const EditorViewport = () => {
     };
   }, []);
 
+  const pageIds = pages.map((page) => page.id).join("\0");
+
+  useEffect(() => {
+    const root = scrollerRef.current;
+    const ids = pageIds.length === 0 ? [] : pageIds.split("\0");
+    if (!root || ids.length === 0) {
+      return;
+    }
+
+    const ratios = ratiosRef.current;
+    ratios.clear();
+
+    const pickActive = (): void => {
+      if (performance.now() < ignoreScrollSpyUntil.current) {
+        return;
+      }
+      let bestId: string | null = null;
+      let bestRatio = 0;
+      for (const [id, ratio] of ratios) {
+        if (ratio > bestRatio) {
+          bestRatio = ratio;
+          bestId = id;
+        }
+      }
+      if (!bestId || bestRatio <= 0) {
+        return;
+      }
+      if (bestId === editorStore.getState().currentPageId) {
+        return;
+      }
+      fromScrollSpyRef.current = true;
+      editorStore.setCurrentPage(bestId, { syncFitZoom: false });
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const { target } = entry;
+          if (!(target instanceof HTMLElement)) {
+            continue;
+          }
+          const id = target.dataset.pageId;
+          if (!id) {
+            continue;
+          }
+          ratios.set(id, entry.isIntersecting ? entry.intersectionRatio : 0);
+        }
+        pickActive();
+      },
+      {
+        root,
+        rootMargin: SCROLL_SPY_ROOT_MARGIN,
+        threshold: SCROLL_SPY_THRESHOLDS,
+      }
+    );
+
+    for (const id of ids) {
+      const node = pageEls.current.get(id);
+      if (node) {
+        observer.observe(node);
+      }
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [pageIds]);
+
+  useEffect(() => {
+    if (!currentPageId) {
+      return;
+    }
+    if (fromScrollSpyRef.current) {
+      fromScrollSpyRef.current = false;
+      return;
+    }
+    const node = pageEls.current.get(currentPageId);
+    if (!node) {
+      return;
+    }
+    ignoreScrollSpyUntil.current = performance.now() + SCROLL_SPY_SUPPRESS_MS;
+    node.scrollIntoView({ behavior: "instant", block: "nearest" });
+  }, [currentPageId]);
+
+  const setPageEl = (id: string, node: HTMLDivElement | null): void => {
+    if (node) {
+      pageEls.current.set(id, node);
+      return;
+    }
+    pageEls.current.delete(id);
+  };
+
   const displayZoom = previewZoom ?? zoom;
-  const rasterScale = displayZoom / zoom;
-  const previewing = previewZoom !== null && rasterScale !== 1;
-  const pageWidth = page ? page.width * zoom : 0;
-  const pageHeight = page ? page.height * zoom : 0;
-  const displayWidth = page ? page.width * displayZoom : 0;
-  const displayHeight = page ? page.height * displayZoom : 0;
-  const swapped = page ? page.rotation % 180 !== 0 : false;
-  const frameWidth = swapped ? displayHeight : displayWidth;
-  const frameHeight = swapped ? displayWidth : displayHeight;
-  const canvasWidth = swapped ? pageHeight : pageWidth;
-  const canvasHeight = swapped ? pageWidth : pageHeight;
-  const canvasRotation = page
-    ? normalizeRotation(page.sourceRotate + page.rotation)
-    : 0;
 
-  useLayoutEffect(() => {
-    const node = frameRef.current;
-    if (!node || frameWidth === 0 || frameHeight === 0) {
-      return;
-    }
-    const rect = node.getBoundingClientRect();
-    const x = pixelSnapOffset(rect.left, pixelRatio);
-    const y = pixelSnapOffset(rect.top, pixelRatio);
-    if (x === 0 && y === 0) {
-      return;
-    }
-    setSnap((current) => ({ x: current.x + x, y: current.y + y }));
-  }, [frameHeight, frameWidth, pixelRatio]);
-
-  if (!page) {
+  if (pages.length === 0) {
     return null;
   }
-
-  const overlayStyle =
-    page.rotation === 0
-      ? { inset: 0 }
-      : {
-          height: pageHeight,
-          left: (canvasWidth - pageWidth) / 2,
-          top: (canvasHeight - pageHeight) / 2,
-          transform: `rotate(${page.rotation}deg)`,
-          transformOrigin: "center center",
-          width: pageWidth,
-        };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -151,36 +200,17 @@ export const EditorViewport = () => {
         }}
         ref={scrollerRef}
       >
-        <div className="flex min-h-full min-w-full items-center justify-center p-8">
-          <div
-            className="relative flex shrink-0 items-center justify-center shadow-lg"
-            ref={frameRef}
-            style={{
-              height: frameHeight,
-              marginLeft: snap.x,
-              marginTop: snap.y,
-              width: frameWidth,
-            }}
-          >
-            <div
-              className="relative"
-              style={{
-                height: canvasHeight,
-                transform: previewing ? `scale(${rasterScale})` : undefined,
-                transformOrigin: "center center",
-                width: canvasWidth,
-              }}
-            >
-              <PdfCanvas
-                rotation={canvasRotation}
-                scale={zoom}
-                sourceIndex={page.sourceIndex}
-              />
-              <div className="absolute" style={overlayStyle}>
-                <EditorOverlay page={page} zoom={zoom} />
-              </div>
-            </div>
-          </div>
+        <div className="flex min-w-full flex-col items-center gap-6 p-8">
+          {pages.map((page) => (
+            <EditorPageFrame
+              displayZoom={displayZoom}
+              key={page.id}
+              page={page}
+              pageRef={setPageEl}
+              scrollerRef={scrollerRef}
+              zoom={zoom}
+            />
+          ))}
         </div>
       </div>
     </div>

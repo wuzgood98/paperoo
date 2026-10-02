@@ -1,7 +1,7 @@
 "use client";
 
 import { RotateCwIcon, Trash2Icon } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { PageThumbnail } from "@/components/editor/page-thumbnail";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,15 @@ export const PageSidebar = () => {
   const pages = useEditorStore((state) => state.document.pages);
   const currentPageId = useEditorStore((state) => state.currentPageId);
   const dragIndex = useRef<number | null>(null);
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  useEffect(() => {
+    if (!currentPageId) {
+      return;
+    }
+    const node = itemRefs.current.get(currentPageId);
+    node?.scrollIntoView({ behavior: "instant", block: "nearest" });
+  }, [currentPageId]);
 
   if (pages.length === 0) {
     return (
@@ -79,6 +88,13 @@ export const PageSidebar = () => {
                   }
                   next.splice(index, 0, moved);
                   editorStore.setPages(next);
+                }}
+                ref={(node) => {
+                  if (node) {
+                    itemRefs.current.set(page.id, node);
+                    return;
+                  }
+                  itemRefs.current.delete(page.id);
                 }}
                 type="button"
               >
