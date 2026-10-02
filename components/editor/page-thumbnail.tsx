@@ -49,11 +49,18 @@ export const PageThumbnail = ({
 
     let task: Awaited<ReturnType<typeof renderPdfPage>> = null;
 
+    let retained = false;
+
     const draw = async () => {
-      const pdfPage = await pdfSession.getPage(page.sourceIndex);
-      if (!pdfPage || cancelled) {
+      const pdfPage = await pdfSession.retainPage(page.sourceIndex);
+      if (!pdfPage) {
         return;
       }
+      if (cancelled) {
+        pdfSession.releasePageRef(page.sourceIndex);
+        return;
+      }
+      retained = true;
       task = await renderPdfPage(pdfPage, canvas, thumbnailScale(page.width), {
         annotationMode: AnnotationMode.DISABLE,
         previous: task,
@@ -67,6 +74,9 @@ export const PageThumbnail = ({
       cancelled = true;
       task?.cancel();
       releaseCanvas(canvas);
+      if (retained) {
+        pdfSession.releasePageRef(page.sourceIndex);
+      }
     };
   }, [page.sourceIndex, page.width, visible]);
 

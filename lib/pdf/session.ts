@@ -36,8 +36,12 @@ import type {
 
 export const PDF_HEADER = "%PDF";
 
+/** Matches mozilla/pdf.js PDFPageViewBuffer DEFAULT_CACHE_SIZE. */
+export const DEFAULT_PAGE_IDLE_CACHE = 10;
+
 interface PageCacheEntry {
   page: PDFPageProxy;
+  refs: number;
 }
 
 class PdfSession {
@@ -45,9 +49,18 @@ class PdfSession {
   #doc: PDFDocumentProxy | null = null;
   #loadingTask: PDFDocumentLoadingTask | null = null;
   #pages = new Map<number, PageCacheEntry>();
+  /** Idle (refs === 0) source indexes, oldest first. */
+  #idleOrder: number[] = [];
+  #idleBudget = DEFAULT_PAGE_IDLE_CACHE;
 
   get document(): PDFDocumentProxy | null {
     return this.#doc;
+  }
+
+  /** Cap idle retained pages ≈ PDF.js `max(10, 2 * visible + 1)`. */
+  setIdleCacheBudget(visibleCount: number): void {
+    this.#idleBudget = Math.max(DEFAULT_PAGE_IDLE_CACHE, 2 * visibleCount + 1);
+    this.#evictIdle();
   }
 
   async open(bytes: Uint8Array): Promise<EditorPage[]> {
@@ -163,10 +176,41 @@ class PdfSession {
       return null;
     }
     const page = await this.#doc.getPage(sourceIndex + 1);
-    this.#pages.set(sourceIndex, { page });
+    this.#pages.set(sourceIndex, { page, refs: 0 });
+    this.#touchIdle(sourceIndex);
+    this.#evictIdle();
     return page;
   }
 
+  /** Load (or reuse) a page and increment its live consumer count. */
+  async retainPage(sourceIndex: number): Promise<PDFPageProxy | null> {
+    const page = await this.getPage(sourceIndex);
+    if (!page) {
+      return null;
+    }
+    const entry = this.#pages.get(sourceIndex);
+    if (!entry) {
+      return null;
+    }
+    entry.refs += 1;
+    this.#removeIdle(sourceIndex);
+    return page;
+  }
+
+  /** Decrement live consumers; idle pages stay until LRU budget eviction. */
+  releasePageRef(sourceIndex: number): void {
+    const entry = this.#pages.get(sourceIndex);
+    if (!entry) {
+      return;
+    }
+    entry.refs = Math.max(0, entry.refs - 1);
+    if (entry.refs === 0) {
+      this.#touchIdle(sourceIndex);
+      this.#evictIdle();
+    }
+  }
+
+  /** Force-evict a page (used by close / tests). */
   releasePage(sourceIndex: number): void {
     const entry = this.#pages.get(sourceIndex);
     if (!entry) {
@@ -174,6 +218,12 @@ class PdfSession {
     }
     entry.page.cleanup();
     this.#pages.delete(sourceIndex);
+    this.#removeIdle(sourceIndex);
+  }
+
+  /** Test/helper: current retained page indexes. */
+  cachedPageIndexes(): number[] {
+    return [...this.#pages.keys()];
   }
 
   async close(): Promise<void> {
@@ -181,11 +231,40 @@ class PdfSession {
     for (const sourceIndex of cachedIndexes) {
       this.releasePage(sourceIndex);
     }
+    this.#idleOrder = [];
+    this.#idleBudget = DEFAULT_PAGE_IDLE_CACHE;
     await this.#doc?.cleanup();
     await this.#loadingTask?.destroy();
     this.#doc = null;
     this.#loadingTask = null;
     this.bytes = null;
+  }
+
+  #touchIdle(sourceIndex: number): void {
+    this.#removeIdle(sourceIndex);
+    this.#idleOrder.push(sourceIndex);
+  }
+
+  #removeIdle(sourceIndex: number): void {
+    const index = this.#idleOrder.indexOf(sourceIndex);
+    if (index !== -1) {
+      this.#idleOrder.splice(index, 1);
+    }
+  }
+
+  #evictIdle(): void {
+    while (this.#idleOrder.length > this.#idleBudget) {
+      const oldest = this.#idleOrder.shift();
+      if (oldest === undefined) {
+        return;
+      }
+      const entry = this.#pages.get(oldest);
+      if (!entry || entry.refs > 0) {
+        continue;
+      }
+      entry.page.cleanup();
+      this.#pages.delete(oldest);
+    }
   }
 }
 
