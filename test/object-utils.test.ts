@@ -6,6 +6,7 @@ import {
   fittedPdfTextBox,
   fittedPdfTextWidth,
   hitTestPdfImage,
+  hitTestPdfText,
   isPdfImageDirty,
   isPdfTextDirty,
   PDF_IMAGE_COVER_BLEED,
@@ -269,6 +270,38 @@ test("pdfTextOverlayBox grows when dirty text measures wider", () => {
     x: 72,
     y: 74,
   });
+});
+
+test("hitTestPdfText hits grown dirty text outside the original width", () => {
+  const object: PdfTextObject = {
+    dir: "ltr",
+    fontFamily: "sans",
+    fontName: "g_d0_f1",
+    fontSize: 20,
+    fontWeight: 400,
+    hasEOL: false,
+    height: 20,
+    id: "pdf-1",
+    italic: false,
+    originalFontFamily: "sans",
+    originalFontSize: 20,
+    originalText: "Hi",
+    pageId: "page-1",
+    rotation: 0,
+    sourceIndex: 0,
+    text: "Hello World Extended",
+    transform: [20, 0, 0, 20, 72, 700],
+    type: "pdf-text",
+    width: 40,
+    x: 72,
+    y: 74,
+  };
+  expect(isPdfTextDirty(object)).toBe(true);
+  // Fallback measure in Node: length * fontSize * 0.5 = 20 * 20 * 0.5 = 200
+  expect(hitTestPdfText([object], { x: 72 + 40 + 10, y: 80 })?.id).toBe(
+    "pdf-1"
+  );
+  expect(hitTestPdfText([object], { x: 72 + 200 + 10, y: 80 })).toBeUndefined();
 });
 
 test("scaleObjectToBox scales text font size with height", () => {

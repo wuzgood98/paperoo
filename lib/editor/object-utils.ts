@@ -31,6 +31,7 @@ import type {
   Size,
   TextObject,
 } from "@/lib/editor/types";
+import { canvasTextWidth } from "@/lib/fonts/measure-text";
 
 export const editorPageOrder = (
   pages: readonly { sourceIndex: number }[]
@@ -350,18 +351,30 @@ export const pdfTextOverlayBox = (
         y: object.y,
       };
 
+export const measurePdfTextWidth = (
+  object: PdfTextObject,
+  text: string = object.text
+): number =>
+  canvasTextWidth(text, {
+    fontFamily: object.fontFamily ?? "sans",
+    fontSize: object.fontSize ?? object.height,
+    fontWeight: object.fontWeight ?? 400,
+    italic: object.italic === true,
+  });
+
 export const hitTestPdfText = (
   objects: readonly PdfTextObject[],
   point: Point
 ): PdfTextObject | undefined => {
   for (const object of objects.toReversed()) {
+    const box = pdfTextOverlayBox(object, measurePdfTextWidth(object));
     if (
-      object.width > 0 &&
-      object.height > 0 &&
-      point.x >= object.x &&
-      point.x <= object.x + object.width &&
-      point.y >= object.y &&
-      point.y <= object.y + object.height
+      box.width > 0 &&
+      box.height > 0 &&
+      point.x >= box.x &&
+      point.x <= box.x + box.width &&
+      point.y >= box.y &&
+      point.y <= box.y + box.height
     ) {
       return object;
     }

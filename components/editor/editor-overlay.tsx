@@ -11,6 +11,11 @@ import type {
   OverlayDraft,
 } from "@/components/editor/overlay-gestures";
 import { OverlayObject } from "@/components/editor/overlay-object";
+import {
+  beginPdfTextEditAtPoint,
+  pdfHoverIdsAtPoint,
+  selectPdfObjectAtPoint,
+} from "@/components/editor/overlay-pdf-hit";
 import { OverlayPreviews } from "@/components/editor/overlay-previews";
 import { PdfImageLayer } from "@/components/editor/pdf-image-layer";
 import { PdfTextLayer } from "@/components/editor/pdf-text-layer";
@@ -19,9 +24,6 @@ import type { PageBounds } from "@/lib/editor/coordinates";
 import {
   createSignatureObject,
   createTextObject,
-  hitTestPdfImage,
-  hitTestPdfText,
-  hitTestPdfVector,
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
@@ -60,6 +62,7 @@ export const EditorOverlay = ({
   const gestureRef = useRef<Gesture | null>(null);
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingPdfTextId, setEditingPdfTextId] = useState<string | null>(null);
   const [hoveredPdfImageId, setHoveredPdfImageId] = useState<string | null>(
     null
   );
@@ -97,6 +100,11 @@ export const EditorOverlay = ({
     }
   );
 
+  const clearInlineEditing = () => {
+    setEditingId(null);
+    setEditingPdfTextId(null);
+  };
+
   return (
     <div
       className={cn(
@@ -106,7 +114,15 @@ export const EditorOverlay = ({
       onContextMenu={(event) => {
         if (event.target === event.currentTarget) {
           editorStore.clearSelection();
+          setEditingPdfTextId(null);
         }
+      }}
+      onDoubleClick={(event) => {
+        if (tool !== "select" || event.button !== 0) {
+          return;
+        }
+        setEditingId(null);
+        beginPdfTextEditAtPoint(page, toPage(event), setEditingPdfTextId);
       }}
       onPointerCancel={(event) => {
         gestureRef.current = null;
@@ -132,6 +148,7 @@ export const EditorOverlay = ({
           );
           editorStore.addObject(object);
           setEditingId(object.id);
+          setEditingPdfTextId(null);
           return;
         }
 
@@ -142,19 +159,15 @@ export const EditorOverlay = ({
         }
 
         if (tool === "signature" && pending) {
-          const box = {
-            ...SIGNATURE_PLACE_SIZE,
-            x: point.x,
-            y: point.y,
-          };
           editorStore.addObject(
             createSignatureObject(
               scaleSignaturePoints(pending, SIGNATURE_PLACE_SIZE),
-              box
+              { ...SIGNATURE_PLACE_SIZE, x: point.x, y: point.y }
             )
           );
           pendingSignature.set(null);
           setPreviewPoint(null);
+          setEditingPdfTextId(null);
           return;
         }
 
@@ -172,33 +185,11 @@ export const EditorOverlay = ({
 
         if (event.target === event.currentTarget) {
           if (tool === "select") {
-            const textHit = hitTestPdfText(page.pdfTextObjects, point);
-            if (textHit) {
-              editorStore.selectPdfText(textHit.id);
-              setEditingId(null);
-              return;
-            }
-            const imageHit = hitTestPdfImage(page.pdfImageObjects, point);
-            if (imageHit) {
-              editorStore.selectPdfImage(imageHit.id);
-              void ensurePdfImagePreview(imageHit, page.sourceIndex);
-              setEditingId(null);
-              return;
-            }
-            const vectorHit = hitTestPdfVector(
-              page.pdfVectorObjects,
-              point,
-              page.cropBox,
-              page.sourceRotate
-            );
-            if (vectorHit) {
-              editorStore.selectPdfVector(vectorHit.id);
-              setEditingId(null);
-              return;
-            }
+            selectPdfObjectAtPoint(page, point);
+          } else {
+            editorStore.clearSelection();
           }
-          editorStore.clearSelection();
-          setEditingId(null);
+          clearInlineEditing();
         }
       }}
       onPointerEnter={(event) => {
@@ -216,34 +207,23 @@ export const EditorOverlay = ({
         if (tool !== "select" || gestureRef.current) {
           return;
         }
-        const point = toPage(event);
-        const textHit = hitTestPdfText(page.pdfTextObjects, point);
-        const nextTextId = textHit?.id ?? null;
+        const hover = pdfHoverIdsAtPoint(page, toPage(event));
         setHoveredPdfTextId((current) =>
-          current === nextTextId ? current : nextTextId
+          current === hover.textId ? current : hover.textId
         );
-        const imageHit = textHit
-          ? undefined
-          : hitTestPdfImage(page.pdfImageObjects, point);
-        const nextImageId = imageHit?.id ?? null;
-        if (imageHit && imageHit.id !== hoveredPdfImageId) {
-          void ensurePdfImagePreview(imageHit, page.sourceIndex);
+        if (hover.imageId && hover.imageId !== hoveredPdfImageId) {
+          const image = page.pdfImageObjects.find(
+            (item) => item.id === hover.imageId
+          );
+          if (image) {
+            void ensurePdfImagePreview(image, page.sourceIndex);
+          }
         }
         setHoveredPdfImageId((current) =>
-          current === nextImageId ? current : nextImageId
+          current === hover.imageId ? current : hover.imageId
         );
-        const vectorHit =
-          textHit || imageHit
-            ? undefined
-            : hitTestPdfVector(
-                page.pdfVectorObjects,
-                point,
-                page.cropBox,
-                page.sourceRotate
-              );
-        const nextVectorId = vectorHit?.id ?? null;
         setHoveredPdfVectorId((current) =>
-          current === nextVectorId ? current : nextVectorId
+          current === hover.vectorId ? current : hover.vectorId
         );
       }}
       onPointerUp={onPointerUp}
@@ -289,8 +269,12 @@ export const EditorOverlay = ({
         zoom={zoom}
       />
       <PdfTextLayer
+        editingId={editingPdfTextId}
         hoveredId={hoveredPdfTextId}
         objects={page.pdfTextObjects}
+        onExitEdit={() => {
+          setEditingPdfTextId(null);
+        }}
         selectedId={selectedPdfTextId}
         zoom={zoom}
       />
