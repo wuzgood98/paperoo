@@ -3,6 +3,7 @@
 import {
   DownloadIcon,
   FileUpIcon,
+  PrinterIcon,
   Redo2Icon,
   Undo2Icon,
   ZoomInIcon,
@@ -25,6 +26,7 @@ import {
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP } from "@/lib/editor/types";
 import { openPdfFromList } from "@/lib/pdf/open-pdf";
 import { runExport } from "@/lib/pdf/run-export";
+import { runPrint } from "@/lib/pdf/run-print";
 
 const openFile = async (files: FileList | null) => {
   await openPdfFromList(files);
@@ -38,6 +40,18 @@ const exportPdf = async () => {
     toastManager.add({
       description: error instanceof Error ? error.message : "Export failed.",
       title: "Export failed",
+      type: "error",
+    });
+  }
+};
+
+const printPdf = async () => {
+  try {
+    await runPrint();
+  } catch (error) {
+    toastManager.add({
+      description: error instanceof Error ? error.message : "Print failed.",
+      title: "Print failed",
       type: "error",
     });
   }
@@ -94,15 +108,15 @@ export const EditorToolbar = () => {
         ref={inputRef}
         type="file"
       />
-      <ToolbarTip label="Open PDF">
+      <ToolbarTip label="Open PDF" shortcut="⌘O">
         <Button
           pressable
+          aria-label="Open PDF"
           onClick={() => inputRef.current?.click()}
-          size="sm"
-          variant="outline"
+          size="icon-sm"
+          variant="ghost"
         >
           <FileUpIcon />
-          Open
         </Button>
       </ToolbarTip>
       <ToolbarTip label="Undo" shortcut="⌘Z">
@@ -171,19 +185,35 @@ export const EditorToolbar = () => {
       >
         Width
       </Toggle>
-      <div className="ml-auto">
-        <Button
-          pressable
-          disabled={!ready || isExporting}
-          loading={isExporting}
-          onClick={async () => {
-            await exportPdf();
-          }}
-          size="sm"
-        >
-          <DownloadIcon />
-          Export PDF
-        </Button>
+      <div className="ml-auto flex items-center gap-1">
+        <ToolbarTip label="Print" shortcut="⌘P">
+          <Button
+            pressable
+            aria-label="Print"
+            disabled={!ready || isExporting}
+            onClick={async () => {
+              await printPdf();
+            }}
+            size="icon-sm"
+            variant="ghost"
+          >
+            <PrinterIcon />
+          </Button>
+        </ToolbarTip>
+        <ToolbarTip label="Export PDF">
+          <Button
+            pressable
+            aria-label="Export PDF"
+            disabled={!ready || isExporting}
+            onClick={async () => {
+              await exportPdf();
+            }}
+            size="icon-sm"
+            variant="default"
+          >
+            <DownloadIcon />
+          </Button>
+        </ToolbarTip>
       </div>
     </header>
   );

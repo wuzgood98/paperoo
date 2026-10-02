@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 
+import { toastManager } from "@/components/ui/toast-manager";
 import { editorStore } from "@/lib/editor/store";
 import {
   NUDGE_DISTANCE,
@@ -9,6 +10,24 @@ import {
   ZOOM_STEP,
 } from "@/lib/editor/types";
 import { bindHotkeys } from "@/lib/hotkeys";
+import { runPrint } from "@/lib/pdf/run-print";
+
+const printEditedPdf = async (): Promise<void> => {
+  const state = editorStore.getState();
+  if (state.status !== "ready" || state.isExporting) {
+    return;
+  }
+
+  try {
+    await runPrint();
+  } catch (error) {
+    toastManager.add({
+      description: error instanceof Error ? error.message : "Print failed.",
+      title: "Print failed",
+      type: "error",
+    });
+  }
+};
 
 const nudgeSelected = (deltaX: number, deltaY: number): void => {
   if (editorStore.getState().selectedPdfImageId) {
@@ -95,6 +114,13 @@ export const EditorHotkeys = () => {
               ?.click();
           },
           key: "o",
+          meta: true,
+        },
+        {
+          handler: () => {
+            void printEditedPdf();
+          },
+          key: "p",
           meta: true,
         },
       ]),

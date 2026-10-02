@@ -12,7 +12,7 @@ const fetchBytes = async (url: string): Promise<ArrayBuffer> => {
   return response.arrayBuffer();
 };
 
-export const runExport = async (): Promise<void> => {
+export const buildEditedPdfBytes = async (): Promise<ArrayBuffer> => {
   const state = editorStore.getState();
   const { bytes } = pdfSession;
   if (!bytes || state.document.pages.length === 0) {
@@ -54,7 +54,7 @@ export const runExport = async (): Promise<void> => {
     });
 
     // oxlint-disable-next-line promise/avoid-new -- worker results arrive through message events
-    const result = await new Promise<ArrayBuffer>((resolve, reject) => {
+    return await new Promise<ArrayBuffer>((resolve, reject) => {
       worker.addEventListener(
         "message",
         (
@@ -87,16 +87,20 @@ export const runExport = async (): Promise<void> => {
         { transfer: [exportBytes.buffer] }
       );
     });
-
-    const blob = new Blob([result], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const baseName = state.fileName?.replace(/\.pdf$/iu, "") ?? "document";
-    link.href = url;
-    link.download = `${baseName}-edited.pdf`;
-    link.click();
-    URL.revokeObjectURL(url);
   } finally {
     editorStore.setExporting(false);
   }
+};
+
+export const runExport = async (): Promise<void> => {
+  const result = await buildEditedPdfBytes();
+  const state = editorStore.getState();
+  const blob = new Blob([result], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const baseName = state.fileName?.replace(/\.pdf$/iu, "") ?? "document";
+  link.href = url;
+  link.download = `${baseName}-edited.pdf`;
+  link.click();
+  URL.revokeObjectURL(url);
 };
