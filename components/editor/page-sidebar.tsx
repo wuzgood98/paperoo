@@ -3,6 +3,7 @@
 import { RotateCwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useRef } from "react";
 
+import { ToolbarTip } from "@/components/editor/editor-toolbar";
 import { PageThumbnail } from "@/components/editor/page-thumbnail";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -11,6 +12,7 @@ import { editorStore, useEditorStore } from "@/lib/editor/store";
 export const PageSidebar = () => {
   const pages = useEditorStore((state) => state.document.pages);
   const currentPageId = useEditorStore((state) => state.currentPageId);
+  const canDeletePage = pages.length > 1;
   const dragIndex = useRef<number | null>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -37,28 +39,41 @@ export const PageSidebar = () => {
           Pages
         </p>
         <div className="flex gap-1">
-          <Button
-            pressable
-            onClick={() => editorStore.rotateCurrentPage(90)}
-            size="icon-xs"
-            variant="ghost"
+          <ToolbarTip label="Rotate current page">
+            <Button
+              pressable
+              onClick={() => editorStore.rotateCurrentPage(90)}
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Rotate current page"
+            >
+              <RotateCwIcon />
+            </Button>
+          </ToolbarTip>
+          <ToolbarTip
+            label={
+              canDeletePage
+                ? "Delete current page"
+                : "Can't delete the last page"
+            }
           >
-            <RotateCwIcon />
-          </Button>
-          <Button
-            pressable
-            onClick={() => {
-              const next = pages.filter((page) => page.id !== currentPageId);
-              if (next.length === 0) {
-                return;
-              }
-              editorStore.setPages(next);
-            }}
-            size="icon-xs"
-            variant="ghost"
-          >
-            <Trash2Icon />
-          </Button>
+            <Button
+              pressable
+              disabled={!canDeletePage}
+              onClick={() => {
+                const next = pages.filter((page) => page.id !== currentPageId);
+                if (next.length === 0) {
+                  return;
+                }
+                editorStore.setPages(next);
+              }}
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Delete current page"
+            >
+              <Trash2Icon />
+            </Button>
+          </ToolbarTip>
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
