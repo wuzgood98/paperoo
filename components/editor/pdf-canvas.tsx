@@ -26,10 +26,19 @@ export const PdfCanvas = ({
       return;
     }
     let cancelled = false;
+    let retained = false;
 
     const draw = async () => {
-      const page = await pdfSession.getPage(sourceIndex);
-      if (!page || cancelled || !canvasRef.current) {
+      const page = await pdfSession.retainPage(sourceIndex);
+      if (!page) {
+        return;
+      }
+      if (cancelled) {
+        pdfSession.releasePageRef(sourceIndex);
+        return;
+      }
+      retained = true;
+      if (!canvasRef.current) {
         return;
       }
       const task = await renderPdfPage(page, canvasRef.current, scale, {
@@ -48,6 +57,9 @@ export const PdfCanvas = ({
       cancelled = true;
       taskRef.current?.cancel();
       releaseCanvas(canvas);
+      if (retained) {
+        pdfSession.releasePageRef(sourceIndex);
+      }
     };
   }, [pixelRatio, rotation, scale, sourceIndex]);
 

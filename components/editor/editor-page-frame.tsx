@@ -1,33 +1,25 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { RefObject } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { EditorOverlay } from "@/components/editor/editor-overlay";
 import { PdfCanvas } from "@/components/editor/pdf-canvas";
 import { normalizeRotation, pixelSnapOffset } from "@/lib/editor/coordinates";
-import { editorStore, useEditorStore } from "@/lib/editor/store";
+import { pageFrameCssSize } from "@/lib/editor/page-frame-size";
+import { editorStore } from "@/lib/editor/store";
 import type { EditorPage } from "@/lib/editor/types";
 import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
-
-const VISIBILITY_ROOT_MARGIN = "100% 0px";
 
 export const EditorPageFrame = ({
   displayZoom,
   page,
-  pageRef,
-  scrollerRef,
   zoom,
 }: {
   displayZoom: number;
   page: EditorPage;
-  pageRef: (id: string, node: HTMLDivElement | null) => void;
-  scrollerRef: RefObject<HTMLDivElement | null>;
   zoom: number;
 }) => {
-  const currentPageId = useEditorStore((state) => state.currentPageId);
   const rootRef = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(page.id === currentPageId);
   const [snap, setSnap] = useState({ x: 0, y: 0 });
   const pixelRatio = useDevicePixelRatio();
 
@@ -35,31 +27,14 @@ export const EditorPageFrame = ({
   const previewing = rasterScale !== 1;
   const pageWidth = page.width * zoom;
   const pageHeight = page.height * zoom;
-  const displayWidth = page.width * displayZoom;
-  const displayHeight = page.height * displayZoom;
+  const { height: frameHeight, width: frameWidth } = pageFrameCssSize(
+    page,
+    displayZoom
+  );
   const swapped = page.rotation % 180 !== 0;
-  const frameWidth = swapped ? displayHeight : displayWidth;
-  const frameHeight = swapped ? displayWidth : displayHeight;
   const canvasWidth = swapped ? pageHeight : pageWidth;
   const canvasHeight = swapped ? pageWidth : pageHeight;
   const canvasRotation = normalizeRotation(page.sourceRotate + page.rotation);
-
-  useEffect(() => {
-    const node = rootRef.current;
-    const root = scrollerRef.current;
-    if (!node || !root) {
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const [entry] = entries;
-        setVisible(Boolean(entry?.isIntersecting || page.id === currentPageId));
-      },
-      { root, rootMargin: VISIBILITY_ROOT_MARGIN }
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [currentPageId, page.id, scrollerRef]);
 
   useLayoutEffect(() => {
     const node = rootRef.current;
@@ -87,6 +62,15 @@ export const EditorPageFrame = ({
           width: pageWidth,
         };
 
+  const snapTransform =
+    snap.x !== 0 || snap.y !== 0
+      ? `translate(${snap.x}px, ${snap.y}px)`
+      : undefined;
+  const previewTransform = previewing ? `scale(${rasterScale})` : undefined;
+  const innerTransform = [snapTransform, previewTransform]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div
       className="relative flex shrink-0 items-center justify-center shadow-lg"
@@ -97,37 +81,30 @@ export const EditorPageFrame = ({
         }
         editorStore.setCurrentPage(page.id, { syncFitZoom: false });
       }}
-      ref={(node) => {
-        rootRef.current = node;
-        pageRef(page.id, node);
-      }}
+      ref={rootRef}
       style={{
         height: frameHeight,
-        marginLeft: snap.x,
-        marginTop: snap.y,
         width: frameWidth,
       }}
     >
-      {visible ? (
-        <div
-          className="relative"
-          style={{
-            height: canvasHeight,
-            transform: previewing ? `scale(${rasterScale})` : undefined,
-            transformOrigin: "center center",
-            width: canvasWidth,
-          }}
-        >
-          <PdfCanvas
-            rotation={canvasRotation}
-            scale={zoom}
-            sourceIndex={page.sourceIndex}
-          />
-          <div className="absolute" style={overlayStyle}>
-            <EditorOverlay page={page} zoom={zoom} />
-          </div>
+      <div
+        className="relative"
+        style={{
+          height: canvasHeight,
+          transform: innerTransform || undefined,
+          transformOrigin: "center center",
+          width: canvasWidth,
+        }}
+      >
+        <PdfCanvas
+          rotation={canvasRotation}
+          scale={zoom}
+          sourceIndex={page.sourceIndex}
+        />
+        <div className="absolute" style={overlayStyle}>
+          <EditorOverlay page={page} zoom={zoom} />
         </div>
-      ) : null}
+      </div>
     </div>
   );
 };
