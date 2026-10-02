@@ -1,5 +1,7 @@
 "use client";
 
+import { BoldIcon, ItalicIcon } from "lucide-react";
+
 import { ColorField } from "@/components/editor/color-field";
 import { ToolbarTip } from "@/components/editor/editor-toolbar";
 import { PdfImageInspector } from "@/components/editor/pdf-image-inspector";
@@ -123,11 +125,11 @@ export const InspectorBar = () => {
                     : object
                 )
               }
-              size="xs"
+              size="icon-xs"
               variant={selected.fontWeight === 700 ? "secondary" : "ghost"}
               aria-label="Bold"
             >
-              B
+              <BoldIcon />
             </Button>
           </ToolbarTip>
           <ToolbarTip label="Italic">
@@ -139,12 +141,12 @@ export const InspectorBar = () => {
                     : object
                 )
               }
-              size="xs"
+              size="icon-xs"
               variant={selected.italic ? "secondary" : "ghost"}
               decoration="italic"
               aria-label="Italic"
             >
-              I
+              <ItalicIcon />
             </Button>
           </ToolbarTip>
           {TEXT_ALIGNS.map((align) => (
