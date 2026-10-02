@@ -1,57 +1,163 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
-import { isPdfTextDirty, pdfTextOverlayBox } from "@/lib/editor/object-utils";
-import type { PdfTextObject } from "@/lib/editor/types";
 import {
-  canvasTextWidth,
-  ensureEditorFonts,
-  fontFamilyCss,
-} from "@/lib/fonts/measure-text";
+  fittedPdfTextBox,
+  isPdfTextDirty,
+  measurePdfTextWidth,
+  pdfTextOverlayBox,
+} from "@/lib/editor/object-utils";
+import { editorStore } from "@/lib/editor/store";
+import type { PdfTextObject } from "@/lib/editor/types";
+import { ensureEditorFonts, fontFamilyCss } from "@/lib/fonts/measure-text";
 import { cn } from "@/lib/utils";
 
 const REPLACEMENT_COLOR = "#111827";
 
-const measuredPdfTextWidth = (object: PdfTextObject): number =>
-  canvasTextWidth(object.text, {
-    fontFamily: object.fontFamily ?? "sans",
-    fontSize: object.fontSize ?? object.height,
-    fontWeight: object.fontWeight ?? 400,
-    italic: object.italic === true,
-  });
+const overlayFrame = (
+  object: PdfTextObject,
+  text: string = object.text
+): ReturnType<typeof pdfTextOverlayBox> => {
+  const measured = measurePdfTextWidth(object, text);
+  if (text !== object.text) {
+    return fittedPdfTextBox(object, measured);
+  }
+  return pdfTextOverlayBox(object, measured);
+};
 
-const overlayFrame = (object: PdfTextObject) =>
-  pdfTextOverlayBox(object, measuredPdfTextWidth(object));
+const PdfTextEditor = ({
+  object,
+  onExit,
+  zoom,
+}: {
+  object: PdfTextObject;
+  onExit: () => void;
+  zoom: number;
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const discardRef = useRef(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? object.text;
+  const frame = overlayFrame(object, value);
+  const fontSizeCss = pageToCss(object.fontSize ?? object.height, zoom);
+
+  useEffect(() => {
+    void ensureEditorFonts();
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+    input.focus();
+    const { length } = input.value;
+    input.setSelectionRange(length, length);
+  }, []);
+
+  const commit = (next: string): void => {
+    if (next !== object.text) {
+      editorStore.patchPdfText((current) => ({ ...current, text: next }));
+    }
+    onExit();
+  };
+
+  return (
+    <div
+      className="absolute origin-center"
+      style={objectWrapperStyle({ ...frame, rotation: object.rotation }, zoom)}
+    >
+      <div className="absolute inset-0 bg-white" />
+      <input
+        aria-label="Edit PDF text"
+        className="relative h-full w-full min-w-0 border-0 bg-transparent p-0 outline-none select-text"
+        dir={object.dir === "rtl" ? "rtl" : "ltr"}
+        onBlur={() => {
+          if (discardRef.current) {
+            discardRef.current = false;
+            onExit();
+            return;
+          }
+          commit(value);
+        }}
+        onChange={(event) => {
+          setDraft(event.currentTarget.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.currentTarget.blur();
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            discardRef.current = true;
+            event.currentTarget.blur();
+          }
+        }}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+        }}
+        ref={inputRef}
+        style={{
+          color: REPLACEMENT_COLOR,
+          fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
+          fontSize: fontSizeCss,
+          fontStyle: object.italic === true ? "italic" : "normal",
+          fontWeight: object.fontWeight ?? 400,
+          lineHeight: 1,
+        }}
+        type="text"
+        value={value}
+      />
+    </div>
+  );
+};
 
 export const PdfTextLayer = ({
+  editingId,
   hoveredId,
   objects,
+  onExitEdit,
   selectedId,
   zoom,
 }: {
+  editingId: string | null;
   hoveredId: string | null;
   objects: readonly PdfTextObject[];
+  onExitEdit: () => void;
   selectedId: string | null;
   zoom: number;
 }) => {
   const hasDirty = objects.some((object) => isPdfTextDirty(object));
+  const isEditing = editingId !== null;
 
   useEffect(() => {
     void ensureEditorFonts();
   }, []);
 
   useEffect(() => {
-    if (hasDirty) {
+    if (hasDirty || isEditing) {
       void ensureEditorFonts();
     }
-  }, [hasDirty]);
+  }, [hasDirty, isEditing]);
 
   return (
     <>
-      {objects.map((object) =>
-        isPdfTextDirty(object) ? (
+      {objects.map((object) => {
+        if (object.id === editingId) {
+          return (
+            <PdfTextEditor
+              key={`edit-${object.id}`}
+              object={object}
+              onExit={onExitEdit}
+              zoom={zoom}
+            />
+          );
+        }
+        if (!isPdfTextDirty(object)) {
+          return null;
+        }
+        return (
           <div
             className="pointer-events-none absolute origin-center"
             key={`dirty-${object.id}`}
@@ -80,9 +186,12 @@ export const PdfTextLayer = ({
               {object.text}
             </div>
           </div>
-        ) : null
-      )}
+        );
+      })}
       {objects.map((object) => {
+        if (object.id === editingId) {
+          return null;
+        }
         const hovered = object.id === hoveredId;
         const selected = object.id === selectedId;
         if (!hovered && !selected) {

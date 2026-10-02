@@ -11,24 +11,9 @@ import {
 } from "@/components/ui/select";
 import { editorStore } from "@/lib/editor/store";
 import type { PdfTextObject } from "@/lib/editor/types";
-import { fontFamilyCss } from "@/lib/fonts/measure-text";
 
 export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => (
   <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
-    <Input
-      aria-label="PDF text"
-      className="min-w-48"
-      onChange={(event) => {
-        const text = event.currentTarget.value;
-        editorStore.patchPdfText((current) => ({ ...current, text }));
-      }}
-      style={{
-        fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
-        fontStyle: object.italic === true ? "italic" : "normal",
-        fontWeight: object.fontWeight ?? 400,
-      }}
-      value={object.text}
-    />
     {object.fontFamily ? (
       <Select
         onValueChange={(value) => {
