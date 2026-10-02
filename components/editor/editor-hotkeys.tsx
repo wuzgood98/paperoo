@@ -123,6 +123,26 @@ export const EditorHotkeys = () => {
           key: "p",
           meta: true,
         },
+        {
+          handler: () => {
+            if (editorStore.getState().status !== "ready") {
+              return;
+            }
+            editorStore.stepCurrentPage(-1);
+          },
+          key: "PageUp",
+          shift: false,
+        },
+        {
+          handler: () => {
+            if (editorStore.getState().status !== "ready") {
+              return;
+            }
+            editorStore.stepCurrentPage(1);
+          },
+          key: "PageDown",
+          shift: false,
+        },
       ]),
     []
   );

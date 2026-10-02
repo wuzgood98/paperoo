@@ -635,7 +635,17 @@ export const editorStore = {
   selectedPdfVector: (): PdfVectorObject | undefined =>
     findPdfVector(currentPage(), internal.state.selectedPdfVectorId),
 
-  setCurrentPage: (pageId: string): void => {
+  setCurrentPage: (
+    pageId: string,
+    options?: { syncFitZoom?: boolean }
+  ): void => {
+    const syncFitZoom = options?.syncFitZoom ?? true;
+    if (pageId === internal.state.currentPageId) {
+      if (syncFitZoom && internal.state.zoomMode !== "custom") {
+        editorStore.recomputeFitZoom();
+      }
+      return;
+    }
     setState({
       currentPageId: pageId,
       selectedObjectIds: [],
@@ -643,7 +653,7 @@ export const editorStore = {
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
     });
-    if (internal.state.zoomMode !== "custom") {
+    if (syncFitZoom && internal.state.zoomMode !== "custom") {
       editorStore.recomputeFitZoom();
     }
   },
@@ -769,6 +779,18 @@ export const editorStore = {
       zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM),
       zoomMode: mode,
     });
+  },
+
+  stepCurrentPage: (delta: 1 | -1): void => {
+    const { pages } = internal.state.document;
+    const index = pages.findIndex(
+      (page) => page.id === internal.state.currentPageId
+    );
+    const next = pages[index + delta];
+    if (!next) {
+      return;
+    }
+    editorStore.setCurrentPage(next.id, { syncFitZoom: false });
   },
 
   subscribe: (listener: () => void): (() => void) => {
