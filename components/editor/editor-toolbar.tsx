@@ -126,6 +126,7 @@ export const EditorToolbar = () => {
           onClick={() => editorStore.undo()}
           size="icon-sm"
           variant="ghost"
+          aria-label="Undo"
         >
           <Undo2Icon />
         </Button>
@@ -137,6 +138,7 @@ export const EditorToolbar = () => {
           onClick={() => editorStore.redo()}
           size="icon-sm"
           variant="ghost"
+          aria-label="Redo"
         >
           <Redo2Icon />
         </Button>
@@ -149,6 +151,7 @@ export const EditorToolbar = () => {
           onClick={() => editorStore.zoomBy(-ZOOM_STEP)}
           size="icon-sm"
           variant="ghost"
+          aria-label="Zoom out"
         >
           <ZoomOutIcon />
         </Button>
@@ -163,6 +166,7 @@ export const EditorToolbar = () => {
           onClick={() => editorStore.zoomBy(ZOOM_STEP)}
           size="icon-sm"
           variant="ghost"
+          aria-label="Zoom in"
         >
           <ZoomInIcon />
         </Button>
@@ -173,6 +177,7 @@ export const EditorToolbar = () => {
         onPressedChange={() => editorStore.fitPage()}
         pressed={zoomMode === "fit-page"}
         size="sm"
+        aria-label="Fit page"
       >
         Fit
       </Toggle>
@@ -182,6 +187,7 @@ export const EditorToolbar = () => {
         onPressedChange={() => editorStore.fitWidth()}
         pressed={zoomMode === "fit-width"}
         size="sm"
+        aria-label="Fit width"
       >
         Width
       </Toggle>
