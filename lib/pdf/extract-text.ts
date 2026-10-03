@@ -3,6 +3,7 @@ import {
   textItemToDisplayedBox,
 } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
+import { DEFAULT_PDF_TEXT_COLOR } from "@/lib/editor/types";
 import type {
   CropBox,
   FontFamily,
@@ -265,6 +266,7 @@ export const extractPdfTextObjects = (
     );
 
     objects.push({
+      color: DEFAULT_PDF_TEXT_COLOR,
       dir: toDir(item.dir),
       fontFamily,
       fontName: item.fontName ?? "",
@@ -274,6 +276,7 @@ export const extractPdfTextObjects = (
       height: box.height,
       id: createId(),
       italic,
+      originalColor: DEFAULT_PDF_TEXT_COLOR,
       originalFontFamily: fontFamily,
       originalFontSize: box.fontSize,
       originalText: item.str,

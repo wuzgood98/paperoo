@@ -14,8 +14,6 @@ import type { PdfTextObject } from "@/lib/editor/types";
 import { ensureEditorFonts, fontFamilyCss } from "@/lib/fonts/measure-text";
 import { cn } from "@/lib/utils";
 
-const REPLACEMENT_COLOR = "#111827";
-
 const overlayFrame = (
   object: PdfTextObject,
   text: string = object.text
@@ -99,7 +97,7 @@ const PdfTextEditor = ({
         }}
         ref={inputRef}
         style={{
-          color: REPLACEMENT_COLOR,
+          color: object.color,
           fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
           fontSize: fontSizeCss,
           fontStyle: object.italic === true ? "italic" : "normal",
@@ -170,7 +168,7 @@ export const PdfTextLayer = ({
             <div
               className="relative h-full w-full whitespace-nowrap"
               style={{
-                color: REPLACEMENT_COLOR,
+                color: object.color,
                 fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
                 fontSize: pageToCss(object.fontSize ?? object.height, zoom),
                 fontStyle: object.italic === true ? "italic" : "normal",

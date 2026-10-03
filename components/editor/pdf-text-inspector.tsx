@@ -1,5 +1,6 @@
 "use client";
 
+import { ColorField } from "@/components/editor/color-field";
 import { FONT_FAMILIES, fontFamilyFromSelect } from "@/components/editor/utils";
 import { Input } from "@/components/ui/input";
 import {
@@ -9,11 +10,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { normalizeHex } from "@/lib/editor/color";
 import { editorStore } from "@/lib/editor/store";
 import type { PdfTextObject } from "@/lib/editor/types";
 
 export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => (
   <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+    <ColorField
+      label="Color"
+      onChange={(value) => {
+        const color = normalizeHex(value);
+        if (color === object.color) {
+          return;
+        }
+        editorStore.patchPdfText((current) => ({ ...current, color }));
+      }}
+      value={object.color}
+    />
     {object.fontFamily ? (
       <Select
         onValueChange={(value) => {

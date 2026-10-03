@@ -13,6 +13,7 @@ import type { PdfJsFontObjectStore } from "@/lib/pdf/extract-text";
 import { loadPdfJsDocument } from "./pdfjs-node";
 
 const pdfText = (overrides: Partial<PdfTextObject> = {}): PdfTextObject => ({
+  color: "#111827",
   dir: "ltr",
   fontFamily: "sans",
   fontName: "g_d0_f1",
@@ -22,6 +23,7 @@ const pdfText = (overrides: Partial<PdfTextObject> = {}): PdfTextObject => ({
   height: 18,
   id: "pdf-1",
   italic: false,
+  originalColor: "#111827",
   originalFontFamily: "sans",
   originalFontSize: 18,
   originalText: "Hello World",
@@ -80,6 +82,56 @@ test("export leaves the source bytes unchanged and writes replacement text", asy
     .map((item) => ("str" in item ? item.str : ""))
     .join(" ");
   expect(strings).toContain("Hello Gideon and more");
+  await task.destroy();
+});
+
+test("export draws dirty PDF text with the object color", async () => {
+  const source = await PDFDocument.create();
+  const page = source.addPage([612, 792]);
+  const font = await source.embedFont(StandardFonts.Helvetica);
+  page.drawText("Hello World", { font, size: 18, x: 72, y: 700 });
+  const bytes = await source.save();
+
+  const colored = pdfText({
+    color: "#dc2626",
+    text: "Hello Red Edit",
+  });
+  expect(colored.color).toBe("#dc2626");
+
+  const document: EditorDocument = {
+    pages: [
+      {
+        cropBox: { height: 792, width: 612, x: 0, y: 0 },
+        height: 792,
+        id: "page-1",
+        objects: [],
+        pdfImageObjects: [],
+        pdfTextObjects: [colored],
+        pdfVectorObjects: [],
+        rotation: 0,
+        sourceIndex: 0,
+        sourceRotate: 0,
+        width: 612,
+      },
+    ],
+  };
+
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document,
+    fontBytes: {},
+  });
+
+  const task = loadPdfJsDocument(output);
+  const documentProxy = await task.promise;
+  const pdfPage = await documentProxy.getPage(1);
+  const content = await pdfPage.getTextContent();
+  const strings = content.items
+    .map((item) => ("str" in item ? item.str : ""))
+    .join(" ");
+  // drawDirtyPdfText uses object.color; channel bits covered by dirty/store tests.
+  expect(strings).toContain("Hello Red Edit");
   await task.destroy();
 });
 

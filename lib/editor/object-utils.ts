@@ -69,7 +69,8 @@ export const findPdfVector = (
 export const isPdfTextDirty = (object: PdfTextObject): boolean =>
   object.text !== object.originalText ||
   object.fontFamily !== object.originalFontFamily ||
-  object.fontSize !== object.originalFontSize;
+  object.fontSize !== object.originalFontSize ||
+  object.color !== object.originalColor;
 
 export const isPdfImageDirty = (object: PdfImageObject): boolean =>
   object.deleted ||
