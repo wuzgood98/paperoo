@@ -3,7 +3,12 @@ import {
   textItemToDisplayedBox,
 } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
-import { DEFAULT_PDF_TEXT_COLOR } from "@/lib/editor/types";
+import {
+  DEFAULT_PDF_TEXT_COLOR,
+  DEFAULT_PDF_TEXT_RENDERING_MODE,
+  DEFAULT_PDF_TEXT_STROKE_COLOR,
+  DEFAULT_PDF_TEXT_STROKE_WIDTH,
+} from "@/lib/editor/types";
 import type {
   CropBox,
   FontFamily,
@@ -13,6 +18,7 @@ import type {
   PdfTextObject,
   PdfTextTransform,
 } from "@/lib/editor/types";
+import type { PdfTextItemPaint } from "@/lib/pdf/extract-text-colors";
 
 export interface ExtractableTextStyle {
   ascent?: number;
@@ -233,10 +239,23 @@ const toTransform = (
   return [a, b, c, d, e, f];
 };
 
-const itemColorAt = (
-  itemColors: readonly string[] | undefined,
+const defaultItemPaint = (): PdfTextItemPaint => ({
+  color: DEFAULT_PDF_TEXT_COLOR,
+  strokeColor: DEFAULT_PDF_TEXT_STROKE_COLOR,
+  strokeWidth: DEFAULT_PDF_TEXT_STROKE_WIDTH,
+  textRenderingMode: DEFAULT_PDF_TEXT_RENDERING_MODE,
+});
+
+/** Map a legacy parallel color array into full paint records. */
+export const colorsToItemPaints = (
+  colors: readonly string[]
+): PdfTextItemPaint[] =>
+  colors.map((color) => ({ ...defaultItemPaint(), color }));
+
+const itemPaintAt = (
+  itemPaints: readonly PdfTextItemPaint[] | undefined,
   sourceIndex: number
-): string => itemColors?.[sourceIndex] ?? DEFAULT_PDF_TEXT_COLOR;
+): PdfTextItemPaint => itemPaints?.[sourceIndex] ?? defaultItemPaint();
 
 export const extractPdfTextObjects = (
   content: ExtractableTextContent,
@@ -246,8 +265,8 @@ export const extractPdfTextObjects = (
     sourceRotate: PageRotation;
   },
   fontFaces: Readonly<Record<string, PdfFontFaceMeta | undefined>> = {},
-  /** Parallel to `content.items`; missing/short entries fall back to default. */
-  itemColors?: readonly string[]
+  /** Parallel to `content.items`; missing/short entries fall back to defaults. */
+  itemPaints?: readonly PdfTextItemPaint[]
 ): PdfTextObject[] => {
   const objects: PdfTextObject[] = [];
 
@@ -271,10 +290,10 @@ export const extractPdfTextObjects = (
       page.sourceRotate,
       style?.descent ?? 0
     );
-    const color = itemColorAt(itemColors, sourceIndex);
+    const paint = itemPaintAt(itemPaints, sourceIndex);
 
     objects.push({
-      color,
+      color: paint.color,
       dir: toDir(item.dir),
       fontFamily,
       fontName: item.fontName ?? "",
@@ -284,14 +303,20 @@ export const extractPdfTextObjects = (
       height: box.height,
       id: createId(),
       italic,
-      originalColor: color,
+      originalColor: paint.color,
       originalFontFamily: fontFamily,
       originalFontSize: box.fontSize,
+      originalStrokeColor: paint.strokeColor,
+      originalStrokeWidth: paint.strokeWidth,
       originalText: item.str,
+      originalTextRenderingMode: paint.textRenderingMode,
       pageId: page.id,
       rotation: box.rotation,
       sourceIndex,
+      strokeColor: paint.strokeColor,
+      strokeWidth: paint.strokeWidth,
       text: item.str,
+      textRenderingMode: paint.textRenderingMode,
       transform,
       type: "pdf-text",
       width: box.width,

@@ -4,7 +4,10 @@ import {
   EncryptedPDFError,
   PDFDocument,
   StandardFonts,
+  TextRenderingMode,
+  beginText,
   degrees,
+  endText,
   rgb,
   appendBezierCurve,
   appendQuadraticCurve,
@@ -16,14 +19,19 @@ import {
   moveTo,
   popGraphicsState,
   pushGraphicsState,
+  rotateAndSkewTextRadiansAndTranslate,
   setFillingColor,
+  setFontAndSize,
   setLineCap,
   setLineJoin,
   setLineWidth,
   setStrokingColor,
+  setTextRenderingMode,
+  showText,
   stroke,
   LineCapStyle,
   LineJoinStyle,
+  toRadians,
 } from "pdf-lib";
 import type { PDFFont, PDFImage, PDFOperator, PDFPage } from "pdf-lib";
 
@@ -41,6 +49,8 @@ import {
   isPdfTextDirty,
   isPdfVectorDirty,
   pdfImageCoverBox,
+  pdfTextNeedsFill,
+  pdfTextNeedsStroke,
   pdfVectorCoverPathStyle,
 } from "@/lib/editor/object-utils";
 import type {
@@ -273,13 +283,51 @@ const drawDirtyPdfText = async (
   });
 
   const ascent = font.heightAtSize(size, { descender: false });
-  page.drawText(object.text, {
-    color: color(object.color),
-    font,
-    size,
-    x: user.x,
-    y: user.y + textBaselineY(user.height, ascent),
-  });
+  const textX = user.x;
+  const textY = user.y + textBaselineY(user.height, ascent);
+  const needsFill = pdfTextNeedsFill(object.textRenderingMode);
+  const needsStroke = pdfTextNeedsStroke(object.textRenderingMode);
+
+  if (!needsStroke) {
+    page.drawText(object.text, {
+      color: color(object.color),
+      font,
+      size,
+      x: textX,
+      y: textY,
+    });
+    return;
+  }
+
+  const embeddedFontKey = page.node.newFontDictionary(font.name, font.ref);
+  const mode = needsFill
+    ? TextRenderingMode.FillAndOutline
+    : TextRenderingMode.Outline;
+  const zero = degrees(0);
+  const ops: PDFOperator[] = [
+    pushGraphicsState(),
+    beginText(),
+    setTextRenderingMode(mode),
+  ];
+  if (needsFill) {
+    ops.push(setFillingColor(color(object.color)));
+  }
+  ops.push(
+    setStrokingColor(color(object.strokeColor)),
+    setLineWidth(object.strokeWidth),
+    setFontAndSize(embeddedFontKey, size),
+    rotateAndSkewTextRadiansAndTranslate(
+      toRadians(zero),
+      toRadians(zero),
+      toRadians(zero),
+      textX,
+      textY
+    ),
+    showText(font.encodeText(object.text)),
+    endText(),
+    popGraphicsState()
+  );
+  page.pushOperators(...ops);
 };
 
 const drawEmbeddedImage = async (

@@ -70,7 +70,21 @@ export const isPdfTextDirty = (object: PdfTextObject): boolean =>
   object.text !== object.originalText ||
   object.fontFamily !== object.originalFontFamily ||
   object.fontSize !== object.originalFontSize ||
-  object.color !== object.originalColor;
+  object.color !== object.originalColor ||
+  object.strokeColor !== object.originalStrokeColor ||
+  object.strokeWidth !== object.originalStrokeWidth ||
+  object.textRenderingMode !== object.originalTextRenderingMode;
+
+/** PDF text rendering mode low bits: fill=0, stroke=1, fill+stroke=2. */
+export const pdfTextNeedsFill = (textRenderingMode: number): boolean => {
+  const mode = ((textRenderingMode % 4) + 4) % 4;
+  return mode === 0 || mode === 2;
+};
+
+export const pdfTextNeedsStroke = (textRenderingMode: number): boolean => {
+  const mode = ((textRenderingMode % 4) + 4) % 4;
+  return mode === 1 || mode === 2;
+};
 
 export const isPdfImageDirty = (object: PdfImageObject): boolean =>
   object.deleted ||

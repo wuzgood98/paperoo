@@ -1,4 +1,8 @@
-import { DEFAULT_PDF_TEXT_COLOR } from "@/lib/editor/types";
+import {
+  DEFAULT_PDF_TEXT_COLOR,
+  DEFAULT_PDF_TEXT_STROKE_COLOR,
+  DEFAULT_PDF_TEXT_STROKE_WIDTH,
+} from "@/lib/editor/types";
 import type {
   ExtractableOperatorList,
   OperatorArg,
@@ -8,6 +12,7 @@ import type { ExtractableTextItem } from "@/lib/pdf/extract-text";
 /** TextRenderingMode low bits: FILL=0, STROKE=1, FILL_STROKE=2, INVISIBLE=3 (and +4 add-to-path). */
 const TEXT_RENDERING_MODE_COUNT = 4;
 const TEXT_RENDERING_FILL = 0;
+const TEXT_RENDERING_STROKE = 1;
 const TEXT_RENDERING_FILL_STROKE = 2;
 
 export interface PdfTextColorOps {
@@ -21,6 +26,13 @@ export interface PdfTextColorOps {
   setFillGray: number;
   setFillRGBColor: number;
   setFillTransparent: number;
+  setLineWidth: number;
+  setStrokeCMYKColor: number;
+  setStrokeColor: number;
+  setStrokeColorN: number;
+  setStrokeGray: number;
+  setStrokeRGBColor: number;
+  setStrokeTransparent: number;
   setTextRenderingMode: number;
   showSpacedText: number;
   showText: number;
@@ -30,6 +42,28 @@ export const toPdfTextColorOps = (ops: PdfTextColorOps): PdfTextColorOps => ({
   ...ops,
 });
 
+/** One showText* sample; null means unsupported ink for the active Tr. */
+export interface PdfTextPaint {
+  color: string | null;
+  strokeColor: string | null;
+  strokeWidth: number;
+  textRenderingMode: number;
+}
+
+/** Per getTextContent item after zip (always concrete defaults). */
+export interface PdfTextItemPaint {
+  color: string;
+  strokeColor: string;
+  strokeWidth: number;
+  textRenderingMode: number;
+}
+
+export interface ZipPdfTextItemPaintsResult {
+  aligned: boolean;
+  paints: PdfTextItemPaint[];
+}
+
+/** @deprecated Prefer ZipPdfTextItemPaintsResult; kept for color-only callers. */
 export interface ZipPdfTextItemColorsResult {
   aligned: boolean;
   colors: string[];
@@ -38,6 +72,9 @@ export interface ZipPdfTextItemColorsResult {
 interface GraphicsState {
   fill: string;
   fillOk: boolean;
+  lineWidth: number;
+  stroke: string;
+  strokeOk: boolean;
   textRenderingMode: number;
 }
 
@@ -104,9 +141,27 @@ const readGray = (args: OperatorArg): string | null => {
   return grayToHex(gray);
 };
 
+const normalizeMode = (textRenderingMode: number): number =>
+  ((textRenderingMode % TEXT_RENDERING_MODE_COUNT) +
+    TEXT_RENDERING_MODE_COUNT) %
+  TEXT_RENDERING_MODE_COUNT;
+
+const needsFill = (textRenderingMode: number): boolean => {
+  const mode = normalizeMode(textRenderingMode);
+  return mode === TEXT_RENDERING_FILL || mode === TEXT_RENDERING_FILL_STROKE;
+};
+
+const needsStroke = (textRenderingMode: number): boolean => {
+  const mode = normalizeMode(textRenderingMode);
+  return mode === TEXT_RENDERING_STROKE || mode === TEXT_RENDERING_FILL_STROKE;
+};
+
 const defaultState = (): GraphicsState => ({
   fill: "#000000",
   fillOk: true,
+  lineWidth: DEFAULT_PDF_TEXT_STROKE_WIDTH,
+  stroke: DEFAULT_PDF_TEXT_STROKE_COLOR,
+  strokeOk: true,
   textRenderingMode: TEXT_RENDERING_FILL,
 });
 
@@ -115,34 +170,116 @@ const patchState = (
   patch: Partial<GraphicsState>
 ): GraphicsState => ({ ...current, ...patch });
 
-const needsFill = (textRenderingMode: number): boolean => {
-  // Equivalent to PDF.js `textRenderingMode & FILL_STROKE_MASK` without bitwise ops.
-  const mode =
-    ((textRenderingMode % TEXT_RENDERING_MODE_COUNT) +
-      TEXT_RENDERING_MODE_COUNT) %
-    TEXT_RENDERING_MODE_COUNT;
-  return mode === TEXT_RENDERING_FILL || mode === TEXT_RENDERING_FILL_STROKE;
-};
-
 const isShowTextOp = (fn: number, ops: PdfTextColorOps): boolean =>
   fn === ops.showText ||
   fn === ops.showSpacedText ||
   fn === ops.nextLineShowText ||
   fn === ops.nextLineSetSpacingShowText;
 
-const paintColor = (state: GraphicsState): string | null => {
-  if (!needsFill(state.textRenderingMode) || !state.fillOk) {
+const samplePaint = (state: GraphicsState): PdfTextPaint | null => {
+  const mode = normalizeMode(state.textRenderingMode);
+  const fillNeeded = needsFill(mode);
+  const strokeNeeded = needsStroke(mode);
+  if (!(fillNeeded || strokeNeeded)) {
     return null;
   }
-  return state.fill;
+  if (fillNeeded && !state.fillOk) {
+    return null;
+  }
+  if (strokeNeeded && !state.strokeOk) {
+    return null;
+  }
+  return {
+    color: fillNeeded ? state.fill : null,
+    strokeColor: strokeNeeded ? state.stroke : null,
+    strokeWidth: state.lineWidth,
+    textRenderingMode: mode,
+  };
 };
 
-/** Walk showText* ops and sample the current fill color at each paint. */
-export const extractPdfTextFillPaints = (
+const readScalar = (args: OperatorArg): number | null =>
+  Array.isArray(args) ? finiteNumber(args[0]) : finiteNumber(args);
+
+const applyFillColor = (
+  current: GraphicsState,
+  args: OperatorArg,
+  reader: (value: OperatorArg) => string | null
+): GraphicsState => {
+  const color = reader(args);
+  return color
+    ? patchState(current, { fill: color, fillOk: true })
+    : patchState(current, { fillOk: false });
+};
+
+const applyStrokeColor = (
+  current: GraphicsState,
+  args: OperatorArg,
+  reader: (value: OperatorArg) => string | null
+): GraphicsState => {
+  const color = reader(args);
+  return color
+    ? patchState(current, { stroke: color, strokeOk: true })
+    : patchState(current, { strokeOk: false });
+};
+
+const isUnsupportedFillOp = (fn: number, ops: PdfTextColorOps): boolean =>
+  fn === ops.setFillCMYKColor ||
+  fn === ops.setFillColorN ||
+  fn === ops.setFillColor ||
+  fn === ops.setFillTransparent;
+
+const isUnsupportedStrokeOp = (fn: number, ops: PdfTextColorOps): boolean =>
+  fn === ops.setStrokeCMYKColor ||
+  fn === ops.setStrokeColorN ||
+  fn === ops.setStrokeColor ||
+  fn === ops.setStrokeTransparent;
+
+/** Apply a non-show op; returns null when the op is ignored. */
+const applyStateOp = (
+  current: GraphicsState,
+  fn: number,
+  args: OperatorArg,
+  ops: PdfTextColorOps
+): GraphicsState | null => {
+  if (fn === ops.setTextRenderingMode) {
+    const mode = readScalar(args);
+    return mode === null
+      ? current
+      : patchState(current, { textRenderingMode: mode });
+  }
+  if (fn === ops.setLineWidth) {
+    const width = readScalar(args);
+    return width === null || width < 0
+      ? current
+      : patchState(current, { lineWidth: width });
+  }
+  if (fn === ops.setFillRGBColor) {
+    return applyFillColor(current, args, readRgb);
+  }
+  if (fn === ops.setFillGray) {
+    return applyFillColor(current, args, readGray);
+  }
+  if (fn === ops.setStrokeRGBColor) {
+    return applyStrokeColor(current, args, readRgb);
+  }
+  if (fn === ops.setStrokeGray) {
+    return applyStrokeColor(current, args, readGray);
+  }
+  if (isUnsupportedFillOp(fn, ops)) {
+    return patchState(current, { fillOk: false });
+  }
+  if (isUnsupportedStrokeOp(fn, ops)) {
+    return patchState(current, { strokeOk: false });
+  }
+  return null;
+};
+
+/** Walk showText* ops and sample fill/stroke ink at each paint. */
+export const extractPdfTextPaints = (
   list: ExtractableOperatorList,
   ops: PdfTextColorOps
-): (string | null)[] => {
-  const paints: (string | null)[] = [];
+): (PdfTextPaint | null)[] => {
+  const paints: (PdfTextPaint | null)[] = [];
   const stack: GraphicsState[] = [];
   let current = defaultState();
 
@@ -160,39 +297,9 @@ export const extractPdfTextFillPaints = (
       continue;
     }
 
-    if (fn === ops.setTextRenderingMode) {
-      const mode = Array.isArray(args)
-        ? finiteNumber(args[0])
-        : finiteNumber(args);
-      if (mode !== null) {
-        current = patchState(current, { textRenderingMode: mode });
-      }
-      continue;
-    }
-
-    if (fn === ops.setFillRGBColor) {
-      const color = readRgb(args);
-      current = color
-        ? patchState(current, { fill: color, fillOk: true })
-        : patchState(current, { fillOk: false });
-      continue;
-    }
-
-    if (fn === ops.setFillGray) {
-      const color = readGray(args);
-      current = color
-        ? patchState(current, { fill: color, fillOk: true })
-        : patchState(current, { fillOk: false });
-      continue;
-    }
-
-    if (
-      fn === ops.setFillCMYKColor ||
-      fn === ops.setFillColorN ||
-      fn === ops.setFillColor ||
-      fn === ops.setFillTransparent
-    ) {
-      current = patchState(current, { fillOk: false });
+    const next = applyStateOp(current, fn, args, ops);
+    if (next !== null) {
+      current = next;
       continue;
     }
 
@@ -200,48 +307,121 @@ export const extractPdfTextFillPaints = (
       continue;
     }
 
-    paints.push(paintColor(current));
+    paints.push(samplePaint(current));
   }
 
   return paints;
 };
 
+/**
+ * Fill-only view of paints (null when fill is unused or unsupported).
+ * Prefer `extractPdfTextPaints` for stroke-aware callers.
+ */
+export const extractPdfTextFillPaints = (
+  list: ExtractableOperatorList,
+  ops: PdfTextColorOps
+): (string | null)[] =>
+  extractPdfTextPaints(list, ops).map((paint) => paint?.color ?? null);
+
 const isPaintableItem = (item: ExtractableTextItem): boolean =>
   item.str !== undefined && item.str !== " " && item.str !== "";
 
-const allPaintsSameHex = (
-  paints: readonly (string | null)[]
+/** Primary ink used for same-color merge recovery: fill if present, else stroke. */
+const primaryInk = (paint: PdfTextPaint | null): string | null => {
+  if (paint === null) {
+    return null;
+  }
+  return paint.color ?? paint.strokeColor;
+};
+
+const allPaintsSamePrimaryInk = (
+  paints: readonly (PdfTextPaint | null)[]
 ): string | null => {
   let shared: string | null = null;
   for (const paint of paints) {
-    if (paint === null) {
+    const ink = primaryInk(paint);
+    if (ink === null) {
       return null;
     }
     if (shared === null) {
-      shared = paint;
+      shared = ink;
       continue;
     }
-    if (paint !== shared) {
+    if (ink !== shared) {
       return null;
     }
   }
   return shared;
 };
 
-const fallbackColors = (length: number, fallback: string): string[] =>
-  Array.from({ length }, () => fallback);
+const paintsShareModeAndStroke = (
+  paints: readonly (PdfTextPaint | null)[]
+): {
+  strokeColor: string;
+  strokeWidth: number;
+  textRenderingMode: number;
+} | null => {
+  let shared: {
+    strokeColor: string;
+    strokeWidth: number;
+    textRenderingMode: number;
+  } | null = null;
+  for (const paint of paints) {
+    if (paint === null) {
+      return null;
+    }
+    const strokeColor = paint.strokeColor ?? DEFAULT_PDF_TEXT_STROKE_COLOR;
+    const next = {
+      strokeColor,
+      strokeWidth: paint.strokeWidth,
+      textRenderingMode: paint.textRenderingMode,
+    };
+    if (shared === null) {
+      shared = next;
+      continue;
+    }
+    if (
+      shared.strokeColor !== next.strokeColor ||
+      shared.strokeWidth !== next.strokeWidth ||
+      shared.textRenderingMode !== next.textRenderingMode
+    ) {
+      return null;
+    }
+  }
+  return shared;
+};
+
+const fallbackItemPaint = (fallback: string): PdfTextItemPaint => ({
+  color: fallback,
+  strokeColor: DEFAULT_PDF_TEXT_STROKE_COLOR,
+  strokeWidth: DEFAULT_PDF_TEXT_STROKE_WIDTH,
+  textRenderingMode: TEXT_RENDERING_FILL,
+});
+
+const toItemPaint = (
+  paint: PdfTextPaint,
+  fallback: string
+): PdfTextItemPaint => ({
+  color: paint.color ?? fallback,
+  strokeColor: paint.strokeColor ?? DEFAULT_PDF_TEXT_STROKE_COLOR,
+  strokeWidth: paint.strokeWidth,
+  textRenderingMode: paint.textRenderingMode,
+});
+
+const fallbackPaints = (length: number, fallback: string): PdfTextItemPaint[] =>
+  Array.from({ length }, () => fallbackItemPaint(fallback));
 
 /**
- * Zip showText fill paints onto getTextContent items.
+ * Zip showText paints onto getTextContent items.
  * Fail closed to `fallback` when counts diverge or any paint is unsupported,
- * unless every paint shares one hex (same-color merge recovery).
+ * unless every paint shares one primary ink (same-color merge recovery).
  */
-export const zipPdfTextItemColors = (
+export const zipPdfTextItemPaints = (
   items: readonly ExtractableTextItem[],
-  paints: readonly (string | null)[],
+  paints: readonly (PdfTextPaint | null)[],
   fallback: string = DEFAULT_PDF_TEXT_COLOR
-): ZipPdfTextItemColorsResult => {
-  const colors = fallbackColors(items.length, fallback);
+): ZipPdfTextItemPaintsResult => {
+  const itemPaints = fallbackPaints(items.length, fallback);
   const paintableIndices: number[] = [];
   for (const [index, item] of items.entries()) {
     if (isPaintableItem(item)) {
@@ -249,29 +429,90 @@ export const zipPdfTextItemColors = (
     }
   }
 
-  const sameColor = allPaintsSameHex(paints);
+  const sameInk = allPaintsSamePrimaryInk(paints);
+  const sharedStroke = paintsShareModeAndStroke(paints);
   if (
     paints.length !== paintableIndices.length ||
     paints.some((paint) => paint === null)
   ) {
-    // Merge recovery only: more paints than items, all the same hex.
     if (
-      sameColor !== null &&
+      sameInk !== null &&
+      sharedStroke !== null &&
       paints.length > paintableIndices.length &&
       paintableIndices.length > 0
     ) {
-      for (const index of paintableIndices) {
-        colors[index] = sameColor;
+      const recovered = toItemPaint(
+        {
+          color: needsFill(sharedStroke.textRenderingMode) ? sameInk : null,
+          strokeColor: needsStroke(sharedStroke.textRenderingMode)
+            ? sharedStroke.strokeColor
+            : null,
+          strokeWidth: sharedStroke.strokeWidth,
+          textRenderingMode: sharedStroke.textRenderingMode,
+        },
+        fallback
+      );
+      // When fill-only recovery, color is sameInk; when stroke-only, color falls back.
+      if (
+        needsFill(sharedStroke.textRenderingMode) &&
+        !needsStroke(sharedStroke.textRenderingMode)
+      ) {
+        recovered.color = sameInk;
+      } else if (
+        needsStroke(sharedStroke.textRenderingMode) &&
+        !needsFill(sharedStroke.textRenderingMode)
+      ) {
+        recovered.color = fallback;
+        recovered.strokeColor = sameInk;
+      } else {
+        recovered.color = sameInk;
+        recovered.strokeColor = sharedStroke.strokeColor;
       }
-      return { aligned: true, colors };
+      for (const index of paintableIndices) {
+        itemPaints[index] = { ...recovered };
+      }
+      return { aligned: true, paints: itemPaints };
     }
-    return { aligned: false, colors };
+    return { aligned: false, paints: itemPaints };
   }
 
   for (const [paintIndex, itemIndex] of paintableIndices.entries()) {
     const paint = paints[paintIndex];
-    colors[itemIndex] = paint ?? fallback;
+    if (paint === null) {
+      itemPaints[itemIndex] = fallbackItemPaint(fallback);
+      continue;
+    }
+    itemPaints[itemIndex] = toItemPaint(paint, fallback);
   }
 
-  return { aligned: true, colors };
+  return { aligned: true, paints: itemPaints };
+};
+
+/**
+ * Zip fill colors only (legacy). Prefer `zipPdfTextItemPaints`.
+ */
+export const zipPdfTextItemColors = (
+  items: readonly ExtractableTextItem[],
+  paints: readonly (string | null)[],
+  fallback: string = DEFAULT_PDF_TEXT_COLOR
+): ZipPdfTextItemColorsResult => {
+  const paintRecords: (PdfTextPaint | null)[] = paints.map((color) =>
+    color === null
+      ? null
+      : {
+          color,
+          strokeColor: null,
+          strokeWidth: DEFAULT_PDF_TEXT_STROKE_WIDTH,
+          textRenderingMode: TEXT_RENDERING_FILL,
+        }
+  );
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
+    items,
+    paintRecords,
+    fallback
+  );
+  return {
+    aligned,
+    colors: itemPaints.map((paint) => paint.color),
+  };
 };

@@ -1,16 +1,37 @@
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import {
+  PDFDocument,
+  StandardFonts,
+  TextRenderingMode,
+  beginText,
+  cmyk,
+  degrees,
+  endText,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+  rotateAndSkewTextRadiansAndTranslate,
+  setFontAndSize,
+  setLineWidth,
+  setStrokingColor,
+  setTextRenderingMode,
+  showText,
+  toRadians,
+} from "pdf-lib";
 import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
 import { DEFAULT_PDF_TEXT_COLOR } from "@/lib/editor/types";
 import {
+  colorsToItemPaints,
   extractPdfTextObjects,
   toExtractableTextContent,
 } from "@/lib/pdf/extract-text";
 import {
   extractPdfTextFillPaints,
+  extractPdfTextPaints,
   toPdfTextColorOps,
   zipPdfTextItemColors,
+  zipPdfTextItemPaints,
 } from "@/lib/pdf/extract-text-colors";
 import type { PdfTextColorOps } from "@/lib/pdf/extract-text-colors";
 
@@ -27,6 +48,13 @@ const FAKE_OPS = {
   setFillGray: 57,
   setFillRGBColor: 59,
   setFillTransparent: 93,
+  setLineWidth: 2,
+  setStrokeCMYKColor: 60,
+  setStrokeColor: 52,
+  setStrokeColorN: 53,
+  setStrokeGray: 56,
+  setStrokeRGBColor: 58,
+  setStrokeTransparent: 92,
   setTextRenderingMode: 38,
   showSpacedText: 45,
   showText: 44,
@@ -40,8 +68,8 @@ const channelToHex = (value: number): string =>
 const rgbHex = (r: number, g: number, b: number): string =>
   `#${channelToHex(r)}${channelToHex(g)}${channelToHex(b)}`;
 
-test("extractPdfTextFillPaints samples RGB and gray fills at showText", () => {
-  const paints = extractPdfTextFillPaints(
+test("extractPdfTextPaints samples RGB and gray fills at showText", () => {
+  const paints = extractPdfTextPaints(
     {
       argsArray: [undefined, ["#ff0000"], [[]], [0.25], [[]]],
       fnArray: [
@@ -55,11 +83,12 @@ test("extractPdfTextFillPaints samples RGB and gray fills at showText", () => {
     FAKE_OPS
   );
 
-  expect(paints).toEqual(["#ff0000", "#404040"]);
+  expect(paints.map((paint) => paint?.color)).toEqual(["#ff0000", "#404040"]);
+  expect(paints.every((paint) => paint?.textRenderingMode === 0)).toBe(true);
 });
 
-test("extractPdfTextFillPaints defaults to black and restores fill after save", () => {
-  const paints = extractPdfTextFillPaints(
+test("extractPdfTextPaints defaults to black and restores fill after save", () => {
+  const paints = extractPdfTextPaints(
     {
       argsArray: [undefined, undefined, ["#00ff00"], [[]], undefined, [[]]],
       fnArray: [
@@ -74,18 +103,21 @@ test("extractPdfTextFillPaints defaults to black and restores fill after save", 
     FAKE_OPS
   );
 
-  expect(paints).toEqual(["#000000", "#00ff00", "#000000"]);
+  expect(paints.map((paint) => paint?.color)).toEqual([
+    "#000000",
+    "#00ff00",
+    "#000000",
+  ]);
 });
 
-test("extractPdfTextFillPaints returns null for unsupported fill and stroke-only Tr", () => {
-  const paints = extractPdfTextFillPaints(
+test("extractPdfTextPaints returns null for unsupported fill and ColorN", () => {
+  const paints = extractPdfTextPaints(
     {
-      argsArray: [undefined, [[]], [1], ["#0000ff"], [[]]],
+      argsArray: [undefined, [[]], undefined, [[]]],
       fnArray: [
         FAKE_OPS.setFillTransparent,
         FAKE_OPS.showText,
-        FAKE_OPS.setTextRenderingMode,
-        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.setFillColorN,
         FAKE_OPS.showText,
       ],
     },
@@ -93,6 +125,78 @@ test("extractPdfTextFillPaints returns null for unsupported fill and stroke-only
   );
 
   expect(paints).toEqual([null, null]);
+});
+
+test("extractPdfTextPaints samples stroke-only and fill+stroke modes", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [
+        [1],
+        ["#ff0000"],
+        [2],
+        [[]],
+        [2],
+        ["#00ff00"],
+        ["#0000ff"],
+        [1.5],
+        [[]],
+      ],
+      fnArray: [
+        FAKE_OPS.setTextRenderingMode,
+        FAKE_OPS.setStrokeRGBColor,
+        FAKE_OPS.setLineWidth,
+        FAKE_OPS.showText,
+        FAKE_OPS.setTextRenderingMode,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.setStrokeRGBColor,
+        FAKE_OPS.setLineWidth,
+        FAKE_OPS.showText,
+      ],
+    },
+    FAKE_OPS
+  );
+
+  expect(paints).toEqual([
+    {
+      color: null,
+      strokeColor: "#ff0000",
+      strokeWidth: 2,
+      textRenderingMode: 1,
+    },
+    {
+      color: "#00ff00",
+      strokeColor: "#0000ff",
+      strokeWidth: 1.5,
+      textRenderingMode: 2,
+    },
+  ]);
+});
+
+test("extractPdfTextPaints nulls stroke-only when stroke ColorN is set", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [[1], undefined, [[]]],
+      fnArray: [
+        FAKE_OPS.setTextRenderingMode,
+        FAKE_OPS.setStrokeColorN,
+        FAKE_OPS.showText,
+      ],
+    },
+    FAKE_OPS
+  );
+
+  expect(paints).toEqual([null]);
+});
+
+test("extractPdfTextFillPaints exposes fill channel only", () => {
+  const paints = extractPdfTextFillPaints(
+    {
+      argsArray: [["#abcdef"], [[]]],
+      fnArray: [FAKE_OPS.setFillRGBColor, FAKE_OPS.showText],
+    },
+    FAKE_OPS
+  );
+  expect(paints).toEqual(["#abcdef"]);
 });
 
 test("zipPdfTextItemColors aligns paints and fail-closes on length mismatch", () => {
@@ -126,6 +230,24 @@ test("zipPdfTextItemColors recovers when counts differ but every paint is the sa
   expect(result.colors).toEqual(["#3366cc"]);
 });
 
+test("zipPdfTextItemPaints recovers stroke-only same ink merge", () => {
+  const items = [{ str: "HiThere", transform: [12, 0, 0, 12, 72, 700] }];
+  const strokePaint = {
+    color: null,
+    strokeColor: "#3366cc",
+    strokeWidth: 1,
+    textRenderingMode: 1,
+  };
+  const result = zipPdfTextItemPaints(items, [strokePaint, strokePaint]);
+  expect(result.aligned).toBe(true);
+  expect(result.paints[0]).toEqual({
+    color: DEFAULT_PDF_TEXT_COLOR,
+    strokeColor: "#3366cc",
+    strokeWidth: 1,
+    textRenderingMode: 1,
+  });
+});
+
 test("extracts distinct RGB colors from multi-line pdf-lib text", async () => {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612, 792]);
@@ -146,8 +268,8 @@ test("extracts distinct RGB colors from multi-line pdf-lib text", async () => {
     pdfPage.getOperatorList(),
   ]);
   const extractable = toExtractableTextContent(content);
-  const paints = extractPdfTextFillPaints(list, toPdfTextColorOps(OPS));
-  const { aligned, colors } = zipPdfTextItemColors(
+  const paints = extractPdfTextPaints(list, toPdfTextColorOps(OPS));
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
     extractable.items,
     paints,
     DEFAULT_PDF_TEXT_COLOR
@@ -160,7 +282,7 @@ test("extracts distinct RGB colors from multi-line pdf-lib text", async () => {
       sourceRotate: 0,
     },
     {},
-    colors
+    itemPaints
   );
   await task.destroy();
 
@@ -175,6 +297,59 @@ test("extracts distinct RGB colors from multi-line pdf-lib text", async () => {
   expect(redObject?.originalColor).toBe(rgbHex(1, 0, 0));
   expect(greenObject?.originalColor).toBe(rgbHex(0, 0.5, 0));
   expect(blueObject?.originalColor).toBe(rgbHex(0, 0, 1));
+  expect(redObject?.textRenderingMode).toBe(0);
+});
+
+test("CMYK fill text extracts as RGB hex via PDF.js rewrite", async () => {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  page.drawText("Cyan Ink", {
+    color: cmyk(1, 0, 0, 0),
+    font,
+    size: 18,
+    x: 72,
+    y: 700,
+  });
+  const bytes = await pdf.save();
+
+  const task = loadPdfJsDocument(bytes);
+  const document = await task.promise;
+  const pdfPage = await document.getPage(1);
+  const [content, list] = await Promise.all([
+    pdfPage.getTextContent(),
+    pdfPage.getOperatorList(),
+  ]);
+  const extractable = toExtractableTextContent(content);
+  const paints = extractPdfTextPaints(list, toPdfTextColorOps(OPS));
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
+    extractable.items,
+    paints,
+    DEFAULT_PDF_TEXT_COLOR
+  );
+  const objects = extractPdfTextObjects(
+    extractable,
+    {
+      cropBox: { height: 792, width: 612, x: 0, y: 0 },
+      id: "page-1",
+      sourceRotate: 0,
+    },
+    {},
+    itemPaints
+  );
+  await task.destroy();
+
+  expect(aligned).toBe(true);
+  const cyan = objects.find((object) => object.text.includes("Cyan Ink"));
+  expect(cyan?.originalColor).toMatch(/^#[0-9a-f]{6}$/u);
+  expect(cyan?.originalColor).not.toBe(DEFAULT_PDF_TEXT_COLOR);
+  // DeviceCMYK(1,0,0,0) is near cyan — green and blue channels high, red low.
+  const hex = cyan?.originalColor ?? "";
+  const r = Number.parseInt(hex.slice(1, 3), 16);
+  const g = Number.parseInt(hex.slice(3, 5), 16);
+  const b = Number.parseInt(hex.slice(5, 7), 16);
+  expect(r).toBeLessThan(g);
+  expect(r).toBeLessThan(b);
 });
 
 test("fake-space gap still zips word colors after filtering space items", async () => {
@@ -205,8 +380,8 @@ test("fake-space gap still zips word colors after filtering space items", async 
     pdfPage.getOperatorList(),
   ]);
   const extractable = toExtractableTextContent(content);
-  const paints = extractPdfTextFillPaints(list, toPdfTextColorOps(OPS));
-  const { aligned, colors } = zipPdfTextItemColors(
+  const paints = extractPdfTextPaints(list, toPdfTextColorOps(OPS));
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
     extractable.items,
     paints,
     DEFAULT_PDF_TEXT_COLOR
@@ -219,7 +394,7 @@ test("fake-space gap still zips word colors after filtering space items", async 
       sourceRotate: 0,
     },
     {},
-    colors
+    itemPaints
   );
   await task.destroy();
 
@@ -260,8 +435,8 @@ test("adjacent different-color merge fail-closes to DEFAULT_PDF_TEXT_COLOR", asy
     pdfPage.getOperatorList(),
   ]);
   const extractable = toExtractableTextContent(content);
-  const paints = extractPdfTextFillPaints(list, toPdfTextColorOps(OPS));
-  const { aligned, colors } = zipPdfTextItemColors(
+  const paints = extractPdfTextPaints(list, toPdfTextColorOps(OPS));
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
     extractable.items,
     paints,
     DEFAULT_PDF_TEXT_COLOR
@@ -274,7 +449,7 @@ test("adjacent different-color merge fail-closes to DEFAULT_PDF_TEXT_COLOR", asy
       sourceRotate: 0,
     },
     {},
-    colors
+    itemPaints
   );
   await task.destroy();
 
@@ -314,8 +489,8 @@ test("adjacent same-color merge recovers the shared hex", async () => {
     pdfPage.getOperatorList(),
   ]);
   const extractable = toExtractableTextContent(content);
-  const paints = extractPdfTextFillPaints(list, toPdfTextColorOps(OPS));
-  const { aligned, colors } = zipPdfTextItemColors(
+  const paints = extractPdfTextPaints(list, toPdfTextColorOps(OPS));
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
     extractable.items,
     paints,
     DEFAULT_PDF_TEXT_COLOR
@@ -328,7 +503,7 @@ test("adjacent same-color merge recovers the shared hex", async () => {
       sourceRotate: 0,
     },
     {},
-    colors
+    itemPaints
   );
   await task.destroy();
 
@@ -352,8 +527,8 @@ test("default black body text extracts as #000000 when aligned", async () => {
     pdfPage.getOperatorList(),
   ]);
   const extractable = toExtractableTextContent(content);
-  const paints = extractPdfTextFillPaints(list, toPdfTextColorOps(OPS));
-  const { aligned, colors } = zipPdfTextItemColors(
+  const paints = extractPdfTextPaints(list, toPdfTextColorOps(OPS));
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
     extractable.items,
     paints,
     DEFAULT_PDF_TEXT_COLOR
@@ -366,7 +541,7 @@ test("default black body text extracts as #000000 when aligned", async () => {
       sourceRotate: 0,
     },
     {},
-    colors
+    itemPaints
   );
   await task.destroy();
 
@@ -374,6 +549,65 @@ test("default black body text extracts as #000000 when aligned", async () => {
   expect(
     objects.find((object) => object.text.includes("Black Body"))?.originalColor
   ).toBe("#000000");
+});
+
+test("stroke-only Tr=1 text extracts stroke color and mode", async () => {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const fontKey = page.node.newFontDictionary(font.name, font.ref);
+  const zero = degrees(0);
+  page.pushOperators(
+    pushGraphicsState(),
+    beginText(),
+    setTextRenderingMode(TextRenderingMode.Outline),
+    setStrokingColor(rgb(1, 0, 0)),
+    setLineWidth(1.25),
+    setFontAndSize(fontKey, 18),
+    rotateAndSkewTextRadiansAndTranslate(
+      toRadians(zero),
+      toRadians(zero),
+      toRadians(zero),
+      72,
+      700
+    ),
+    showText(font.encodeText("Outline")),
+    endText(),
+    popGraphicsState()
+  );
+  const bytes = await pdf.save();
+
+  const task = loadPdfJsDocument(bytes);
+  const document = await task.promise;
+  const pdfPage = await document.getPage(1);
+  const [content, list] = await Promise.all([
+    pdfPage.getTextContent(),
+    pdfPage.getOperatorList(),
+  ]);
+  const extractable = toExtractableTextContent(content);
+  const paints = extractPdfTextPaints(list, toPdfTextColorOps(OPS));
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
+    extractable.items,
+    paints,
+    DEFAULT_PDF_TEXT_COLOR
+  );
+  const objects = extractPdfTextObjects(
+    extractable,
+    {
+      cropBox: { height: 792, width: 612, x: 0, y: 0 },
+      id: "page-1",
+      sourceRotate: 0,
+    },
+    {},
+    itemPaints
+  );
+  await task.destroy();
+
+  expect(aligned).toBe(true);
+  const outline = objects.find((object) => object.text.includes("Outline"));
+  expect(outline?.textRenderingMode).toBe(1);
+  expect(outline?.originalStrokeColor).toBe("#ff0000");
+  expect(outline?.originalStrokeWidth).toBe(1.25);
 });
 
 test("extractPdfTextObjects uses itemColors when provided", () => {
@@ -395,9 +629,46 @@ test("extractPdfTextObjects uses itemColors when provided", () => {
       sourceRotate: 0,
     },
     {},
-    ["#abcdef"]
+    colorsToItemPaints(["#abcdef"])
   );
 
   expect(objects[0]?.color).toBe("#abcdef");
   expect(objects[0]?.originalColor).toBe("#abcdef");
+  expect(objects[0]?.textRenderingMode).toBe(0);
+  expect(objects[0]?.strokeColor).toBe("#000000");
+});
+
+test("extractPdfTextObjects uses item paint records when provided", () => {
+  const objects = extractPdfTextObjects(
+    {
+      items: [
+        {
+          height: 12,
+          str: "Outlined",
+          transform: [12, 0, 0, 12, 72, 700],
+          width: 40,
+        },
+      ],
+      styles: {},
+    },
+    {
+      cropBox: { height: 792, width: 612, x: 0, y: 0 },
+      id: "page-1",
+      sourceRotate: 0,
+    },
+    {},
+    [
+      {
+        color: DEFAULT_PDF_TEXT_COLOR,
+        strokeColor: "#ff0000",
+        strokeWidth: 2,
+        textRenderingMode: 1,
+      },
+    ]
+  );
+
+  expect(objects[0]?.textRenderingMode).toBe(1);
+  expect(objects[0]?.strokeColor).toBe("#ff0000");
+  expect(objects[0]?.strokeWidth).toBe(2);
+  expect(objects[0]?.originalStrokeColor).toBe("#ff0000");
 });
