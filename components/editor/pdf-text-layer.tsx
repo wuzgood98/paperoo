@@ -1,18 +1,43 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
   fittedPdfTextBox,
   isPdfTextDirty,
   measurePdfTextWidth,
+  pdfTextNeedsFill,
+  pdfTextNeedsStroke,
   pdfTextOverlayBox,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type { PdfTextObject } from "@/lib/editor/types";
 import { ensureEditorFonts, fontFamilyCss } from "@/lib/fonts/measure-text";
 import { cn } from "@/lib/utils";
+
+const pdfTextInkStyle = (
+  object: PdfTextObject,
+  fontSizeCss: number,
+  zoom: number
+): CSSProperties => {
+  const fill = pdfTextNeedsFill(object.textRenderingMode);
+  const stroke = pdfTextNeedsStroke(object.textRenderingMode);
+  const strokeWidthCss = pageToCss(object.strokeWidth, zoom);
+  return {
+    WebkitTextStroke: stroke
+      ? `${strokeWidthCss}px ${object.strokeColor}`
+      : undefined,
+    color: fill ? object.color : "transparent",
+    fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
+    fontSize: fontSizeCss,
+    fontStyle: object.italic === true ? "italic" : "normal",
+    fontWeight: object.fontWeight ?? 400,
+    lineHeight: 1,
+    paintOrder: stroke ? "stroke fill" : undefined,
+  };
+};
 
 const overlayFrame = (
   object: PdfTextObject,
@@ -96,14 +121,7 @@ const PdfTextEditor = ({
           event.stopPropagation();
         }}
         ref={inputRef}
-        style={{
-          color: object.color,
-          fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
-          fontSize: fontSizeCss,
-          fontStyle: object.italic === true ? "italic" : "normal",
-          fontWeight: object.fontWeight ?? 400,
-          lineHeight: 1,
-        }}
+        style={pdfTextInkStyle(object, fontSizeCss, zoom)}
         type="text"
         value={value}
       />
@@ -168,12 +186,11 @@ export const PdfTextLayer = ({
             <div
               className="relative h-full w-full whitespace-nowrap"
               style={{
-                color: object.color,
-                fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
-                fontSize: pageToCss(object.fontSize ?? object.height, zoom),
-                fontStyle: object.italic === true ? "italic" : "normal",
-                fontWeight: object.fontWeight ?? 400,
-                lineHeight: 1,
+                ...pdfTextInkStyle(
+                  object,
+                  pageToCss(object.fontSize ?? object.height, zoom),
+                  zoom
+                ),
                 transform:
                   object.rotation === 0
                     ? undefined

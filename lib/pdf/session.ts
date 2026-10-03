@@ -18,9 +18,9 @@ import {
 } from "@/lib/pdf/extract-text";
 import type { PdfJsFontObjectStore } from "@/lib/pdf/extract-text";
 import {
-  extractPdfTextFillPaints,
+  extractPdfTextPaints,
   toPdfTextColorOps,
-  zipPdfTextItemColors,
+  zipPdfTextItemPaints,
 } from "@/lib/pdf/extract-text-colors";
 import {
   extractPdfVectorObjects,
@@ -143,11 +143,11 @@ class PdfSession {
           page.commonObjs as PdfJsFontObjectStore,
           extractableText.items
         );
-        const textPaints = extractPdfTextFillPaints(
+        const textPaints = extractPdfTextPaints(
           operatorList,
           toPdfTextColorOps(OPS)
         );
-        const { colors: itemColors } = zipPdfTextItemColors(
+        const { paints: itemPaints } = zipPdfTextItemPaints(
           extractableText.items,
           textPaints,
           DEFAULT_PDF_TEXT_COLOR
@@ -166,7 +166,7 @@ class PdfSession {
             extractableText,
             extractPage,
             fontFaces,
-            itemColors
+            itemPaints
           ),
           pdfVectorObjects: extractPdfVectorObjects(
             operatorList,

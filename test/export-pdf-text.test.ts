@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts } from "pdf-lib";
+import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
 import type { EditorDocument, PdfTextObject } from "@/lib/editor/types";
@@ -26,11 +27,17 @@ const pdfText = (overrides: Partial<PdfTextObject> = {}): PdfTextObject => ({
   originalColor: "#111827",
   originalFontFamily: "sans",
   originalFontSize: 18,
+  originalStrokeColor: "#000000",
+  originalStrokeWidth: 1,
   originalText: "Hello World",
+  originalTextRenderingMode: 0,
   pageId: "page-1",
   rotation: 0,
   sourceIndex: 0,
+  strokeColor: "#000000",
+  strokeWidth: 1,
   text: "Hello World",
+  textRenderingMode: 0,
   transform: [18, 0, 0, 18, 72, 700],
   type: "pdf-text",
   width: 90,
@@ -132,6 +139,64 @@ test("export draws dirty PDF text with the object color", async () => {
     .join(" ");
   // drawDirtyPdfText uses object.color; channel bits covered by dirty/store tests.
   expect(strings).toContain("Hello Red Edit");
+  await task.destroy();
+});
+
+test("export draws dirty stroke-only PDF text with Outline mode", async () => {
+  const source = await PDFDocument.create();
+  const page = source.addPage([612, 792]);
+  const font = await source.embedFont(StandardFonts.Helvetica);
+  page.drawText("Hello World", { font, size: 18, x: 72, y: 700 });
+  const bytes = await source.save();
+
+  const outlined = pdfText({
+    originalStrokeColor: "#2563eb",
+    originalText: "Hello World",
+    originalTextRenderingMode: 1,
+    strokeColor: "#2563eb",
+    strokeWidth: 1.5,
+    text: "Hello Outline",
+    textRenderingMode: 1,
+  });
+
+  const document: EditorDocument = {
+    pages: [
+      {
+        cropBox: { height: 792, width: 612, x: 0, y: 0 },
+        height: 792,
+        id: "page-1",
+        objects: [],
+        pdfImageObjects: [],
+        pdfTextObjects: [outlined],
+        pdfVectorObjects: [],
+        rotation: 0,
+        sourceIndex: 0,
+        sourceRotate: 0,
+        width: 612,
+      },
+    ],
+  };
+
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document,
+    fontBytes: {},
+  });
+
+  const task = loadPdfJsDocument(output);
+  const documentProxy = await task.promise;
+  const pdfPage = await documentProxy.getPage(1);
+  const [content, list] = await Promise.all([
+    pdfPage.getTextContent(),
+    pdfPage.getOperatorList(),
+  ]);
+  const strings = content.items
+    .map((item) => ("str" in item ? item.str : ""))
+    .join(" ");
+  expect(strings).toContain("Hello Outline");
+  expect(list.fnArray).toContain(OPS.setTextRenderingMode);
+  expect(list.fnArray).toContain(OPS.setStrokeRGBColor);
   await task.destroy();
 });
 
