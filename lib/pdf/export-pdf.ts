@@ -33,7 +33,7 @@ import {
   LineJoinStyle,
   toRadians,
 } from "pdf-lib";
-import type { PDFFont, PDFImage, PDFName, PDFOperator, PDFPage } from "pdf-lib";
+import type { PDFFont, PDFImage, PDFOperator, PDFPage } from "pdf-lib";
 
 import {
   centerRotateCtm,
@@ -245,17 +245,6 @@ const drawTextObject = async (
   page.pushOperators(popGraphicsState());
 };
 
-type PdfPageWithFontKey = PDFPage & { fontKey?: PDFName };
-
-const pageFontKey = (page: PDFPage): PDFName => {
-  // SAFETY: pdf-lib sets `fontKey` on PDFPage in setFont(); it is public at runtime.
-  const key = (page as PdfPageWithFontKey).fontKey;
-  if (!key) {
-    throw new Error("PDF page font key missing after setFont");
-  }
-  return key;
-};
-
 const drawDirtyPdfText = async (
   page: PDFPage,
   object: PdfTextObject,
@@ -310,8 +299,7 @@ const drawDirtyPdfText = async (
     return;
   }
 
-  page.setFont(font);
-  const embeddedFontKey = pageFontKey(page);
+  const embeddedFontKey = page.node.newFontDictionary(font.name, font.ref);
   const mode = needsFill
     ? TextRenderingMode.FillAndOutline
     : TextRenderingMode.Outline;

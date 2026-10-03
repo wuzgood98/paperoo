@@ -555,12 +555,7 @@ test("stroke-only Tr=1 text extracts stroke color and mode", async () => {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612, 792]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  page.setFont(font);
-  interface PageFontKey {
-    fontKey: { encodedName: string };
-  }
-  // SAFETY: pdf-lib exposes fontKey on PDFPage after setFont (runtime field).
-  const fontKey = (page as PageFontKey).fontKey.encodedName.slice(1);
+  const fontKey = page.node.newFontDictionary(font.name, font.ref);
   const zero = degrees(0);
   page.pushOperators(
     pushGraphicsState(),
