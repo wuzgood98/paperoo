@@ -57,6 +57,8 @@ test("extractPdfTextObjects skips items without a transform", () => {
   expect(objects[0]?.fontFamily).toBe("sans");
   expect(objects[0]?.fontWeight).toBe(400);
   expect(objects[0]?.italic).toBe(false);
+  expect(objects[0]?.color).toBe("#111827");
+  expect(objects[0]?.originalColor).toBe("#111827");
 });
 
 test("extractPdfTextObjects applies fontFaces weight and italic", () => {

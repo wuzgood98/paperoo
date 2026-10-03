@@ -235,8 +235,6 @@ const drawTextObject = async (
   page.pushOperators(popGraphicsState());
 };
 
-const REPLACEMENT_TEXT_COLOR = "#111827";
-
 const drawDirtyPdfText = async (
   page: PDFPage,
   object: PdfTextObject,
@@ -276,7 +274,7 @@ const drawDirtyPdfText = async (
 
   const ascent = font.heightAtSize(size, { descender: false });
   page.drawText(object.text, {
-    color: color(REPLACEMENT_TEXT_COLOR),
+    color: color(object.color),
     font,
     size,
     x: user.x,

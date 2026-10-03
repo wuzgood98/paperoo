@@ -5,6 +5,7 @@ import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
 
 const pdfText = (): PdfTextObject => ({
+  color: "#111827",
   dir: "ltr",
   fontFamily: "sans",
   fontName: "g_d0_f1",
@@ -12,6 +13,7 @@ const pdfText = (): PdfTextObject => ({
   hasEOL: false,
   height: 16,
   id: "pdf-1",
+  originalColor: "#111827",
   originalFontFamily: "sans",
   originalFontSize: 16,
   originalText: "Hello",
@@ -77,6 +79,26 @@ test("overlay undo still works after a PDF text edit", () => {
   expect(editorStore.getState().document.pages[0]?.objects).toHaveLength(1);
   editorStore.undo();
   expect(editorStore.getState().document.pages[0]?.objects).toHaveLength(0);
+});
+
+test("changing PDF text color marks dirty and undo restores original", () => {
+  editorStore.resetDocument([page()], "demo.pdf");
+  editorStore.selectPdfText("pdf-1");
+  editorStore.patchPdfText((object) => ({ ...object, color: "#dc2626" }));
+  const after = editorStore.selectedPdfText();
+  expect(after?.color).toBe("#dc2626");
+  expect(after?.originalColor).toBe("#111827");
+  expect(after).toBeDefined();
+  if (after) {
+    expect(isPdfTextDirty(after)).toBe(true);
+  }
+  editorStore.undo();
+  const restored = editorStore.selectedPdfText();
+  expect(restored?.color).toBe("#111827");
+  expect(restored).toBeDefined();
+  if (restored) {
+    expect(isPdfTextDirty(restored)).toBe(false);
+  }
 });
 
 test("setting the same fontSize or fontFamily does not mark PDF text dirty", () => {

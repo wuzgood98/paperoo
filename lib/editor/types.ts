@@ -112,6 +112,7 @@ export type PdfTextTransform = readonly [
 ];
 
 export interface PdfTextObject {
+  color: string;
   dir: PdfTextDir;
   fontFamily?: FontFamily;
   fontName: string;
@@ -121,6 +122,7 @@ export interface PdfTextObject {
   height: number;
   id: string;
   italic?: boolean;
+  originalColor: string;
   originalFontFamily?: FontFamily;
   originalFontSize?: number;
   originalText: string;
@@ -305,6 +307,9 @@ export const DEFAULT_SHAPE_STYLE: ShapeStyleDefaults = {
 };
 
 export const DEFAULT_HIGHLIGHT_COLOR = "#facc15";
+
+/** Default fill for dirty PDF text preview/export until op-list colors are extracted. */
+export const DEFAULT_PDF_TEXT_COLOR = "#111827";
 
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 8;

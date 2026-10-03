@@ -208,6 +208,7 @@ test("fittedPdfTextBox grows left for rtl and right for ltr", () => {
 
 test("pdfTextOverlayBox keeps source geometry when clean", () => {
   const object: PdfTextObject = {
+    color: "#111827",
     dir: "ltr",
     fontFamily: "sans",
     fontName: "g_d0_f1",
@@ -217,6 +218,7 @@ test("pdfTextOverlayBox keeps source geometry when clean", () => {
     height: 18,
     id: "pdf-1",
     italic: false,
+    originalColor: "#111827",
     originalFontFamily: "sans",
     originalFontSize: 18,
     originalText: "Hello",
@@ -241,6 +243,7 @@ test("pdfTextOverlayBox keeps source geometry when clean", () => {
 
 test("pdfTextOverlayBox grows when dirty text measures wider", () => {
   const object: PdfTextObject = {
+    color: "#111827",
     dir: "ltr",
     fontFamily: "sans",
     fontName: "g_d0_f1",
@@ -250,6 +253,7 @@ test("pdfTextOverlayBox grows when dirty text measures wider", () => {
     height: 18,
     id: "pdf-1",
     italic: false,
+    originalColor: "#111827",
     originalFontFamily: "sans",
     originalFontSize: 18,
     originalText: "Hello",
@@ -272,8 +276,38 @@ test("pdfTextOverlayBox grows when dirty text measures wider", () => {
   });
 });
 
+test("isPdfTextDirty is true when only color changes", () => {
+  const object: PdfTextObject = {
+    color: "#dc2626",
+    dir: "ltr",
+    fontFamily: "sans",
+    fontName: "g_d0_f1",
+    fontSize: 18,
+    fontWeight: 400,
+    hasEOL: false,
+    height: 18,
+    id: "pdf-1",
+    italic: false,
+    originalColor: "#111827",
+    originalFontFamily: "sans",
+    originalFontSize: 18,
+    originalText: "Hello",
+    pageId: "page-1",
+    rotation: 0,
+    sourceIndex: 0,
+    text: "Hello",
+    transform: [18, 0, 0, 18, 72, 700],
+    type: "pdf-text",
+    width: 90,
+    x: 72,
+    y: 74,
+  };
+  expect(isPdfTextDirty(object)).toBe(true);
+});
+
 test("hitTestPdfText hits grown dirty text outside the original width", () => {
   const object: PdfTextObject = {
+    color: "#111827",
     dir: "ltr",
     fontFamily: "sans",
     fontName: "g_d0_f1",
@@ -283,6 +317,7 @@ test("hitTestPdfText hits grown dirty text outside the original width", () => {
     height: 20,
     id: "pdf-1",
     italic: false,
+    originalColor: "#111827",
     originalFontFamily: "sans",
     originalFontSize: 20,
     originalText: "Hi",
