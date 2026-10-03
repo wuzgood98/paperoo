@@ -233,6 +233,11 @@ const toTransform = (
   return [a, b, c, d, e, f];
 };
 
+const itemColorAt = (
+  itemColors: readonly string[] | undefined,
+  sourceIndex: number
+): string => itemColors?.[sourceIndex] ?? DEFAULT_PDF_TEXT_COLOR;
+
 export const extractPdfTextObjects = (
   content: ExtractableTextContent,
   page: {
@@ -240,7 +245,9 @@ export const extractPdfTextObjects = (
     id: string;
     sourceRotate: PageRotation;
   },
-  fontFaces: Readonly<Record<string, PdfFontFaceMeta | undefined>> = {}
+  fontFaces: Readonly<Record<string, PdfFontFaceMeta | undefined>> = {},
+  /** Parallel to `content.items`; missing/short entries fall back to default. */
+  itemColors?: readonly string[]
 ): PdfTextObject[] => {
   const objects: PdfTextObject[] = [];
 
@@ -264,9 +271,10 @@ export const extractPdfTextObjects = (
       page.sourceRotate,
       style?.descent ?? 0
     );
+    const color = itemColorAt(itemColors, sourceIndex);
 
     objects.push({
-      color: DEFAULT_PDF_TEXT_COLOR,
+      color,
       dir: toDir(item.dir),
       fontFamily,
       fontName: item.fontName ?? "",
@@ -276,7 +284,7 @@ export const extractPdfTextObjects = (
       height: box.height,
       id: createId(),
       italic,
-      originalColor: DEFAULT_PDF_TEXT_COLOR,
+      originalColor: color,
       originalFontFamily: fontFamily,
       originalFontSize: box.fontSize,
       originalText: item.str,

@@ -1,7 +1,11 @@
 import { normalizeRotation } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
 import type { EditorPage } from "@/lib/editor/types";
-import { MAX_PDF_BYTES, MAX_PDF_PAGES } from "@/lib/editor/types";
+import {
+  DEFAULT_PDF_TEXT_COLOR,
+  MAX_PDF_BYTES,
+  MAX_PDF_PAGES,
+} from "@/lib/editor/types";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
 import {
   extractPdfImageObjects,
@@ -13,6 +17,11 @@ import {
   toExtractableTextContent,
 } from "@/lib/pdf/extract-text";
 import type { PdfJsFontObjectStore } from "@/lib/pdf/extract-text";
+import {
+  extractPdfTextFillPaints,
+  toPdfTextColorOps,
+  zipPdfTextItemColors,
+} from "@/lib/pdf/extract-text-colors";
 import {
   extractPdfVectorObjects,
   toPdfVectorOps,
@@ -134,6 +143,15 @@ class PdfSession {
           page.commonObjs as PdfJsFontObjectStore,
           extractableText.items
         );
+        const textPaints = extractPdfTextFillPaints(
+          operatorList,
+          toPdfTextColorOps(OPS)
+        );
+        const { colors: itemColors } = zipPdfTextItemColors(
+          extractableText.items,
+          textPaints,
+          DEFAULT_PDF_TEXT_COLOR
+        );
         const editorPage = {
           cropBox,
           height: viewport.height,
@@ -147,7 +165,8 @@ class PdfSession {
           pdfTextObjects: extractPdfTextObjects(
             extractableText,
             extractPage,
-            fontFaces
+            fontFaces,
+            itemColors
           ),
           pdfVectorObjects: extractPdfVectorObjects(
             operatorList,
