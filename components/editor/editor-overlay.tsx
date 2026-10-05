@@ -17,9 +17,11 @@ import {
   selectPdfObjectAtPoint,
 } from "@/components/editor/overlay-pdf-hit";
 import { OverlayPreviews } from "@/components/editor/overlay-previews";
+import { PdfAnnotationLayer } from "@/components/editor/pdf-annotation-layer";
 import { PdfImageLayer } from "@/components/editor/pdf-image-layer";
 import { PdfTextLayer } from "@/components/editor/pdf-text-layer";
 import { PdfVectorLayer } from "@/components/editor/pdf-vector-layer";
+import { normalizeRotation } from "@/lib/editor/coordinates";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import {
   createSignatureObject,
@@ -33,6 +35,7 @@ import type { EditorPage, Point } from "@/lib/editor/types";
 import { ensurePdfImagePreview } from "@/lib/pdf/pdf-image-preview";
 import { cn } from "@/lib/utils";
 
+// oxlint-disable-next-line react-doctor/no-giant-component -- single overlay coordinates PDF layers, gestures, and tools.
 export const EditorOverlay = ({
   page,
   zoom,
@@ -48,6 +51,9 @@ export const EditorOverlay = ({
   const selectedPdfTextId = useEditorStore((state) => state.selectedPdfTextId);
   const selectedPdfVectorId = useEditorStore(
     (state) => state.selectedPdfVectorId
+  );
+  const selectedPdfAnnotationId = useEditorStore(
+    (state) => state.selectedPdfAnnotationId
   );
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
@@ -70,6 +76,9 @@ export const EditorOverlay = ({
   const [hoveredPdfVectorId, setHoveredPdfVectorId] = useState<string | null>(
     null
   );
+  const [hoveredPdfAnnotationId, setHoveredPdfAnnotationId] = useState<
+    string | null
+  >(null);
   const [transformingId, setTransformingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<OverlayDraft | null>(null);
   const [previewPoint, setPreviewPoint] = useState<Point | null>(null);
@@ -185,7 +194,9 @@ export const EditorOverlay = ({
 
         if (event.target === event.currentTarget) {
           if (tool === "select") {
-            selectPdfObjectAtPoint(page, point);
+            selectPdfObjectAtPoint(page, point, {
+              shiftKey: event.shiftKey,
+            });
           } else {
             editorStore.clearSelection();
           }
@@ -201,6 +212,7 @@ export const EditorOverlay = ({
         setHoveredPdfImageId(null);
         setHoveredPdfTextId(null);
         setHoveredPdfVectorId(null);
+        setHoveredPdfAnnotationId(null);
       }}
       onPointerMove={(event) => {
         onPointerMove(event);
@@ -225,6 +237,9 @@ export const EditorOverlay = ({
         setHoveredPdfVectorId((current) =>
           current === hover.vectorId ? current : hover.vectorId
         );
+        setHoveredPdfAnnotationId((current) =>
+          current === hover.annotationId ? current : hover.annotationId
+        );
       }}
       onPointerUp={onPointerUp}
       ref={rootRef}
@@ -238,6 +253,21 @@ export const EditorOverlay = ({
         }}
         ref={imageInputRef}
         type="file"
+      />
+      <PdfAnnotationLayer
+        boundsRef={boundsRef}
+        canvasRotation={normalizeRotation(page.sourceRotate + page.rotation)}
+        gestureRef={gestureRef}
+        hoveredId={hoveredPdfAnnotationId}
+        nodeRefs={nodeRefs}
+        objects={page.pdfAnnotationObjects}
+        onTransformStart={setTransformingId}
+        page={page}
+        rootRef={rootRef}
+        selectedId={selectedPdfAnnotationId}
+        toPage={toPage}
+        transformingId={transformingId}
+        zoom={zoom}
       />
       <PdfVectorLayer
         boundsRef={boundsRef}

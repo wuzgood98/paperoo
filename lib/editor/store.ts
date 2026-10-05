@@ -18,12 +18,18 @@ import { createId } from "@/lib/editor/ids";
 import {
   findObject,
   findPage,
+  findPdfAnnotation,
   findPdfImage,
   findPdfText,
   findPdfVector,
+  fittedPdfTextBox,
   mapPageObjects,
+  mapPagePdfAnnotations,
   mapPagePdfImages,
   mapPagePdfVectors,
+  measurePdfTextWidth,
+  pdfLinkBoxAfterLabel,
+  pdfLinkEditableLabel,
   removeObjects,
   updateObject,
 } from "@/lib/editor/object-utils";
@@ -46,6 +52,7 @@ import type {
   ImageAsset,
   ImageMimeType,
   PageRotation,
+  PdfAnnotationObject,
   PdfImageObject,
   PdfTextObject,
   PdfVectorObject,
@@ -71,6 +78,7 @@ export interface EditorStoreState {
   selectedPdfImageId: string | null;
   selectedPdfTextId: string | null;
   selectedPdfVectorId: string | null;
+  selectedPdfAnnotationId: string | null;
   shapeStyle: ShapeStyleDefaults;
   status: EditorStatus;
   textStyle: TextStyleDefaults;
@@ -96,6 +104,7 @@ const initialState = (): EditorStoreState => ({
   highlightColor: DEFAULT_HIGHLIGHT_COLOR,
   isExporting: false,
   selectedObjectIds: [],
+  selectedPdfAnnotationId: null,
   selectedPdfImageId: null,
   selectedPdfTextId: null,
   selectedPdfVectorId: null,
@@ -193,6 +202,9 @@ export const editorStore = {
         selectedObjectIds: select
           ? [object.id]
           : internal.state.selectedObjectIds,
+        selectedPdfAnnotationId: select
+          ? null
+          : internal.state.selectedPdfAnnotationId,
         selectedPdfImageId: select ? null : internal.state.selectedPdfImageId,
         selectedPdfTextId: select ? null : internal.state.selectedPdfTextId,
         selectedPdfVectorId: select ? null : internal.state.selectedPdfVectorId,
@@ -214,6 +226,7 @@ export const editorStore = {
   clearSelection: (): void => {
     setState({
       selectedObjectIds: [],
+      selectedPdfAnnotationId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -244,6 +257,29 @@ export const editorStore = {
     }, recordHistory);
   },
 
+  commitPdfAnnotation: (
+    object: PdfAnnotationObject,
+    recordHistory: boolean
+  ): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: mapPagePdfAnnotations(
+            internal.state.document.pages,
+            pageId,
+            (objects) =>
+              objects.map((item) => (item.id === object.id ? object : item))
+          ),
+        },
+      };
+    }, recordHistory);
+  },
+
   commitPdfImage: (object: PdfImageObject, recordHistory: boolean): void => {
     const pageId = internal.state.currentPageId;
     if (!pageId) {
@@ -262,6 +298,60 @@ export const editorStore = {
         },
       };
     }, recordHistory);
+  },
+
+  commitPdfLinkLabel: (label: string): void => {
+    const pageId = internal.state.currentPageId;
+    const objectId = internal.state.selectedPdfAnnotationId;
+    if (!pageId || !objectId) {
+      return;
+    }
+    const page = findPage(internal.state.document.pages, pageId);
+    if (!page) {
+      return;
+    }
+    const link = findPdfAnnotation(page, objectId);
+    if (!link || link.type !== "pdf-link") {
+      return;
+    }
+    const { runs } = pdfLinkEditableLabel(page, link);
+    const [primary] = runs;
+    if (!primary) {
+      return;
+    }
+    const box = pdfLinkBoxAfterLabel(link, primary, label);
+    const runIds = new Set(runs.map((run) => run.id));
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: internal.state.document.pages.map((item) => {
+            if (item.id !== pageId) {
+              return item;
+            }
+            return {
+              ...item,
+              pdfAnnotationObjects: item.pdfAnnotationObjects.map((object) =>
+                object.id === objectId && object.type === "pdf-link"
+                  ? { ...object, ...box, label }
+                  : object
+              ),
+              pdfTextObjects: item.pdfTextObjects.map((object) => {
+                if (object.id === primary.id) {
+                  const measured = measurePdfTextWidth(object, label);
+                  const fitted = fittedPdfTextBox(object, measured);
+                  return { ...object, ...fitted, text: label };
+                }
+                if (runIds.has(object.id)) {
+                  return { ...object, text: "" };
+                }
+                return object;
+              }),
+            };
+          }),
+        },
+      };
+    }, true);
   },
 
   commitPdfVector: (object: PdfVectorObject, recordHistory: boolean): void => {
@@ -286,6 +376,28 @@ export const editorStore = {
 
   deleteSelected: (): void => {
     const pageId = internal.state.currentPageId;
+    const annotationId = internal.state.selectedPdfAnnotationId;
+    if (pageId && annotationId) {
+      commit(() => {
+        internal.state = {
+          ...internal.state,
+          document: {
+            pages: mapPagePdfAnnotations(
+              internal.state.document.pages,
+              pageId,
+              (objects) =>
+                objects.map((object) =>
+                  object.id === annotationId
+                    ? { ...object, deleted: true }
+                    : object
+                )
+            ),
+          },
+          selectedPdfAnnotationId: null,
+        };
+      }, true);
+      return;
+    }
     const imageId = internal.state.selectedPdfImageId;
     if (pageId && imageId) {
       commit(() => {
@@ -363,6 +475,31 @@ export const editorStore = {
 
   isProvisionalAsset: (assetId: string): boolean =>
     internal.assets.get(assetId)?.provisional === true,
+
+  patchPdfAnnotation: (
+    updater: (object: PdfAnnotationObject) => PdfAnnotationObject
+  ): void => {
+    const pageId = internal.state.currentPageId;
+    const objectId = internal.state.selectedPdfAnnotationId;
+    if (!pageId || !objectId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: {
+          pages: mapPagePdfAnnotations(
+            internal.state.document.pages,
+            pageId,
+            (objects) =>
+              objects.map((object) =>
+                object.id === objectId ? updater(object) : object
+              )
+          ),
+        },
+      };
+    }, true);
+  },
 
   patchPdfImage: (
     updater: (object: PdfImageObject) => PdfImageObject
@@ -542,6 +679,7 @@ export const editorStore = {
       errorMessage: null,
       fileName,
       selectedObjectIds: [],
+      selectedPdfAnnotationId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -580,6 +718,18 @@ export const editorStore = {
   selectObjects: (objectIds: readonly string[]): void => {
     setState({
       selectedObjectIds: objectIds,
+      selectedPdfAnnotationId: null,
+      selectedPdfImageId: null,
+      selectedPdfTextId: null,
+      selectedPdfVectorId: null,
+      tool: "select",
+    });
+  },
+
+  selectPdfAnnotation: (objectId: string | null): void => {
+    setState({
+      selectedObjectIds: [],
+      selectedPdfAnnotationId: objectId,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -590,6 +740,7 @@ export const editorStore = {
   selectPdfImage: (objectId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedPdfAnnotationId: null,
       selectedPdfImageId: objectId,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -600,6 +751,7 @@ export const editorStore = {
   selectPdfText: (objectId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedPdfAnnotationId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: objectId,
       selectedPdfVectorId: null,
@@ -610,6 +762,7 @@ export const editorStore = {
   selectPdfVector: (objectId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedPdfAnnotationId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: objectId,
@@ -625,6 +778,9 @@ export const editorStore = {
     }
     return findObject(page, id);
   },
+
+  selectedPdfAnnotation: (): PdfAnnotationObject | undefined =>
+    findPdfAnnotation(currentPage(), internal.state.selectedPdfAnnotationId),
 
   selectedPdfImage: (): PdfImageObject | undefined =>
     findPdfImage(currentPage(), internal.state.selectedPdfImageId),
@@ -649,6 +805,7 @@ export const editorStore = {
     setState({
       currentPageId: pageId,
       selectedObjectIds: [],
+      selectedPdfAnnotationId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -686,6 +843,7 @@ export const editorStore = {
           : (pages[0]?.id ?? null),
         document: { pages },
         selectedObjectIds: [],
+        selectedPdfAnnotationId: null,
         selectedPdfImageId: null,
         selectedPdfTextId: null,
         selectedPdfVectorId: null,
@@ -751,6 +909,8 @@ export const editorStore = {
     setState({
       selectedObjectIds:
         tool === "select" ? internal.state.selectedObjectIds : [],
+      selectedPdfAnnotationId:
+        tool === "select" ? internal.state.selectedPdfAnnotationId : null,
       selectedPdfImageId:
         tool === "select" ? internal.state.selectedPdfImageId : null,
       selectedPdfTextId:

@@ -1,0 +1,375 @@
+import type { PDFDocument, PDFPage } from "pdf-lib";
+import { PDFDict, PDFName, PDFRef, PDFString, StandardFonts } from "pdf-lib";
+
+import { displayedToUserSpace } from "@/lib/editor/coordinates";
+import {
+  isPdfAnnotationDirty,
+  pdfLinkActionsEqual,
+} from "@/lib/editor/object-utils";
+import type {
+  EditorDocument,
+  EditorPage,
+  PdfAnnotationObject,
+  PdfFreeTextAnnotation,
+  PdfLinkAnnotation,
+  PdfMarkupAnnotation,
+} from "@/lib/editor/types";
+
+// oxlint-disable-next-line eslint/prefer-named-capture-group -- ES2017 target lacks named capture groups in TypeScript.
+const SOURCE_REF_REGEX = /^(\d+)R(\d*)$/u;
+
+const parseSourceRef = (
+  sourceRef: string
+): { generationNumber: number; objectNumber: number } | null => {
+  const match = SOURCE_REF_REGEX.exec(sourceRef);
+  if (!match?.[1]) {
+    return null;
+  }
+  return {
+    generationNumber: match[2] ? Math.trunc(Number(match[2])) : 0,
+    objectNumber: Math.trunc(Number(match[1])),
+  };
+};
+
+const findAnnotRef = (page: PDFPage, sourceRef: string): PDFRef | null => {
+  const parsed = parseSourceRef(sourceRef);
+  if (!parsed) {
+    return null;
+  }
+  const annots = page.node.Annots();
+  if (!annots) {
+    return null;
+  }
+  for (let index = 0; index < annots.size(); index += 1) {
+    const entry = annots.get(index);
+    if (!(entry instanceof PDFRef)) {
+      continue;
+    }
+    if (
+      entry.objectNumber === parsed.objectNumber &&
+      entry.generationNumber === parsed.generationNumber
+    ) {
+      return entry;
+    }
+  }
+  return null;
+};
+
+const hexToPdfRgb = (hex: string): [number, number, number] => {
+  const normalized = hex.replace("#", "");
+  const value =
+    normalized.length === 3
+      ? [...normalized].map((char) => `${char}${char}`).join("")
+      : normalized.padEnd(6, "0");
+  return [
+    Number.parseInt(value.slice(0, 2), 16) / 255,
+    Number.parseInt(value.slice(2, 4), 16) / 255,
+    Number.parseInt(value.slice(4, 6), 16) / 255,
+  ];
+};
+
+const userRectFromDisplayed = (
+  object: PdfAnnotationObject,
+  editorPage: EditorPage
+): [number, number, number, number] => {
+  const user = displayedToUserSpace(
+    {
+      height: object.height,
+      width: object.width,
+      x: object.x,
+      y: object.y,
+    },
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  return [user.x, user.y, user.x + user.width, user.y + user.height];
+};
+
+const userQuadPointsFromLink = (
+  link: PdfLinkAnnotation,
+  editorPage: EditorPage
+): number[] => {
+  const flat: number[] = [];
+  for (const quad of link.quads) {
+    const user = displayedToUserSpace(
+      quad,
+      editorPage.cropBox,
+      editorPage.sourceRotate
+    );
+    const x1 = user.x;
+    const y1 = user.y;
+    const x2 = user.x + user.width;
+    const y2 = user.y + user.height;
+    flat.push(x1, y2, x2, y2, x1, y1, x2, y1);
+  }
+  return flat;
+};
+
+const setLinkUriAction = (
+  doc: PDFDocument,
+  dict: PDFDict,
+  url: string
+): void => {
+  dict.delete(PDFName.of("Dest"));
+  const existing = dict.lookup(PDFName.of("A"), PDFDict);
+  if (existing instanceof PDFDict) {
+    const subtype = existing.get(PDFName.of("S"));
+    if (subtype instanceof PDFName && subtype.decodeText() === "URI") {
+      existing.set(PDFName.of("URI"), PDFString.of(url));
+      return;
+    }
+  }
+  const action = doc.context.obj({
+    S: PDFName.of("URI"),
+    Type: PDFName.of("Action"),
+  });
+  if (action instanceof PDFDict) {
+    action.set(PDFName.of("URI"), PDFString.of(url));
+  }
+  dict.set(PDFName.of("A"), action);
+};
+
+const removeAnnotation = (
+  doc: PDFDocument,
+  page: PDFPage,
+  sourceRef: string,
+  popupRef: string | null
+): void => {
+  const ref = findAnnotRef(page, sourceRef);
+  if (!ref) {
+    return;
+  }
+  page.node.removeAnnot(ref);
+  doc.context.delete(ref);
+  if (popupRef) {
+    const popup = findAnnotRef(page, popupRef);
+    if (popup) {
+      page.node.removeAnnot(popup);
+      doc.context.delete(popup);
+    }
+  }
+};
+
+const quadPathForMarkup = (
+  object: PdfMarkupAnnotation,
+  subtype: PdfMarkupAnnotation["type"]
+): string => {
+  const quads = object.originalUserQuadPoints;
+  const [r, g, b] = hexToPdfRgb(object.color);
+  const lines: string[] = ["q"];
+  if (subtype === "pdf-highlight") {
+    lines.push(`${r} ${g} ${b} rg`);
+  } else {
+    lines.push(`${r} ${g} ${b} RG`, "[] 0 d", "1 w");
+  }
+  for (let i = 0; i + 7 < quads.length; i += 8) {
+    const x1 = quads[i] ?? 0;
+    const y1 = quads[i + 1] ?? 0;
+    const x2 = quads[i + 2] ?? 0;
+    const y2 = quads[i + 3] ?? 0;
+    const x3 = quads[i + 4] ?? 0;
+    const y3 = quads[i + 5] ?? 0;
+    const x4 = quads[i + 6] ?? 0;
+    const y4 = quads[i + 7] ?? 0;
+    if (subtype === "pdf-highlight") {
+      lines.push(`${x1} ${y1} m ${x2} ${y2} l ${x4} ${y4} l ${x3} ${y3} l h f`);
+    } else if (subtype === "pdf-underline") {
+      lines.push(`${x3} ${y3 + 1.3} m ${x4} ${y4 + 1.3} l S`);
+    } else if (subtype === "pdf-strikeout") {
+      const mx = (x1 + x3) / 2;
+      const my = (y1 + y3) / 2;
+      const nx = (x2 + x4) / 2;
+      const ny = (y2 + y4) / 2;
+      lines.push(`${mx} ${my} m ${nx} ${ny} l S`);
+    } else {
+      lines.push(`${x3} ${y3 + 1.3} m ${x4} ${y4 + 1.3} l S`);
+    }
+  }
+  lines.push("Q");
+  return lines.join("\n");
+};
+
+const setMarkupAppearance = (
+  doc: PDFDocument,
+  dict: PDFDict,
+  object: PdfMarkupAnnotation,
+  editorPage: EditorPage
+): void => {
+  const rect = userRectFromDisplayed(object, editorPage);
+  const [r, g, b] = hexToPdfRgb(object.color);
+  dict.set(PDFName.of("C"), doc.context.obj([r, g, b]));
+  if (object.type === "pdf-highlight" && object.opacity !== undefined) {
+    dict.set(PDFName.of("CA"), doc.context.obj(object.opacity));
+  }
+  dict.set(PDFName.of("Rect"), doc.context.obj(rect));
+  const appearance = quadPathForMarkup(object, object.type);
+  const stream = doc.context.flateStream(appearance, {
+    BBox: doc.context.obj(rect),
+    FormType: 1,
+    Subtype: PDFName.of("Form"),
+    Type: PDFName.of("XObject"),
+  });
+  const streamRef = doc.context.register(stream);
+  const ap = doc.context.obj({ N: streamRef });
+  dict.set(PDFName.of("AP"), ap);
+};
+
+const escapePdfString = (value: string): string =>
+  value.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
+
+const setFreeTextAppearance = async (
+  doc: PDFDocument,
+  dict: PDFDict,
+  object: PdfFreeTextAnnotation,
+  editorPage: EditorPage
+): Promise<void> => {
+  const rect = userRectFromDisplayed(object, editorPage);
+  const [r, g, b] = hexToPdfRgb(object.fontColor);
+  dict.set(PDFName.of("Rect"), doc.context.obj(rect));
+  dict.set(PDFName.of("Contents"), PDFString.of(object.contents));
+  dict.set(
+    PDFName.of("DA"),
+    PDFString.of(`/Helv ${object.fontSize} Tf ${r} ${g} ${b} rg`)
+  );
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const { fontSize } = object;
+  const lines = object.contents.split(/\r\n|\n|\r/u);
+  const lineHeight = fontSize * 1.35;
+  const textY = rect[3] - fontSize * 0.85;
+  let stream = "q\n";
+  stream += `${r} ${g} ${b} rg\n`;
+  stream += `BT /Helv ${fontSize} Tf ${rect[0]} ${textY} Td\n`;
+  for (const [index, line] of lines.entries()) {
+    if (index > 0) {
+      stream += `0 -${lineHeight} Td\n`;
+    }
+    stream += `(${escapePdfString(line)}) Tj\n`;
+  }
+  stream += "ET\nQ";
+  const appearanceStream = doc.context.flateStream(stream, {
+    BBox: doc.context.obj(rect),
+    FormType: 1,
+    Matrix: doc.context.obj([1, 0, 0, 1, -rect[0], -rect[1]]),
+    Resources: doc.context.obj({
+      Font: doc.context.obj({ Helv: font.ref }),
+    }),
+    Subtype: PDFName.of("Form"),
+    Type: PDFName.of("XObject"),
+  });
+  const appearanceRef = doc.context.register(appearanceStream);
+  dict.set(PDFName.of("AP"), doc.context.obj({ N: appearanceRef }));
+};
+
+// oxlint-disable-next-line eslint/complexity -- per-annotation-type export branches.
+const applyAnnotationEdit = async (
+  doc: PDFDocument,
+  editorPage: EditorPage,
+  page: PDFPage,
+  object: PdfAnnotationObject
+): Promise<void> => {
+  if (object.deleted) {
+    removeAnnotation(
+      doc,
+      page,
+      object.sourceRef,
+      "popupRef" in object ? object.popupRef : null
+    );
+    return;
+  }
+  const ref = findAnnotRef(page, object.sourceRef);
+  if (!ref) {
+    return;
+  }
+  const dict = doc.context.lookup(ref, PDFDict);
+  if (!(dict instanceof PDFDict)) {
+    return;
+  }
+  switch (object.type) {
+    case "pdf-highlight":
+    case "pdf-underline":
+    case "pdf-squiggly":
+    case "pdf-strikeout": {
+      setMarkupAppearance(doc, dict, object, editorPage);
+      return;
+    }
+    case "pdf-free-text": {
+      await setFreeTextAppearance(doc, dict, object, editorPage);
+      return;
+    }
+    case "pdf-text-note": {
+      dict.set(
+        PDFName.of("Rect"),
+        doc.context.obj(userRectFromDisplayed(object, editorPage))
+      );
+      dict.set(PDFName.of("Contents"), PDFString.of(object.contents));
+      return;
+    }
+    case "pdf-stamp": {
+      if (object.x !== object.originalX || object.y !== object.originalY) {
+        dict.set(
+          PDFName.of("Rect"),
+          doc.context.obj(userRectFromDisplayed(object, editorPage))
+        );
+      }
+      break;
+    }
+    case "pdf-link": {
+      if (
+        !pdfLinkActionsEqual(object.action, object.originalAction) &&
+        object.action.kind === "url"
+      ) {
+        setLinkUriAction(doc, dict, object.action.url);
+      }
+      const geometryDirty =
+        object.x !== object.originalX ||
+        object.y !== object.originalY ||
+        object.width !== object.originalWidth ||
+        object.height !== object.originalHeight ||
+        object.label !== object.originalLabel;
+      if (
+        geometryDirty &&
+        object.originalUserQuadPoints &&
+        object.originalUserQuadPoints.length >= 8
+      ) {
+        dict.set(
+          PDFName.of("Rect"),
+          doc.context.obj(userRectFromDisplayed(object, editorPage))
+        );
+        dict.set(
+          PDFName.of("QuadPoints"),
+          doc.context.obj(userQuadPointsFromLink(object, editorPage))
+        );
+      } else if (geometryDirty) {
+        dict.set(
+          PDFName.of("Rect"),
+          doc.context.obj(userRectFromDisplayed(object, editorPage))
+        );
+      }
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+};
+
+export const applyPdfAnnotationEdits = async (
+  source: PDFDocument,
+  document: EditorDocument
+): Promise<void> => {
+  const pages = source.getPages();
+  for (const editorPage of document.pages) {
+    const dirty = editorPage.pdfAnnotationObjects.filter(isPdfAnnotationDirty);
+    if (dirty.length === 0) {
+      continue;
+    }
+    const page = pages[editorPage.sourceIndex];
+    if (!page) {
+      continue;
+    }
+    for (const object of dirty) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential annot edits
+      await applyAnnotationEdit(source, editorPage, page, object);
+    }
+  }
+};

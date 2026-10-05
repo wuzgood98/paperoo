@@ -7,6 +7,7 @@ import {
   MAX_PDF_PAGES,
 } from "@/lib/editor/types";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
+import { extractPdfAnnotationObjects } from "@/lib/pdf/extract-annotations";
 import {
   extractPdfImageObjects,
   toPdfImageOps,
@@ -120,9 +121,10 @@ class PdfSession {
         }
         const viewport = page.getViewport({ scale: 1 });
         const { view } = page;
-        const [textContent, operatorList] = await Promise.all([
+        const [textContent, operatorList, rawAnnotations] = await Promise.all([
           page.getTextContent(),
           page.getOperatorList({ annotationMode: AnnotationMode.DISABLE }),
+          page.getAnnotations({ intent: "display" }),
         ]);
         const cropBox = {
           height: view[3] - view[1],
@@ -137,6 +139,8 @@ class PdfSession {
           id,
           sourceRotate,
         };
+        const { objects: pdfAnnotationObjects, skippedSubtypes } =
+          extractPdfAnnotationObjects(rawAnnotations, extractPage);
         const extractableText = toExtractableTextContent(textContent);
         // SAFETY: commonObjs uses the same PDFObjects.get contract as page.objs.
         const fontFaces = await collectPdfFontFaces(
@@ -157,6 +161,7 @@ class PdfSession {
           height: viewport.height,
           id,
           objects: [],
+          pdfAnnotationObjects,
           pdfImageObjects: extractPdfImageObjects(
             operatorList,
             extractPage,
@@ -174,6 +179,7 @@ class PdfSession {
             toPdfVectorOps(OPS)
           ),
           rotation: 0,
+          skippedPdfAnnotationSubtypes: skippedSubtypes,
           sourceIndex: index,
           sourceRotate,
           width: viewport.width,

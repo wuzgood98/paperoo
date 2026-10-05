@@ -72,6 +72,7 @@ import type {
   TextObject,
 } from "@/lib/editor/types";
 import { FONT_FILES, wrapText } from "@/lib/fonts/measure-text";
+import { applyPdfAnnotationEdits } from "@/lib/pdf/export-annotations";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
 
 export interface ExportAsset {
@@ -790,6 +791,8 @@ export const exportDocument = async (
     }
     throw error;
   }
+  await applyPdfAnnotationEdits(source, input.document);
+
   const output = await PDFDocument.create();
   output.registerFontkit(fontkit);
 

@@ -20,7 +20,11 @@ import type {
   HighlightObject,
   ImageMimeType,
   ImageObject,
+  PdfAnnotationObject,
   PdfImageObject,
+  PdfLinkAction,
+  PdfLinkAnnotation,
+  PdfMarkupAnnotation,
   PdfTextObject,
   PdfVectorObject,
   Point,
@@ -65,6 +69,208 @@ export const findPdfVector = (
   objectId: string | null
 ): PdfVectorObject | undefined =>
   page?.pdfVectorObjects.find((object) => object.id === objectId);
+
+export const findPdfAnnotation = (
+  page: EditorPage | undefined,
+  objectId: string | null
+): PdfAnnotationObject | undefined =>
+  page?.pdfAnnotationObjects.find((object) => object.id === objectId);
+
+const pointInRect = (point: Point, rect: Rect): boolean =>
+  point.x >= rect.x &&
+  point.x <= rect.x + rect.width &&
+  point.y >= rect.y &&
+  point.y <= rect.y + rect.height;
+
+const rectsOverlap = (left: Rect, right: Rect): boolean =>
+  left.x < right.x + right.width &&
+  left.x + left.width > right.x &&
+  left.y < right.y + right.height &&
+  left.y + left.height > right.y;
+
+export const pdfLinkActionsEqual = (
+  left: PdfLinkAction,
+  right: PdfLinkAction
+): boolean => {
+  if (left.kind !== right.kind) {
+    return false;
+  }
+  switch (left.kind) {
+    case "url": {
+      return right.kind === "url" && left.url === right.url;
+    }
+    case "named": {
+      return right.kind === "named" && left.name === right.name;
+    }
+    case "goto": {
+      return (
+        right.kind === "goto" &&
+        JSON.stringify(left.dest) === JSON.stringify(right.dest)
+      );
+    }
+    case "none": {
+      return true;
+    }
+    default: {
+      return false;
+    }
+  }
+};
+
+export const pdfLinkOverlappingTextRuns = (
+  link: PdfLinkAnnotation,
+  textRuns: readonly PdfTextObject[]
+): PdfTextObject[] =>
+  textRuns
+    .filter((run) => {
+      const runBox: Rect = {
+        height: run.height,
+        width: run.width,
+        x: run.x,
+        y: run.y,
+      };
+      return link.quads.some((quad) => rectsOverlap(runBox, quad));
+    })
+    .toSorted((left, right) => left.y - right.y || left.x - right.x);
+
+export interface PdfLinkEditableLabel {
+  editable: boolean;
+  label: string;
+  runs: PdfTextObject[];
+}
+
+export const pdfLinkEditableLabel = (
+  page: EditorPage,
+  link: PdfLinkAnnotation
+): PdfLinkEditableLabel => {
+  const runs = pdfLinkOverlappingTextRuns(link, page.pdfTextObjects);
+  if (runs.length === 0) {
+    return { editable: false, label: link.label, runs: [] };
+  }
+  return {
+    editable: true,
+    label: runs.map((run) => run.text).join(""),
+    runs,
+  };
+};
+
+export const hitTestPdfAnnotation = (
+  objects: readonly PdfAnnotationObject[],
+  point: Point
+): PdfAnnotationObject | undefined => {
+  for (const object of objects.toReversed()) {
+    if (object.deleted) {
+      continue;
+    }
+    if (
+      object.type === "pdf-highlight" ||
+      object.type === "pdf-underline" ||
+      object.type === "pdf-squiggly" ||
+      object.type === "pdf-strikeout" ||
+      object.type === "pdf-link"
+    ) {
+      if (object.quads.some((quad) => pointInRect(point, quad))) {
+        return object;
+      }
+      continue;
+    }
+    if (pointInRect(point, object)) {
+      return object;
+    }
+  }
+  return undefined;
+};
+
+export const isPdfMarkupAnnotation = (
+  object: PdfAnnotationObject
+): object is PdfMarkupAnnotation =>
+  object.type === "pdf-highlight" ||
+  object.type === "pdf-underline" ||
+  object.type === "pdf-squiggly" ||
+  object.type === "pdf-strikeout";
+
+export const isPdfAnnotationDirty = (object: PdfAnnotationObject): boolean => {
+  if (object.deleted) {
+    return true;
+  }
+  if (
+    object.x !== object.originalX ||
+    object.y !== object.originalY ||
+    object.width !== object.originalWidth ||
+    object.height !== object.originalHeight ||
+    object.rotation !== object.originalRotation
+  ) {
+    return true;
+  }
+  switch (object.type) {
+    case "pdf-highlight": {
+      return (
+        object.color !== object.originalColor ||
+        object.opacity !== object.originalOpacity
+      );
+    }
+    case "pdf-underline":
+    case "pdf-squiggly":
+    case "pdf-strikeout": {
+      return object.color !== object.originalColor;
+    }
+    case "pdf-link": {
+      return (
+        !pdfLinkActionsEqual(object.action, object.originalAction) ||
+        object.label !== object.originalLabel
+      );
+    }
+    case "pdf-stamp": {
+      return false;
+    }
+    case "pdf-free-text": {
+      return (
+        object.contents !== object.originalContents ||
+        object.fontSize !== object.originalFontSize ||
+        object.fontColor !== object.originalColor
+      );
+    }
+    case "pdf-text-note": {
+      return object.contents !== object.originalContents;
+    }
+    default: {
+      return false;
+    }
+  }
+};
+
+export const pageHasDirtyPdfAnnotations = (page: EditorPage): boolean =>
+  page.pdfAnnotationObjects.some(isPdfAnnotationDirty);
+
+export const mapPagePdfAnnotations = (
+  pages: readonly EditorPage[],
+  pageId: string,
+  mapper: (objects: PdfAnnotationObject[]) => PdfAnnotationObject[]
+): EditorPage[] =>
+  pages.map((page) =>
+    page.id === pageId
+      ? { ...page, pdfAnnotationObjects: mapper(page.pdfAnnotationObjects) }
+      : page
+  );
+
+export const pdfAnnotationWithGestureBox = (
+  current: PdfAnnotationObject,
+  gesture: Pick<
+    PdfAnnotationObject,
+    "height" | "rotation" | "width" | "x" | "y"
+  >
+): PdfAnnotationObject => ({
+  ...current,
+  height: gesture.height,
+  rotation: gesture.rotation,
+  width: gesture.width,
+  x: gesture.x,
+  y: gesture.y,
+});
+
+export const shouldPaintPdfAnnotationPreview = (
+  object: PdfAnnotationObject
+): boolean => isPdfAnnotationDirty(object) && !object.deleted;
 
 export const isPdfTextDirty = (object: PdfTextObject): boolean =>
   object.text !== object.originalText ||
@@ -376,6 +582,28 @@ export const measurePdfTextWidth = (
     fontWeight: object.fontWeight ?? 400,
     italic: object.italic === true,
   });
+
+export const pdfLinkBoxAfterLabel = (
+  _link: PdfLinkAnnotation,
+  primary: PdfTextObject,
+  label: string
+): Pick<PdfLinkAnnotation, "height" | "quads" | "width" | "x" | "y"> => {
+  const measured = measurePdfTextWidth(primary, label);
+  const fitted = fittedPdfTextBox(primary, measured);
+  const quad: Rect = {
+    height: fitted.height,
+    width: fitted.width,
+    x: fitted.x,
+    y: fitted.y,
+  };
+  return {
+    height: fitted.height,
+    quads: [quad],
+    width: fitted.width,
+    x: fitted.x,
+    y: fitted.y,
+  };
+};
 
 export const hitTestPdfText = (
   objects: readonly PdfTextObject[],

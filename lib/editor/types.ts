@@ -208,6 +208,102 @@ export interface PdfVectorStrokeStyle {
   width: number;
 }
 
+export type PdfLinkAction =
+  | { kind: "url"; url: string }
+  | { kind: "goto"; dest: unknown }
+  | { kind: "named"; name: string }
+  | { kind: "none" };
+
+export interface PdfAnnotationGeometry {
+  annotationFlags: number;
+  deleted: boolean;
+  height: number;
+  id: string;
+  originalHeight: number;
+  originalRotation: number;
+  originalUserHeight: number;
+  originalUserWidth: number;
+  originalUserX: number;
+  originalUserY: number;
+  originalWidth: number;
+  originalX: number;
+  originalY: number;
+  pageId: string;
+  rotation: number;
+  sourceRef: string;
+  subtype: string;
+  width: number;
+  x: number;
+  y: number;
+}
+
+export type PdfMarkupAnnotationType =
+  | "pdf-highlight"
+  | "pdf-underline"
+  | "pdf-squiggly"
+  | "pdf-strikeout";
+
+export interface PdfMarkupAnnotation extends PdfAnnotationGeometry {
+  color: string;
+  originalColor: string;
+  originalUserQuadPoints: number[];
+  popupRef: string | null;
+  quads: Rect[];
+  type: PdfMarkupAnnotationType;
+  opacity?: number;
+  originalOpacity?: number;
+}
+
+export interface PdfLinkAnnotation extends PdfAnnotationGeometry {
+  action: PdfLinkAction;
+  color: string;
+  label: string;
+  originalAction: PdfLinkAction;
+  originalColor: string;
+  originalLabel: string;
+  originalUserQuadPoints: number[] | null;
+  quads: Rect[];
+  type: "pdf-link";
+}
+
+export interface PdfFreeTextAnnotation extends PdfAnnotationGeometry {
+  color: string;
+  contents: string;
+  fontColor: string;
+  fontSize: number;
+  originalColor: string;
+  originalContents: string;
+  originalFontSize: number;
+  popupRef: string | null;
+  type: "pdf-free-text";
+}
+
+export interface PdfTextNoteAnnotation extends PdfAnnotationGeometry {
+  color: string;
+  contents: string;
+  iconName: string;
+  originalColor: string;
+  originalContents: string;
+  originalIconName: string;
+  popupRef: string | null;
+  type: "pdf-text-note";
+}
+
+export interface PdfStampAnnotation extends PdfAnnotationGeometry {
+  appearanceTranslatable: boolean;
+  color: string;
+  originalColor: string;
+  popupRef: string | null;
+  type: "pdf-stamp";
+}
+
+export type PdfAnnotationObject =
+  | PdfLinkAnnotation
+  | PdfMarkupAnnotation
+  | PdfFreeTextAnnotation
+  | PdfTextNoteAnnotation
+  | PdfStampAnnotation;
+
 export interface PdfVectorObject {
   commands: PdfPathCommand[];
   deleted: boolean;
@@ -243,9 +339,11 @@ export interface EditorPage {
   sourceRotate: PageRotation;
   cropBox: CropBox;
   objects: EditorObject[];
+  pdfAnnotationObjects: PdfAnnotationObject[];
   pdfImageObjects: PdfImageObject[];
   pdfTextObjects: PdfTextObject[];
   pdfVectorObjects: PdfVectorObject[];
+  skippedPdfAnnotationSubtypes: string[];
 }
 
 export interface EditorDocument {

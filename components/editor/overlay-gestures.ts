@@ -15,6 +15,7 @@ import {
   createImageObject,
   createShapeObject,
   normalizedRect,
+  pdfAnnotationWithGestureBox,
   pdfImageWithGestureBox,
   pdfVectorWithGestureBox,
   scaleObjectToBox,
@@ -25,6 +26,7 @@ import type {
   DrawStyleDefaults,
   EditorObject,
   EditorTool,
+  PdfAnnotationObject,
   PdfImageObject,
   PdfVectorObject,
   Point,
@@ -32,7 +34,15 @@ import type {
 } from "@/lib/editor/types";
 import { readImageFile } from "@/lib/pdf/image-file";
 
-export type GestureTarget = EditorObject | PdfImageObject | PdfVectorObject;
+export type GestureTarget =
+  | EditorObject
+  | PdfAnnotationObject
+  | PdfImageObject
+  | PdfVectorObject;
+
+const isPdfAnnotationGestureTarget = (
+  object: GestureTarget
+): object is PdfAnnotationObject => "sourceRef" in object;
 
 export type OverlayDraft =
   | { kind: "draw"; points: Point[] }
@@ -188,6 +198,16 @@ export const useOverlayGestures = ({
       );
       return;
     }
+    if (isPdfAnnotationGestureTarget(object)) {
+      const current = editorStore.selectedPdfAnnotation();
+      editorStore.commitPdfAnnotation(
+        current && current.id === object.id
+          ? pdfAnnotationWithGestureBox(current, object)
+          : object,
+        true
+      );
+      return;
+    }
     editorStore.commitObject(object.id, object, true);
   };
 
@@ -295,12 +315,15 @@ export const useOverlayGestures = ({
       );
       if (
         gesture.object.type === "pdf-image" ||
-        gesture.object.type === "pdf-vector"
+        gesture.object.type === "pdf-vector" ||
+        gesture.object.type === "pdf-free-text"
       ) {
         finishGesture({ ...gesture.object, ...nextBox });
         return;
       }
-      finishGesture(scaleObjectToBox(gesture.object, nextBox));
+      if (!isPdfAnnotationGestureTarget(gesture.object)) {
+        finishGesture(scaleObjectToBox(gesture.object, nextBox));
+      }
       return;
     }
     if (gesture.kind === "rotate") {

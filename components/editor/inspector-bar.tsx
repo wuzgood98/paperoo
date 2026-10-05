@@ -4,6 +4,7 @@ import { BoldIcon, ItalicIcon } from "lucide-react";
 
 import { ColorField } from "@/components/editor/color-field";
 import { ToolbarTip } from "@/components/editor/editor-toolbar";
+import { PdfAnnotationInspector } from "@/components/editor/pdf-annotation-inspector";
 import { PdfImageInspector } from "@/components/editor/pdf-image-inspector";
 import { PdfTextInspector } from "@/components/editor/pdf-text-inspector";
 import { PdfVectorInspector } from "@/components/editor/pdf-vector-inspector";
@@ -22,6 +23,7 @@ import {
   findPage,
   findPdfImage,
   findPdfText,
+  findPdfAnnotation,
   findPdfVector,
 } from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
@@ -55,6 +57,15 @@ export const InspectorBar = () => {
       state.selectedPdfVectorId
     )
   );
+  const currentPage = useEditorStore((state) =>
+    findPage(state.document.pages, state.currentPageId)
+  );
+  const selectedPdfAnnotation = useEditorStore((state) =>
+    findPdfAnnotation(
+      findPage(state.document.pages, state.currentPageId),
+      state.selectedPdfAnnotationId
+    )
+  );
   if (selectedPdfText) {
     return <PdfTextInspector object={selectedPdfText} />;
   }
@@ -63,6 +74,14 @@ export const InspectorBar = () => {
   }
   if (selectedPdfVector) {
     return <PdfVectorInspector object={selectedPdfVector} />;
+  }
+  if (selectedPdfAnnotation && currentPage) {
+    return (
+      <PdfAnnotationInspector
+        object={selectedPdfAnnotation}
+        page={currentPage}
+      />
+    );
   }
 
   if (!selected) {
