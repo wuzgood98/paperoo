@@ -2,13 +2,21 @@
 
 import { useMemo, useState } from "react";
 
-import { Input } from "@/components/ui/input";
+import {
+  Autocomplete,
+  AutocompleteEmpty,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+} from "@/components/ui/autocomplete";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { DocumentSearchHit } from "@/lib/ocr/search";
 import { searchDocumentText } from "@/lib/ocr/search";
 import { useOcrSession } from "@/lib/ocr/session";
 
-const SEARCH_RESULTS_BLUR_CLOSE_MS = 120;
+const hitValue = (hit: DocumentSearchHit): string =>
+  `${hit.pageId}:${hit.objectId}`;
 
 const goToSearchHit = (hit: DocumentSearchHit): void => {
   editorStore.setCurrentPage(hit.pageId, { syncFitZoom: false });
@@ -34,53 +42,45 @@ export const DocumentSearch = () => {
   );
 
   return (
-    <div className="relative max-w-56 min-w-40">
-      <Input
-        aria-label="Search document"
-        nativeInput
-        onBlur={() => {
-          window.setTimeout(() => {
-            setOpen(false);
-          }, SEARCH_RESULTS_BLUR_CLOSE_MS);
-        }}
-        onChange={(event) => {
-          setQuery(event.target.value);
+    <div className="max-w-56 min-w-40">
+      <Autocomplete
+        autoHighlight
+        itemToStringLabel={(hit) => hit.text}
+        items={hits}
+        mode="none"
+        onOpenChange={setOpen}
+        onValueChange={(value) => {
+          setQuery(value);
           setOpen(true);
         }}
-        onFocus={() => {
-          setOpen(true);
-        }}
-        placeholder="Search"
-        size="sm"
-        type="search"
+        open={open && query.trim().length > 0}
         value={query}
-      />
-      {open && query.trim().length > 0 ? (
-        <div className="bg-background absolute top-full z-20 mt-1 max-h-64 w-72 overflow-auto rounded-lg border py-1 shadow-md">
-          {hits.length === 0 ? (
-            <p className="text-muted-foreground px-3 py-2 text-xs">
-              No matches
-            </p>
-          ) : (
-            hits.map((hit) => (
-              <button
-                className="hover:bg-accent block w-full truncate px-3 py-1.5 text-left text-xs"
-                key={`${hit.pageId}:${hit.objectId}`}
+      >
+        <AutocompleteInput
+          aria-label="Search document"
+          placeholder="Search"
+          showClear
+          showTrigger={false}
+          size="sm"
+        />
+        <AutocompletePopup className="w-72">
+          <AutocompleteEmpty>No matches</AutocompleteEmpty>
+          <AutocompleteList>
+            {(hit) => (
+              <AutocompleteItem
+                key={hitValue(hit)}
                 onClick={() => {
                   goToSearchHit(hit);
                   setOpen(false);
                 }}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                }}
-                type="button"
+                value={hit}
               >
-                {hit.text}
-              </button>
-            ))
-          )}
-        </div>
-      ) : null}
+                <span className="block truncate">{hit.text}</span>
+              </AutocompleteItem>
+            )}
+          </AutocompleteList>
+        </AutocompletePopup>
+      </Autocomplete>
     </div>
   );
 };
