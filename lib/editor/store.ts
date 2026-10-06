@@ -60,6 +60,7 @@ import type {
   TextStyleDefaults,
   ZoomMode,
 } from "@/lib/editor/types";
+import type { SampledCaptionInk } from "@/lib/pdf/sample-caption-ink";
 
 export interface ViewportSize {
   width: number;
@@ -300,7 +301,10 @@ export const editorStore = {
     }, recordHistory);
   },
 
-  commitPdfLinkLabel: (label: string): void => {
+  commitPdfLinkLabel: (
+    label: string,
+    sampledCaption: SampledCaptionInk | null = null
+  ): void => {
     const pageId = internal.state.currentPageId;
     const objectId = internal.state.selectedPdfAnnotationId;
     if (!pageId || !objectId) {
@@ -340,7 +344,13 @@ export const editorStore = {
                 if (object.id === primary.id) {
                   const measured = measurePdfTextWidth(object, label);
                   const fitted = fittedPdfTextBox(object, measured);
-                  return { ...object, ...fitted, text: label };
+                  return {
+                    ...object,
+                    ...fitted,
+                    captionFill: sampledCaption?.fill,
+                    captionUnderline: sampledCaption?.underline,
+                    text: label,
+                  };
                 }
                 if (runIds.has(object.id)) {
                   return { ...object, text: "" };

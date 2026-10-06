@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { ExternalLinkIcon } from "lucide-react";
+import Link from "next/link";
+import { useId, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 
 import { ColorField } from "@/components/editor/color-field";
+import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,13 +16,17 @@ import {
   pdfLinkActionsEqual,
   pdfLinkEditableLabel,
 } from "@/lib/editor/object-utils";
-import { editorStore } from "@/lib/editor/store";
+import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type {
   EditorPage,
   PdfAnnotationObject,
   PdfLinkAnnotation,
   PdfMarkupAnnotation,
 } from "@/lib/editor/types";
+import { sampleLinkCaptionFromPage } from "@/lib/pdf/sample-link-caption-from-page";
+
+const isOpenableHttpUrl = (url: string): boolean =>
+  url.startsWith("http://") || url.startsWith("https://");
 
 const MarkupInspector = ({ object }: { object: PdfMarkupAnnotation }) => (
   <div className="flex flex-wrap items-center gap-3">
@@ -64,13 +73,23 @@ const LinkInspector = ({
   object: PdfLinkAnnotation;
   page: EditorPage;
 }) => {
-  const { editable, label: derivedLabel } = pdfLinkEditableLabel(page, object);
+  const fieldId = useId();
+  const labelInputId = `${fieldId}-label`;
+  const urlInputId = `${fieldId}-url`;
+  const skipCommitRef = useRef(false);
+  const zoom = useEditorStore((state) => state.zoom);
+  const {
+    editable,
+    label: derivedLabel,
+    runs,
+  } = pdfLinkEditableLabel(page, object);
   const urlValue = object.action.kind === "url" ? object.action.url : "";
   const labelValue = editable ? derivedLabel : object.label;
   const [focusedField, setFocusedField] = useState<"label" | "url" | null>(
     null
   );
   const [draft, setDraft] = useState("");
+  const openHref = isOpenableHttpUrl(urlValue) ? urlValue : null;
 
   const commitUrl = (): void => {
     const trimmed = draft.trim();
@@ -96,7 +115,38 @@ const LinkInspector = ({
     if (trimmed === derivedLabel) {
       return;
     }
-    editorStore.commitPdfLinkLabel(trimmed);
+    const [primary] = runs;
+    if (!primary) {
+      editorStore.commitPdfLinkLabel(trimmed);
+      return;
+    }
+    void (async () => {
+      const sampled = await sampleLinkCaptionFromPage(page, primary, zoom);
+      editorStore.commitPdfLinkLabel(trimmed, sampled);
+    })();
+  };
+
+  const blurField = (commit: () => void): void => {
+    if (skipCommitRef.current) {
+      skipCommitRef.current = false;
+      setFocusedField(null);
+      return;
+    }
+    commit();
+    setFocusedField(null);
+  };
+
+  const onFieldKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      skipCommitRef.current = true;
+      event.currentTarget.blur();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
   };
 
   const nonUrlSummary = (): string => {
@@ -110,54 +160,96 @@ const LinkInspector = ({
   };
 
   return (
-    <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2 text-sm">
-      <span className="text-muted-foreground shrink-0">PDF link</span>
-      {object.action.kind === "url" ? (
-        <Input
-          className="min-w-48 flex-1"
-          onBlur={() => {
-            commitUrl();
-            setFocusedField(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.currentTarget.blur();
-            }
-          }}
-          onChange={(event) => setDraft(event.target.value)}
-          onFocus={() => {
-            setFocusedField("url");
-            setDraft(urlValue);
-          }}
-          placeholder="https://"
-          value={focusedField === "url" ? draft : urlValue}
-        />
-      ) : (
-        <span className="text-muted-foreground max-w-md truncate">
-          {nonUrlSummary()}
-        </span>
-      )}
-      <Textarea
-        className="min-h-8 min-w-40 flex-1"
-        disabled={!editable}
-        onBlur={() => {
-          commitLabel();
-          setFocusedField(null);
+    <div className="border-border bg-background border-b px-3 py-2">
+      <form
+        className="flex max-w-lg min-w-0 flex-col gap-2"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
         }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.currentTarget.blur();
-          }
-        }}
-        onChange={(event) => setDraft(event.target.value)}
-        onFocus={() => {
-          setFocusedField("label");
-          setDraft(labelValue);
-        }}
-        placeholder={editable ? "Visible label" : "No editable text under link"}
-        rows={1}
-        value={focusedField === "label" ? draft : labelValue}
-      />
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-pretty">Edit Link</h2>
+          {openHref ? (
+            <Button
+              variant="link"
+              render={
+                <Link
+                  href={openHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+            >
+              <ExternalLinkIcon className="h-4 w-4" />
+              Open Link
+            </Button>
+          ) : null}
+        </div>
+        <Field className="w-full min-w-0">
+          <FieldLabel htmlFor={labelInputId}>Label</FieldLabel>
+          {editable ? (
+            <Input
+              autoComplete="off"
+              className="w-full min-w-0"
+              id={labelInputId}
+              name="label"
+              onBlur={() => {
+                blurField(commitLabel);
+              }}
+              onFocus={() => {
+                setFocusedField("label");
+                setDraft(labelValue);
+              }}
+              onValueChange={(value) => setDraft(value ?? "")}
+              onKeyDown={onFieldKeyDown}
+              placeholder="Link label…"
+              value={focusedField === "label" ? draft : labelValue}
+            />
+          ) : (
+            <>
+              {labelValue ? (
+                <p className="text-foreground min-w-0 truncate text-sm">
+                  {labelValue}
+                </p>
+              ) : null}
+              <FieldDescription>
+                No editable text under this link.
+              </FieldDescription>
+            </>
+          )}
+        </Field>
+        {object.action.kind === "url" ? (
+          <Field className="w-full min-w-0">
+            <FieldLabel htmlFor={urlInputId}>URL</FieldLabel>
+            <Input
+              autoComplete="off"
+              className="w-full min-w-0"
+              id={urlInputId}
+              inputMode="url"
+              name="url"
+              onBlur={() => {
+                blurField(commitUrl);
+              }}
+              onFocus={() => {
+                setFocusedField("url");
+                setDraft(urlValue);
+              }}
+              onValueChange={(value) => setDraft(value ?? "")}
+              onKeyDown={onFieldKeyDown}
+              placeholder="https://…"
+              spellCheck={false}
+              translate="no"
+              type="url"
+              value={focusedField === "url" ? draft : urlValue}
+            />
+          </Field>
+        ) : (
+          <p className="text-muted-foreground min-w-0 truncate text-sm">
+            {nonUrlSummary()}
+          </p>
+        )}
+      </form>
     </div>
   );
 };

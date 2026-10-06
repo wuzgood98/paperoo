@@ -1,6 +1,10 @@
 import { expect, test } from "vitest";
 
-import { resizeRotatedBox, rotatePoint } from "@/lib/editor/coordinates";
+import {
+  resizeRotatedBox,
+  rotatePoint,
+  textItemToDisplayedBox,
+} from "@/lib/editor/coordinates";
 import {
   boundsFromPoints,
   fittedPdfTextBox,
@@ -10,10 +14,15 @@ import {
   isPdfImageDirty,
   isPdfTextDirty,
   PDF_IMAGE_COVER_BLEED,
+  PDF_TEXT_COVER_LEFT_EM,
   PDF_VECTOR_COVER_BLEED,
+  captionUnderlineCssOffsetFromRunTop,
+  dirtyPdfTextCoverBox,
   pdfImageCoverBox,
   pdfImageOriginalBox,
   pdfImageWithGestureBox,
+  pdfLinkTextAppearance,
+  pdfTextCssInkOffsetFromRunTop,
   pdfTextOverlayBox,
   pdfVectorCoverBox,
   pdfVectorCoverGeometry,
@@ -27,13 +36,18 @@ import {
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
 import type {
+  EditorPage,
   PdfImageObject,
+  PdfLinkAnnotation,
   PdfTextObject,
   PdfVectorObject,
   DrawingObject,
   TextObject,
 } from "@/lib/editor/types";
-import { EDITOR_OBJECT_SOURCE } from "@/lib/editor/types";
+import {
+  DEFAULT_PDF_TEXT_COLOR,
+  EDITOR_OBJECT_SOURCE,
+} from "@/lib/editor/types";
 
 const drawing = (overrides: Partial<DrawingObject> = {}): DrawingObject => ({
   height: 40,
@@ -625,4 +639,222 @@ test("pdfVectorCoverPathStyle paints white along original path, not a rect", () 
   expect(fillStyle.fill).toBe("#ffffff");
   expect(fillStyle.stroke).toBeNull();
   expect(fillStyle.strokeWidth).toBe(0);
+});
+
+const linkCaptionRun = (
+  overrides: Partial<PdfTextObject> = {}
+): PdfTextObject => ({
+  color: DEFAULT_PDF_TEXT_COLOR,
+  dir: "ltr",
+  fontFamily: "sans",
+  fontName: "g_d0_f1",
+  fontSize: 12,
+  fontWeight: 400,
+  hasEOL: false,
+  height: 18,
+  id: "caption-run",
+  italic: false,
+  originalColor: DEFAULT_PDF_TEXT_COLOR,
+  originalFontFamily: "sans",
+  originalFontSize: 12,
+  originalStrokeColor: "#000000",
+  originalStrokeWidth: 1,
+  originalText: "Old label",
+  originalTextRenderingMode: 0,
+  pageId: "page-1",
+  rotation: 0,
+  sourceIndex: 0,
+  strokeColor: "#000000",
+  strokeWidth: 1,
+  text: "New label",
+  textRenderingMode: 0,
+  transform: [12, 0, 0, 12, 72, 700],
+  type: "pdf-text",
+  width: 60,
+  x: 72,
+  y: 74,
+  ...overrides,
+});
+
+const linkForCaption = (): PdfLinkAnnotation => ({
+  action: { kind: "url", url: "https://example.com" },
+  annotationFlags: 0,
+  color: "#facc15",
+  deleted: false,
+  height: 18,
+  id: "link-1",
+  label: "New label",
+  originalAction: { kind: "url", url: "https://example.com" },
+  originalColor: "#facc15",
+  originalHeight: 18,
+  originalLabel: "Old label",
+  originalRotation: 0,
+  originalUserHeight: 18,
+  originalUserQuadPoints: null,
+  originalUserWidth: 60,
+  originalUserX: 72,
+  originalUserY: 74,
+  originalWidth: 60,
+  originalX: 72,
+  originalY: 74,
+  pageId: "page-1",
+  quads: [{ height: 18, width: 60, x: 72, y: 74 }],
+  rotation: 0,
+  sourceRef: "1R",
+  subtype: "Link",
+  type: "pdf-link",
+  width: 60,
+  x: 72,
+  y: 74,
+});
+
+const underlineVector = (): PdfVectorObject => ({
+  commands: [
+    { type: "moveTo", x: 72, y: 93 },
+    { type: "lineTo", x: 140, y: 93 },
+  ],
+  deleted: false,
+  fill: null,
+  height: 1,
+  id: "underline-vec",
+  kind: "line",
+  originalFill: null,
+  originalHeight: 1,
+  originalRotation: 0,
+  originalStroke: {
+    color: "#0000ff",
+    lineCap: 0,
+    lineJoin: 0,
+    width: 1,
+  },
+  originalWidth: 68,
+  originalX: 72,
+  originalY: 92.5,
+  pageId: "page-1",
+  paint: "stroke",
+  rotation: 0,
+  sourceIndex: 1,
+  sourceOperatorIndices: [1],
+  stroke: {
+    color: "#0000ff",
+    lineCap: 0,
+    lineJoin: 0,
+    width: 1,
+  },
+  type: "pdf-vector",
+  width: 68,
+  x: 72,
+  y: 92.5,
+});
+
+const linkCaptionPage = (
+  run: PdfTextObject,
+  vectors: readonly PdfVectorObject[] = [underlineVector()]
+): EditorPage => ({
+  cropBox: { height: 792, width: 612, x: 0, y: 0 },
+  height: 792,
+  id: "page-1",
+  objects: [],
+  pdfAnnotationObjects: [linkForCaption()],
+  pdfImageObjects: [],
+  pdfTextObjects: [run],
+  pdfVectorObjects: [...vectors],
+  rotation: 0,
+  skippedPdfAnnotationSubtypes: [],
+  sourceIndex: 0,
+  sourceRotate: 0,
+  width: 612,
+});
+
+test("pdfLinkTextAppearance uses blue vector ink when zip fallback is default", () => {
+  const page = linkCaptionPage(linkCaptionRun());
+  const [caption] = page.pdfTextObjects;
+  const appearance = caption ? pdfLinkTextAppearance(page, caption) : null;
+  expect(appearance?.fillColor).toBe("#0000ff");
+  expect(appearance?.underline.color).toBe("#0000ff");
+});
+
+test("pdfLinkTextAppearance keeps extracted blue fill", () => {
+  const run = linkCaptionRun({ color: "#0000ff", originalColor: "#0000ff" });
+  const page = linkCaptionPage(run);
+  const appearance = pdfLinkTextAppearance(page, run);
+  expect(appearance?.fillColor).toBe("#0000ff");
+});
+
+test("pdfLinkTextAppearance keeps black fill with blue underline", () => {
+  const run = linkCaptionRun({ color: "#000000", originalColor: "#000000" });
+  const page = linkCaptionPage(run);
+  const appearance = pdfLinkTextAppearance(page, run);
+  expect(appearance?.fillColor).toBe("#000000");
+  expect(appearance?.underline.color).toBe("#0000ff");
+});
+
+test("pdfLinkTextAppearance prefers stored caption ink from sampling", () => {
+  const run = linkCaptionRun({
+    captionFill: "#0000ff",
+    captionUnderline: {
+      color: "#0000ff",
+      offsetFromRunTop: 14,
+      thickness: 1,
+    },
+    color: DEFAULT_PDF_TEXT_COLOR,
+  });
+  const page = linkCaptionPage(run, []);
+  const appearance = pdfLinkTextAppearance(page, run);
+  expect(appearance?.fillColor).toBe("#0000ff");
+  expect(appearance?.underline.offsetFromRunTop).toBe(14);
+});
+
+test("captionUnderlineCssOffsetFromRunTop uses the stroke center", () => {
+  expect(
+    captionUnderlineCssOffsetFromRunTop({
+      color: "#0000ff",
+      offsetFromRunTop: 14,
+      thickness: 2,
+    })
+  ).toBe(13);
+});
+
+test("dirtyPdfTextCoverBox pads left of the run and through the rule", () => {
+  const runBox = { height: 18, width: 60, x: 72, y: 74 };
+  const fontSize = 12;
+  const underline = {
+    color: "#0000ff",
+    offsetFromRunTop: 17,
+    thickness: 2,
+  };
+  const cover = dirtyPdfTextCoverBox(runBox, fontSize, underline);
+  const leftPad = fontSize * PDF_TEXT_COVER_LEFT_EM;
+  expect(cover.x).toBeCloseTo(runBox.x - leftPad);
+  expect(cover.x + cover.width).toBeCloseTo(runBox.x + runBox.width);
+  expect(cover.y).toBeLessThanOrEqual(runBox.y);
+  expect(cover.y + cover.height).toBeGreaterThanOrEqual(
+    runBox.y + underline.offsetFromRunTop + underline.thickness / 2
+  );
+  expect(cover.x).toBeLessThan(runBox.x);
+  expect(cover.x + cover.width).toBeGreaterThan(runBox.x);
+});
+
+test("pdfTextCssInkOffsetFromRunTop aligns CSS ascent with the matrix baseline", () => {
+  const em = 20;
+  const ascentRatio = 0.9;
+  const transform = [em, 0, 0, em, 72, 200] as const;
+  const crop = { height: 792, width: 612, x: 0, y: 0 };
+  const runBox = textItemToDisplayedBox(
+    transform,
+    40,
+    em,
+    ascentRatio,
+    crop,
+    0
+  );
+  expect(
+    pdfTextCssInkOffsetFromRunTop(
+      { fontSize: em, height: runBox.height, transform },
+      runBox,
+      crop,
+      0,
+      ascentRatio
+    )
+  ).toBeCloseTo(0);
 });

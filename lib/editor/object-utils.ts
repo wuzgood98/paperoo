@@ -1,5 +1,6 @@
 import {
   objectCenter,
+  pdfTextBaselineDisplayed,
   rotatePoint,
   userPointToDisplayed,
 } from "@/lib/editor/coordinates";
@@ -8,6 +9,7 @@ import {
   DEFAULT_DRAW_STYLE,
   DEFAULT_HIGHLIGHT_COLOR,
   DEFAULT_OBJECT_OPACITY,
+  DEFAULT_PDF_TEXT_COLOR,
   DEFAULT_SHAPE_STYLE,
   DEFAULT_TEXT_STYLE,
   EDITOR_OBJECT_SOURCE,
@@ -15,6 +17,7 @@ import {
 } from "@/lib/editor/types";
 import type {
   DrawingObject,
+  CropBox,
   EditorObject,
   EditorPage,
   HighlightObject,
@@ -24,7 +27,9 @@ import type {
   PdfImageObject,
   PdfLinkAction,
   PdfLinkAnnotation,
+  PageRotation,
   PdfMarkupAnnotation,
+  PdfTextCaptionUnderline,
   PdfTextObject,
   PdfVectorObject,
   Point,
@@ -603,6 +608,221 @@ export const pdfLinkBoxAfterLabel = (
     x: fitted.x,
     y: fitted.y,
   };
+};
+
+/** Left outset in ems so original ink left of the text origin stays covered. */
+export const PDF_TEXT_COVER_LEFT_EM = 0.15;
+
+export const captionUnderlineCssOffsetFromRunTop = (
+  underline: PdfTextCaptionUnderline
+): number => underline.offsetFromRunTop - underline.thickness / 2;
+
+export const dirtyPdfTextCoverBox = (
+  runBox: Rect,
+  fontSize: number,
+  underline?: PdfTextCaptionUnderline | null
+): Rect => {
+  const leftPad = fontSize * PDF_TEXT_COVER_LEFT_EM;
+  let top = runBox.y;
+  let bottom = runBox.y + runBox.height;
+  if (underline) {
+    const half = underline.thickness / 2;
+    const center = runBox.y + underline.offsetFromRunTop;
+    top = Math.min(top, center - half);
+    bottom = Math.max(bottom, center + half);
+  }
+  return {
+    height: bottom - top,
+    width: runBox.width + leftPad,
+    x: runBox.x - leftPad,
+    y: top,
+  };
+};
+
+export const pdfTextCssInkOffsetFromRunTop = (
+  object: Pick<PdfTextObject, "fontSize" | "height" | "transform">,
+  runBox: Rect,
+  crop: CropBox,
+  sourceRotate: PageRotation,
+  cssAscentRatio: number
+): number => {
+  const baseline = pdfTextBaselineDisplayed(
+    object.transform,
+    crop,
+    sourceRotate
+  );
+  const fontSize = object.fontSize ?? object.height;
+  return baseline.y - runBox.y - fontSize * cssAscentRatio;
+};
+
+const horizontalOverlapWidth = (left: Rect, right: Rect): number =>
+  Math.max(
+    0,
+    Math.min(left.x + left.width, right.x + right.width) -
+      Math.max(left.x, right.x)
+  );
+
+const isUnderlineBand = (runBox: Rect, decorBox: Rect): boolean => {
+  const bandTop = runBox.y + runBox.height * 0.7;
+  const bandBottom =
+    runBox.y + runBox.height + Math.max(4, runBox.height * 0.35);
+  const decorMid = decorBox.y + decorBox.height / 2;
+  return decorMid >= bandTop && decorMid <= bandBottom;
+};
+
+const decorationColorFromVector = (vector: PdfVectorObject): string | null =>
+  vector.stroke?.color ?? vector.fill?.color ?? null;
+
+const isHorizontalUnderlineVector = (vector: PdfVectorObject): boolean => {
+  if (vector.deleted || vector.kind !== "line") {
+    return false;
+  }
+  if (!vector.stroke) {
+    return false;
+  }
+  return vector.width >= Math.max(vector.height * 3, 4);
+};
+
+const isThinUnderlineRect = (vector: PdfVectorObject): boolean => {
+  if (vector.deleted || vector.kind !== "rect") {
+    return false;
+  }
+  if (!decorationColorFromVector(vector)) {
+    return false;
+  }
+  return vector.height <= Math.max(3, vector.width > 0 ? 6 : 3);
+};
+
+export type PdfLinkCaptionUnderline = PdfTextCaptionUnderline;
+
+export interface PdfLinkTextAppearance {
+  fillColor: string;
+  underline: PdfTextCaptionUnderline;
+}
+
+interface Match {
+  best: { score: number; underline: PdfLinkCaptionUnderline } | null;
+}
+
+const defaultCaptionUnderline = (
+  runBox: Rect,
+  color: string
+): PdfLinkCaptionUnderline => ({
+  color,
+  offsetFromRunTop: runBox.height * 0.92,
+  thickness: 1,
+});
+
+const findCaptionUnderlineDecoration = (
+  page: EditorPage,
+  runBox: Rect
+): PdfLinkCaptionUnderline | null => {
+  const match: Match = { best: null };
+
+  const consider = (decorBox: Rect, color: string, thickness: number): void => {
+    if (!isUnderlineBand(runBox, decorBox)) {
+      return;
+    }
+    const score = horizontalOverlapWidth(runBox, decorBox);
+    if (score <= 0) {
+      return;
+    }
+    const offsetFromRunTop = decorBox.y + decorBox.height / 2 - runBox.y;
+    const entry = {
+      score,
+      underline: {
+        color,
+        offsetFromRunTop,
+        thickness: Math.max(0.5, thickness),
+      },
+    };
+    if (!match.best || entry.score > match.best.score) {
+      match.best = entry;
+    }
+  };
+
+  for (const vector of page.pdfVectorObjects) {
+    const color = decorationColorFromVector(vector);
+    if (!color) {
+      continue;
+    }
+    const box: Rect = {
+      height: vector.height,
+      width: vector.width,
+      x: vector.x,
+      y: vector.y,
+    };
+    if (isHorizontalUnderlineVector(vector)) {
+      consider(box, color, vector.stroke?.width ?? 1);
+      continue;
+    }
+    if (isThinUnderlineRect(vector)) {
+      consider(box, color, vector.height);
+    }
+  }
+
+  for (const object of page.pdfAnnotationObjects) {
+    if (object.deleted || object.type !== "pdf-underline") {
+      continue;
+    }
+    for (const quad of object.quads) {
+      consider(quad, object.color, Math.max(1, quad.height));
+    }
+  }
+
+  return match.best?.underline ?? null;
+};
+
+export const pdfLinkForDirtyCaptionRun = (
+  page: EditorPage,
+  run: PdfTextObject
+): PdfLinkAnnotation | undefined => {
+  if (!isPdfTextDirty(run)) {
+    return undefined;
+  }
+  for (const object of page.pdfAnnotationObjects) {
+    if (object.deleted || object.type !== "pdf-link") {
+      continue;
+    }
+    const runs = pdfLinkOverlappingTextRuns(object, page.pdfTextObjects);
+    if (!runs.some((item) => item.id === run.id)) {
+      continue;
+    }
+    if (
+      object.label !== object.originalLabel ||
+      run.text !== run.originalText
+    ) {
+      return object;
+    }
+  }
+  return undefined;
+};
+
+/** Caption ink and underline for dirty PDF text tied to an edited link label. */
+export const pdfLinkTextAppearance = (
+  page: EditorPage,
+  run: PdfTextObject
+): PdfLinkTextAppearance | null => {
+  if (!pdfLinkForDirtyCaptionRun(page, run)) {
+    return null;
+  }
+  if (run.captionFill && run.captionUnderline) {
+    return {
+      fillColor: run.captionFill,
+      underline: run.captionUnderline,
+    };
+  }
+  const runBox = pdfTextOverlayBox(run, measurePdfTextWidth(run));
+  const found = findCaptionUnderlineDecoration(page, runBox);
+  let fillColor = run.color;
+  if (run.color === DEFAULT_PDF_TEXT_COLOR && found?.color) {
+    fillColor = found.color;
+  }
+  const underline = found ?? defaultCaptionUnderline(runBox, fillColor);
+  if (run.color !== DEFAULT_PDF_TEXT_COLOR) {
+    fillColor = run.color;
+  }
+  return { fillColor, underline };
 };
 
 export const hitTestPdfText = (

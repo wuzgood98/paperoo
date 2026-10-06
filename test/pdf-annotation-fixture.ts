@@ -5,6 +5,7 @@ import {
   PDFRef,
   PDFString,
   StandardFonts,
+  rgb,
 } from "pdf-lib";
 
 const LETTER = [612, 792] satisfies [number, number];
@@ -27,6 +28,31 @@ const markupQuad = (
   x2: number,
   yBottom: number
 ): number[] => [x1, yTop, x2, yTop, x1, yBottom, x2, yBottom];
+
+/** Blue caption text, underline stroke, and URI link for label-style export tests. */
+export const buildBlueLinkCaptionFixture = async (): Promise<Uint8Array> => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage(LETTER);
+  const blue = rgb(0, 0, 1);
+  page.drawText("Old caption", { color: blue, size: 12, x: 72, y: 700 });
+  page.drawLine({
+    color: blue,
+    end: { x: 152, y: 698 },
+    start: { x: 72, y: 698 },
+    thickness: 1,
+  });
+  addAnnot(doc, 0, {
+    A: doc.context.obj({
+      S: PDFName.of("URI"),
+      URI: PDFString.of("https://example.com/blue-link"),
+    }),
+    Border: [0, 0, 0],
+    Rect: [70, 696, 160, 714],
+    Subtype: PDFName.of("Link"),
+    Type: PDFName.of("Annot"),
+  });
+  return new Uint8Array(await doc.save());
+};
 
 export const buildPdfAnnotationFixture = async (): Promise<Uint8Array> => {
   const doc = await PDFDocument.create();

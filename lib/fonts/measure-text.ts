@@ -9,6 +9,9 @@ export const FONT_FILES = {
   },
 } as const;
 
+/** Liberation Sans Regular hhea.ascent / unitsPerEm (1854 / 2048). */
+export const LIBERATION_SANS_ASCENT_RATIO = 1854 / 2048;
+
 export const fontFamilyCss = (family: FontFamily): string => {
   switch (family) {
     case "serif": {
@@ -99,4 +102,28 @@ export const canvasTextWidth = (
 
   context.font = `${options.italic ? "italic " : ""}${options.fontWeight} ${options.fontSize}px ${fontFamilyCss(options.fontFamily)}`;
   return context.measureText(text).width;
+};
+
+export const cssFontAscentRatio = (
+  family: FontFamily,
+  weight: FontWeight,
+  italic: boolean
+): number => {
+  if (typeof document === "undefined") {
+    return LIBERATION_SANS_ASCENT_RATIO;
+  }
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return LIBERATION_SANS_ASCENT_RATIO;
+  }
+  const fontSize = 100;
+  context.font = `${italic ? "italic " : ""}${weight} ${fontSize}px ${fontFamilyCss(family)}`;
+  const metrics = context.measureText("");
+  const ascent = metrics.emHeightAscent || metrics.fontBoundingBoxAscent;
+  const hasAscent = Number.isFinite(ascent) && ascent > 0;
+  if (!hasAscent) {
+    return LIBERATION_SANS_ASCENT_RATIO;
+  }
+  return ascent / fontSize;
 };

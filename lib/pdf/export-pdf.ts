@@ -40,14 +40,16 @@ import {
   displayedPointToUserSpace,
   displayedToUserSpace,
   normalizeRotation,
-  textBaselineY,
+  pdfTextBaselineUserSpace,
   userPointToDisplayed,
 } from "@/lib/editor/coordinates";
 import {
+  dirtyPdfTextCoverBox,
   fittedPdfTextBox,
   isPdfImageDirty,
   isPdfTextDirty,
   isPdfVectorDirty,
+  pdfLinkTextAppearance,
   pdfImageCoverBox,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
@@ -267,36 +269,78 @@ const drawDirtyPdfText = async (
     fontBytes
   );
 
+  const fitted = fittedPdfTextBox(
+    object,
+    font.widthOfTextAtSize(object.text, size)
+  );
   const user = displayedToUserSpace(
-    fittedPdfTextBox(object, font.widthOfTextAtSize(object.text, size)),
+    fitted,
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  const linkAppearance = pdfLinkTextAppearance(editorPage, object);
+  const fillHex = linkAppearance?.fillColor ?? object.color;
+  const cover = dirtyPdfTextCoverBox(fitted, size, linkAppearance?.underline);
+  const coverUser = displayedToUserSpace(
+    cover,
     editorPage.cropBox,
     editorPage.sourceRotate
   );
   // White cover leaves the original operators in the page stream. It fails on
   // non-white and image backgrounds. Width grows with a longer replacement so
-  // the extra glyphs stay on a white field.
+  // the extra glyphs stay on a white field. Left pad hides ink left of the
+  // text origin (side bearing / rule start).
   page.drawRectangle({
     color: rgb(1, 1, 1),
-    height: user.height,
-    width: user.width,
-    x: user.x,
-    y: user.y,
+    height: coverUser.height,
+    width: coverUser.width,
+    x: coverUser.x,
+    y: coverUser.y,
   });
 
-  const ascent = font.heightAtSize(size, { descender: false });
+  const baseline = pdfTextBaselineUserSpace(
+    object.transform,
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
   const textX = user.x;
-  const textY = user.y + textBaselineY(user.height, ascent);
+  const textY = baseline.y;
   const needsFill = pdfTextNeedsFill(object.textRenderingMode);
   const needsStroke = pdfTextNeedsStroke(object.textRenderingMode);
 
+  const drawLinkCaptionUnderline = (): void => {
+    if (!linkAppearance) {
+      return;
+    }
+    const { underline } = linkAppearance;
+    const yDisplay = fitted.y + underline.offsetFromRunTop;
+    const start = displayedPointToUserSpace(
+      { x: fitted.x, y: yDisplay },
+      editorPage.cropBox,
+      editorPage.sourceRotate
+    );
+    const end = displayedPointToUserSpace(
+      { x: fitted.x + fitted.width, y: yDisplay },
+      editorPage.cropBox,
+      editorPage.sourceRotate
+    );
+    page.drawLine({
+      color: color(underline.color),
+      end,
+      start,
+      thickness: underline.thickness,
+    });
+  };
+
   if (!needsStroke) {
     page.drawText(object.text, {
-      color: color(object.color),
+      color: color(fillHex),
       font,
       size,
       x: textX,
       y: textY,
     });
+    drawLinkCaptionUnderline();
     return;
   }
 
@@ -311,7 +355,7 @@ const drawDirtyPdfText = async (
     setTextRenderingMode(mode),
   ];
   if (needsFill) {
-    ops.push(setFillingColor(color(object.color)));
+    ops.push(setFillingColor(color(fillHex)));
   }
   ops.push(
     setStrokingColor(color(object.strokeColor)),
@@ -329,6 +373,7 @@ const drawDirtyPdfText = async (
     popGraphicsState()
   );
   page.pushOperators(...ops);
+  drawLinkCaptionUnderline();
 };
 
 const drawEmbeddedImage = async (
