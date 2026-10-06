@@ -3,13 +3,14 @@
 import { useMemo, useState } from "react";
 
 import {
-  Autocomplete,
-  AutocompleteEmpty,
-  AutocompleteInput,
-  AutocompleteItem,
-  AutocompleteList,
-  AutocompletePopup,
-} from "@/components/ui/autocomplete";
+  Combobox,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+} from "@/components/ui/combobox";
+import { createComboboxItems } from "@/components/ui/combobox-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { DocumentSearchHit } from "@/lib/ocr/search";
 import { searchDocumentText } from "@/lib/ocr/search";
@@ -40,47 +41,53 @@ export const DocumentSearch = () => {
     () => searchDocumentText(pages, ocr.wordsByPage, query),
     [ocr.wordsByPage, pages, query]
   );
+  const items = useMemo(
+    () =>
+      createComboboxItems(hits, {
+        getLabel: (hit) => hit.text,
+        getValue: hitValue,
+      }),
+    [hits]
+  );
 
   return (
     <div className="max-w-56 min-w-40">
-      <Autocomplete
+      <Combobox
         autoHighlight
-        itemToStringLabel={(hit) => hit.text}
-        items={hits}
-        mode="none"
-        onOpenChange={setOpen}
-        onValueChange={(value) => {
+        filter={null}
+        inputValue={query}
+        items={items}
+        onInputValueChange={(value) => {
           setQuery(value);
           setOpen(true);
         }}
+        onOpenChange={setOpen}
+        onValueChange={(value) => {
+          const hit = hits.find((item) => hitValue(item) === value);
+          if (hit) {
+            goToSearchHit(hit);
+          }
+        }}
         open={open && query.trim().length > 0}
-        value={query}
       >
-        <AutocompleteInput
+        <ComboboxInput
           aria-label="Search document"
           placeholder="Search"
           showClear
           showTrigger={false}
           size="sm"
         />
-        <AutocompletePopup className="w-72">
-          <AutocompleteEmpty>No matches</AutocompleteEmpty>
-          <AutocompleteList>
+        <ComboboxPopup className="w-72">
+          <ComboboxEmpty>No matches</ComboboxEmpty>
+          <ComboboxList>
             {(hit) => (
-              <AutocompleteItem
-                key={hitValue(hit)}
-                onClick={() => {
-                  goToSearchHit(hit);
-                  setOpen(false);
-                }}
-                value={hit}
-              >
+              <ComboboxItem key={hitValue(hit)} value={hitValue(hit)}>
                 <span className="block truncate">{hit.text}</span>
-              </AutocompleteItem>
+              </ComboboxItem>
             )}
-          </AutocompleteList>
-        </AutocompletePopup>
-      </Autocomplete>
+          </ComboboxList>
+        </ComboboxPopup>
+      </Combobox>
     </div>
   );
 };
