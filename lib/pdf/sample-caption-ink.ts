@@ -18,6 +18,12 @@ export interface SampledCaptionInk {
   underline: PdfTextCaptionUnderline;
 }
 
+interface UnderlineStreak {
+  color: string;
+  rowCount: number;
+  startRow: number;
+}
+
 const channelToHex = (value: number): string => {
   const clamped = Math.round(Math.min(255, Math.max(0, value)));
   return clamped.toString(16).padStart(2, "0");
@@ -93,6 +99,20 @@ const dominantColorInBand = (
   return rgbToHex(rgb[0], rgb[1], rgb[2]);
 };
 
+const nextUnderlineStreak = (
+  streak: UnderlineStreak | null,
+  color: string,
+  y: number
+): UnderlineStreak | null => {
+  if (streak !== null && streak.color === color && streak.startRow === y + 1) {
+    return { color, rowCount: streak.rowCount + 1, startRow: y };
+  }
+  if (streak === null || streak.rowCount <= 1) {
+    return { color, rowCount: 1, startRow: y };
+  }
+  return streak;
+};
+
 const findUnderlineInBand = (
   source: ImagePixelSource,
   originX: number,
@@ -111,11 +131,7 @@ const findUnderlineInBand = (
       )
     : null;
 
-  let best: {
-    color: string;
-    rowCount: number;
-    startRow: number;
-  } | null = null;
+  let best: UnderlineStreak | null = null;
 
   for (let y = yEnd - 1; y >= yStart; y -= 1) {
     const rowCounts = new Map<string, number>();
@@ -152,13 +168,7 @@ const findUnderlineInBand = (
       continue;
     }
     const color = rgbToHex(rgb[0], rgb[1], rgb[2]);
-    if (best?.color === color && best.startRow === y + 1) {
-      best = { color, rowCount: best.rowCount + 1, startRow: y };
-      continue;
-    }
-    if (!best || best.rowCount <= 1) {
-      best = { color, rowCount: 1, startRow: y };
-    }
+    best = nextUnderlineStreak(best, color, y);
   }
 
   if (!best) {
