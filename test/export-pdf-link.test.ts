@@ -5,6 +5,7 @@ import { AnnotationMode, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
 import { pdfTextMatrixOrigin } from "@/lib/editor/coordinates";
+import type { TextItemTransform } from "@/lib/editor/coordinates";
 import {
   pdfLinkActionsEqual,
   pdfLinkBoxAfterLabel,
@@ -117,6 +118,12 @@ const captionFillColor = async (
   return undefined;
 };
 
+const isTextItemTransform = (
+  value: readonly unknown[]
+): value is TextItemTransform =>
+  value.length >= 6 &&
+  value.slice(0, 6).every((entry) => Number.isFinite(entry));
+
 const captionBaselineY = async (
   bytes: Uint8Array,
   caption: string
@@ -127,6 +134,9 @@ const captionBaselineY = async (
   const textContent = await page.getTextContent();
   for (const item of textContent.items) {
     if ("str" in item && item.str?.includes(caption) && "transform" in item) {
+      if (!isTextItemTransform(item.transform)) {
+        continue;
+      }
       return pdfTextMatrixOrigin(item.transform).y;
     }
   }
