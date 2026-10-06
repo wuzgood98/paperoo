@@ -20,27 +20,32 @@ export const ObjectView = ({
   switch (object.type) {
     case "text": {
       return (
-        <div
-          className="h-full w-full overflow-hidden break-words whitespace-pre-wrap outline-none"
-          contentEditable={editing}
-          onBlur={(event) => onTextCommit?.(event.currentTarget.textContent)}
-          onPointerDown={(event) => {
-            if (editing) {
-              event.stopPropagation();
-            }
-          }}
-          style={{
-            color: object.color,
-            fontFamily: fontFamilyCss(object.fontFamily),
-            fontSize: object.fontSize * zoom,
-            fontStyle: object.italic ? "italic" : "normal",
-            fontWeight: object.fontWeight,
-            lineHeight: 1.2,
-            textAlign: object.align,
-          }}
-          suppressContentEditableWarning
-        >
-          {object.content}
+        <div className="relative h-full w-full">
+          {object.ocrWordId ? (
+            <div aria-hidden className="absolute inset-0 bg-white" />
+          ) : null}
+          <div
+            className="relative h-full w-full overflow-hidden break-words whitespace-pre-wrap outline-none"
+            contentEditable={editing}
+            onBlur={(event) => onTextCommit?.(event.currentTarget.textContent)}
+            onPointerDown={(event) => {
+              if (editing) {
+                event.stopPropagation();
+              }
+            }}
+            style={{
+              color: object.color,
+              fontFamily: fontFamilyCss(object.fontFamily),
+              fontSize: object.fontSize * zoom,
+              fontStyle: object.italic ? "italic" : "normal",
+              fontWeight: object.fontWeight,
+              lineHeight: 1.2,
+              textAlign: object.align,
+            }}
+            suppressContentEditableWarning
+          >
+            {object.content}
+          </div>
         </div>
       );
     }

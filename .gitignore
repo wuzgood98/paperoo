@@ -11,6 +11,10 @@
 # testing
 /coverage
 
+# generated OCR worker, WASM cores, and English traineddata
+/public/ocr
+/public/scan-sample.pdf
+
 # next.js
 /.next/
 /out/

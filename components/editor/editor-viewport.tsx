@@ -14,6 +14,8 @@ import {
 } from "@/lib/editor/page-frame-size";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_SETTLE_MS } from "@/lib/editor/types";
+import { classifyPageForOcr } from "@/lib/ocr/classify-page";
+import { ocrSession } from "@/lib/ocr/session";
 import { openPdfFromList } from "@/lib/pdf/open-pdf";
 import { pdfSession } from "@/lib/pdf/session";
 
@@ -75,6 +77,24 @@ export const EditorViewport = () => {
   useEffect(() => {
     pdfSession.setIdleCacheBudget(Math.max(virtualItems.length, 1));
   }, [virtualItems.length]);
+
+  const visiblePageKey = virtualItems
+    .map((item) => pages[item.index]?.id ?? "")
+    .join("\0");
+
+  useEffect(() => {
+    const visibleIds = new Set(visiblePageKey.split("\0").filter(Boolean));
+    const count = pages.length;
+    for (const [index, page] of pages.entries()) {
+      if (!visibleIds.has(page.id) || classifyPageForOcr(page) !== "scanned") {
+        continue;
+      }
+      ocrSession.enqueueVisible(page, {
+        pageCount: count,
+        pageNumber: index + 1,
+      });
+    }
+  }, [pages, visiblePageKey]);
 
   useEffect(() => {
     const node = scrollerRef.current;

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useRef } from "react";
 
+import { DocumentSearch } from "@/components/editor/document-search";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
@@ -24,6 +25,7 @@ import {
   useEditorStore,
 } from "@/lib/editor/store";
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP } from "@/lib/editor/types";
+import { useOcrSession } from "@/lib/ocr/session";
 import { openPdfFromList } from "@/lib/pdf/open-pdf";
 import { runExport } from "@/lib/pdf/run-export";
 import { runPrint } from "@/lib/pdf/run-print";
@@ -84,9 +86,14 @@ export const EditorToolbar = () => {
   const zoom = useEditorStore((state) => state.zoom);
   const zoomMode = useEditorStore((state) => state.zoomMode);
   const isExporting = useEditorStore((state) => state.isExporting);
+  const showOcrRegions = useEditorStore((state) => state.showOcrRegions);
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
   const ready = status === "ready";
+  const ocr = useOcrSession();
+  const hasOcrWords = Object.values(ocr.wordsByPage).some(
+    (words) => words.length > 0
+  );
 
   return (
     <header className="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3">
@@ -192,6 +199,21 @@ export const EditorToolbar = () => {
         Width
       </Toggle>
       <div className="ml-auto flex items-center gap-1">
+        {ready ? <DocumentSearch /> : null}
+        {hasOcrWords ? (
+          <Toggle
+            aria-label="Show OCR regions"
+            disabled={!ready}
+            onPressedChange={(pressed) => {
+              editorStore.setShowOcrRegions(pressed);
+            }}
+            pressable
+            pressed={showOcrRegions}
+            size="sm"
+          >
+            Show OCR regions
+          </Toggle>
+        ) : null}
         <ToolbarTip label="Print" shortcut="⌘P">
           <Button
             pressable

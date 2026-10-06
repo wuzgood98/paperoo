@@ -1,4 +1,5 @@
 import type { EditorDocument } from "@/lib/editor/types";
+import type { OcrTextObject } from "@/lib/ocr/types";
 import { exportDocument } from "@/lib/pdf/export-pdf";
 import type { ExportAsset, ExportInput } from "@/lib/pdf/export-pdf";
 
@@ -7,6 +8,7 @@ interface WorkerRequest {
   bytes: ArrayBuffer;
   document: EditorDocument;
   fontBytes: Record<string, ArrayBuffer>;
+  ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
 }
 
 type WorkerResponse =
@@ -35,6 +37,7 @@ self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
       bytes: toUint8(event.data.bytes),
       document: event.data.document,
       fontBytes,
+      ocrWordsByPage: event.data.ocrWordsByPage,
     };
     const result = await exportDocument(input);
     const copy = new ArrayBuffer(result.byteLength);

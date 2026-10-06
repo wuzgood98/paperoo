@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { EditorOverlay } from "@/components/editor/editor-overlay";
+import { OcrPageBanner } from "@/components/editor/ocr-page-banner";
 import { PdfCanvas } from "@/components/editor/pdf-canvas";
 import { normalizeRotation, pixelSnapOffset } from "@/lib/editor/coordinates";
 import { pageFrameCssSize } from "@/lib/editor/page-frame-size";
@@ -103,6 +104,11 @@ export const EditorPageFrame = ({
         />
         <div className="absolute" style={overlayStyle}>
           <EditorOverlay page={page} zoom={zoom} />
+          <OcrPageBanner
+            page={page}
+            pageCount={editorStore.getState().document.pages.length}
+            pageNumber={page.sourceIndex + 1}
+          />
         </div>
       </div>
     </div>

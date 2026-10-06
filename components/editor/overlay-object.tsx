@@ -53,6 +53,7 @@ export const OverlayObject = ({
     <ContextMenu>
       <div
         className="absolute origin-center"
+        data-editor-object-id={object.id}
         onDoubleClick={() => {
           if (object.type === "text") {
             setEditingId(object.id);

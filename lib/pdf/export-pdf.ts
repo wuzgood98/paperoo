@@ -74,6 +74,7 @@ import type {
   TextObject,
 } from "@/lib/editor/types";
 import { FONT_FILES, wrapText } from "@/lib/fonts/measure-text";
+import type { OcrTextObject } from "@/lib/ocr/types";
 import { applyPdfAnnotationEdits } from "@/lib/pdf/export-annotations";
 import {
   applyPdfFormEdits,
@@ -91,6 +92,7 @@ export interface ExportInput {
   bytes: Uint8Array;
   document: EditorDocument;
   fontBytes: Record<string, Uint8Array>;
+  ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
 }
 
 const hexToRgb = (hex: string) => {
@@ -232,6 +234,17 @@ const drawTextObject = async (
   const lineHeight = object.fontSize * 1.2;
 
   applyCtm(page, object, user);
+  // Same class of limitation as dirty PDF text: a white field hides scan
+  // ink under the replacement and does not reconstruct the page.
+  if (object.ocrWordId) {
+    page.drawRectangle({
+      color: rgb(1, 1, 1),
+      height: user.height,
+      width: user.width,
+      x: 0,
+      y: 0,
+    });
+  }
   for (const [index, line] of lines.entries()) {
     let x = 0;
     const width = font.widthOfTextAtSize(line, object.fontSize);
@@ -826,6 +839,60 @@ const drawObject = async (
   }
 };
 
+const MIN_INVISIBLE_OCR_FONT_SIZE = 1;
+
+const encodeWinAnsiText = (font: PDFFont, text: string) => {
+  try {
+    return font.encodeText(text);
+  } catch {
+    return null;
+  }
+};
+
+const drawInvisibleOcrWords = (
+  page: PDFPage,
+  words: readonly OcrTextObject[],
+  editorPage: EditorPage,
+  font: PDFFont
+): void => {
+  const suppressed = editorPage.suppressedOcrWordIds
+    ? new Set(editorPage.suppressedOcrWordIds)
+    : null;
+  const embeddedFontKey = page.node.newFontDictionary(font.name, font.ref);
+  const zero = degrees(0);
+  for (const word of words) {
+    if (suppressed?.has(word.id) || word.text.trim().length === 0) {
+      continue;
+    }
+    const encoded = encodeWinAnsiText(font, word.text);
+    if (!encoded) {
+      continue;
+    }
+    const size = Math.max(word.height, MIN_INVISIBLE_OCR_FONT_SIZE);
+    const origin = displayedPointToUserSpace(
+      { x: word.x, y: word.baselineY },
+      editorPage.cropBox,
+      editorPage.sourceRotate
+    );
+    page.pushOperators(
+      pushGraphicsState(),
+      beginText(),
+      setTextRenderingMode(TextRenderingMode.Invisible),
+      setFontAndSize(embeddedFontKey, size),
+      rotateAndSkewTextRadiansAndTranslate(
+        toRadians(zero),
+        toRadians(zero),
+        toRadians(zero),
+        origin.x,
+        origin.y
+      ),
+      showText(encoded),
+      endText(),
+      popGraphicsState()
+    );
+  }
+};
+
 export const exportDocument = async (
   input: ExportInput
 ): Promise<Uint8Array> => {
@@ -864,6 +931,17 @@ export const exportDocument = async (
 
     const fonts = new Map<string, PDFFont>();
     const images = new Map<string, PDFImage>();
+    const ocrWords = input.ocrWordsByPage?.[editorPage.id];
+    if (ocrWords && ocrWords.length > 0) {
+      const ocrFontKey = "ocr-helvetica";
+      let ocrFont = fonts.get(ocrFontKey);
+      if (!ocrFont) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- Helvetica is embedded once per export
+        ocrFont = await output.embedFont(StandardFonts.Helvetica);
+        fonts.set(ocrFontKey, ocrFont);
+      }
+      drawInvisibleOcrWords(page, ocrWords, editorPage, ocrFont);
+    }
     for (const object of editorPage.pdfTextObjects) {
       if (!isPdfTextDirty(object)) {
         continue;

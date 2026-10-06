@@ -1,4 +1,5 @@
 import { editorStore } from "@/lib/editor/store";
+import { ocrSession } from "@/lib/ocr/session";
 import { isPdfBytes, pdfSession, readFileBytes } from "@/lib/pdf/session";
 
 export const loadPdfFile = async (file: File): Promise<void> => {
@@ -20,9 +21,11 @@ export const loadPdfFile = async (file: File): Promise<void> => {
       throw new Error("This PDF has no pages.");
     }
 
+    await ocrSession.reset();
     editorStore.resetDocument(pages, file.name, form);
   } catch (error) {
     await pdfSession.close();
+    await ocrSession.reset();
     const message =
       error instanceof Error ? error.message : "Could not open this PDF.";
     editorStore.clearDocument();

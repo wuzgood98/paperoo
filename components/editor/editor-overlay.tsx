@@ -2,6 +2,7 @@
 
 import { useRef, useState, useSyncExternalStore } from "react";
 
+import { OcrWordLayer } from "@/components/editor/ocr-word-layer";
 import {
   useOverlayGestures,
   snapshotBounds,
@@ -12,6 +13,7 @@ import type {
 } from "@/components/editor/overlay-gestures";
 import { OverlayObject } from "@/components/editor/overlay-object";
 import {
+  beginOcrEditAtPoint,
   beginPdfTextEditAtPoint,
   EMPTY_PDF_HOVER,
   pdfHoverIdsAtPoint,
@@ -35,6 +37,12 @@ import {
 import { pendingSignature } from "@/lib/editor/pending";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage, Point } from "@/lib/editor/types";
+import {
+  hitTestOcrWord,
+  ocrWordRangeIds,
+  visibleOcrWords,
+} from "@/lib/ocr/hit";
+import { useOcrSession } from "@/lib/ocr/session";
 import { ensurePdfImagePreview } from "@/lib/pdf/pdf-image-preview";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +69,10 @@ export const EditorOverlay = ({
   const selectedPdfFormFieldId = useEditorStore(
     (state) => state.selectedPdfFormFieldId
   );
+  const selectedOcrWordIds = useEditorStore(
+    (state) => state.selectedOcrWordIds
+  );
+  const showOcrRegions = useEditorStore((state) => state.showOcrRegions);
   const editorDocument = useEditorStore((state) => state.document);
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
@@ -70,6 +82,8 @@ export const EditorOverlay = ({
     pendingSignature.get,
     pendingSignature.get
   );
+  const ocr = useOcrSession();
+  const ocrWords = ocr.wordsByPage[page.id] ?? [];
   const rootRef = useRef<HTMLDivElement>(null);
   const boundsRef = useRef<PageBounds | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
@@ -85,7 +99,9 @@ export const EditorOverlay = ({
   const [previewPoint, setPreviewPoint] = useState<Point | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imagePointRef = useRef<Point | null>(null);
+  const ocrDragAnchorRef = useRef<string | null>(null);
   const selectedIds = new Set(selectedObjectIds);
+  const selectedOcrIds = new Set(selectedOcrWordIds);
   const placingSignature = tool === "signature" && pending !== null;
   const pendingScaled = pending
     ? scaleSignaturePoints(pending, SIGNATURE_PLACE_SIZE)
@@ -133,9 +149,14 @@ export const EditorOverlay = ({
           return;
         }
         setEditingId(null);
-        beginPdfTextEditAtPoint(page, toPage(event), setEditingPdfTextId);
+        const point = toPage(event);
+        if (beginOcrEditAtPoint(page, point, ocrWords, setEditingId)) {
+          return;
+        }
+        beginPdfTextEditAtPoint(page, point, setEditingPdfTextId);
       }}
       onPointerCancel={(event) => {
+        ocrDragAnchorRef.current = null;
         gestureRef.current = null;
         setDraft(null);
         setTransformingId(null);
@@ -197,8 +218,14 @@ export const EditorOverlay = ({
         if (event.target === event.currentTarget) {
           if (tool === "select") {
             selectPdfObjectAtPoint(page, point, {
+              ocrWords,
               shiftKey: event.shiftKey,
             });
+            const [anchor] = editorStore.getState().selectedOcrWordIds;
+            if (anchor) {
+              ocrDragAnchorRef.current = anchor;
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }
           } else {
             editorStore.clearSelection();
           }
@@ -215,10 +242,25 @@ export const EditorOverlay = ({
       }}
       onPointerMove={(event) => {
         onPointerMove(event);
-        if (tool !== "select" || gestureRef.current) {
+        if (tool !== "select") {
           return;
         }
-        const hover = pdfHoverIdsAtPoint(page, toPage(event), editorDocument);
+        const point = toPage(event);
+        const visible = visibleOcrWords(ocrWords, page.suppressedOcrWordIds);
+        const anchor = ocrDragAnchorRef.current;
+        if (anchor) {
+          const over = hitTestOcrWord(visible, point);
+          if (over) {
+            editorStore.selectOcrWords(
+              ocrWordRangeIds(visible, anchor, over.id)
+            );
+          }
+          return;
+        }
+        if (gestureRef.current) {
+          return;
+        }
+        const hover = pdfHoverIdsAtPoint(page, point, editorDocument, ocrWords);
         if (hover.imageId && hover.imageId !== pdfHover.imageId) {
           const image = page.pdfImageObjects.find(
             (item) => item.id === hover.imageId
@@ -229,7 +271,10 @@ export const EditorOverlay = ({
         }
         setPdfHover(hover);
       }}
-      onPointerUp={onPointerUp}
+      onPointerUp={(event) => {
+        ocrDragAnchorRef.current = null;
+        onPointerUp(event);
+      }}
       ref={rootRef}
     >
       <input
@@ -309,6 +354,14 @@ export const EditorOverlay = ({
         }}
         pageId={page.id}
         selectedId={selectedPdfFormFieldId}
+        zoom={zoom}
+      />
+      <OcrWordLayer
+        hoveredId={pdfHover.ocrWordId}
+        selectedIds={selectedOcrIds}
+        showRegions={showOcrRegions}
+        suppressedIds={page.suppressedOcrWordIds}
+        words={ocrWords}
         zoom={zoom}
       />
       {page.objects.map((object) => (

@@ -1,5 +1,6 @@
 import { editorStore } from "@/lib/editor/store";
 import { FONT_FILES } from "@/lib/fonts/measure-text";
+import { ocrSession } from "@/lib/ocr/session";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
 import { ensureDirtyPdfImageAssets } from "@/lib/pdf/pdf-image-preview";
 import { pdfSession } from "@/lib/pdf/session";
@@ -83,6 +84,7 @@ export const buildEditedPdfBytes = async (): Promise<ArrayBuffer> => {
           bytes: exportBytes.buffer,
           document: state.document,
           fontBytes,
+          ocrWordsByPage: ocrSession.wordsForExport(),
         },
         { transfer: [exportBytes.buffer] }
       );
