@@ -62,6 +62,7 @@ import type {
   PdfTextObject,
   PdfVectorObject,
   ShapeStyleDefaults,
+  TextObject,
   TextStyleDefaults,
   ZoomMode,
 } from "@/lib/editor/types";
@@ -81,12 +82,14 @@ export interface EditorStoreState {
   highlightColor: string;
   isExporting: boolean;
   selectedObjectIds: readonly string[];
+  selectedOcrWordIds: readonly string[];
   selectedPdfFormFieldId: string | null;
   selectedPdfImageId: string | null;
   selectedPdfTextId: string | null;
   selectedPdfVectorId: string | null;
   selectedPdfAnnotationId: string | null;
   shapeStyle: ShapeStyleDefaults;
+  showOcrRegions: boolean;
   status: EditorStatus;
   textStyle: TextStyleDefaults;
   tool: EditorTool;
@@ -111,12 +114,14 @@ const initialState = (): EditorStoreState => ({
   highlightColor: DEFAULT_HIGHLIGHT_COLOR,
   isExporting: false,
   selectedObjectIds: [],
+  selectedOcrWordIds: [],
   selectedPdfAnnotationId: null,
   selectedPdfFormFieldId: null,
   selectedPdfImageId: null,
   selectedPdfTextId: null,
   selectedPdfVectorId: null,
   shapeStyle: { ...DEFAULT_SHAPE_STYLE },
+  showOcrRegions: false,
   status: "idle",
   textStyle: { ...DEFAULT_TEXT_STYLE },
   tool: "select",
@@ -214,6 +219,7 @@ export const editorStore = {
         selectedObjectIds: select
           ? [object.id]
           : internal.state.selectedObjectIds,
+        selectedOcrWordIds: select ? [] : internal.state.selectedOcrWordIds,
         selectedPdfAnnotationId: select
           ? null
           : internal.state.selectedPdfAnnotationId,
@@ -241,6 +247,7 @@ export const editorStore = {
   clearSelection: (): void => {
     setState({
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -271,6 +278,40 @@ export const editorStore = {
         ),
       };
     }, recordHistory);
+  },
+
+  commitOcrEdit: (object: TextObject, ocrWordId: string): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: withPages(
+          internal.state.document.pages.map((page) =>
+            page.id === pageId
+              ? {
+                  ...page,
+                  objects: [...page.objects, object],
+                  suppressedOcrWordIds: [
+                    ...(page.suppressedOcrWordIds ?? []),
+                    ocrWordId,
+                  ],
+                }
+              : page
+          )
+        ),
+        selectedObjectIds: [object.id],
+        selectedOcrWordIds: [],
+        selectedPdfAnnotationId: null,
+        selectedPdfFormFieldId: null,
+        selectedPdfImageId: null,
+        selectedPdfTextId: null,
+        selectedPdfVectorId: null,
+        tool: "select",
+      };
+    }, true);
   },
 
   commitPdfAnnotation: (
@@ -704,11 +745,13 @@ export const editorStore = {
       errorMessage: null,
       fileName,
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
+      showOcrRegions: false,
       status: "ready",
       tool: "select",
       zoomMode: "fit-page",
@@ -744,6 +787,20 @@ export const editorStore = {
   selectObjects: (objectIds: readonly string[]): void => {
     setState({
       selectedObjectIds: objectIds,
+      selectedOcrWordIds: [],
+      selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
+      selectedPdfImageId: null,
+      selectedPdfTextId: null,
+      selectedPdfVectorId: null,
+      tool: "select",
+    });
+  },
+
+  selectOcrWords: (wordIds: readonly string[]): void => {
+    setState({
+      selectedObjectIds: [],
+      selectedOcrWordIds: wordIds,
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -756,6 +813,7 @@ export const editorStore = {
   selectPdfAnnotation: (objectId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: objectId,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -768,6 +826,7 @@ export const editorStore = {
   selectPdfFormField: (fieldId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: fieldId,
       selectedPdfImageId: null,
@@ -780,6 +839,7 @@ export const editorStore = {
   selectPdfImage: (objectId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: objectId,
@@ -792,6 +852,7 @@ export const editorStore = {
   selectPdfText: (objectId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -804,6 +865,7 @@ export const editorStore = {
   selectPdfVector: (objectId: string | null): void => {
     setState({
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -854,6 +916,7 @@ export const editorStore = {
     setState({
       currentPageId: pageId,
       selectedObjectIds: [],
+      selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -893,6 +956,7 @@ export const editorStore = {
           : (pages[0]?.id ?? null),
         document: withPages(pages),
         selectedObjectIds: [],
+        selectedOcrWordIds: [],
         selectedPdfAnnotationId: null,
         selectedPdfFormFieldId: null,
         selectedPdfImageId: null,
@@ -945,6 +1009,10 @@ export const editorStore = {
     setState({ shapeStyle: { ...internal.state.shapeStyle, ...shapeStyle } });
   },
 
+  setShowOcrRegions: (showOcrRegions: boolean): void => {
+    setState({ showOcrRegions });
+  },
+
   setStatus: (
     status: EditorStatus,
     errorMessage: string | null = null
@@ -960,6 +1028,8 @@ export const editorStore = {
     setState({
       selectedObjectIds:
         tool === "select" ? internal.state.selectedObjectIds : [],
+      selectedOcrWordIds:
+        tool === "select" ? internal.state.selectedOcrWordIds : [],
       selectedPdfAnnotationId:
         tool === "select" ? internal.state.selectedPdfAnnotationId : null,
       selectedPdfFormFieldId:

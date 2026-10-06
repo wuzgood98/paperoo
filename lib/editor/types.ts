@@ -53,6 +53,7 @@ export type TextObject = BaseObject & {
   italic: boolean;
   color: string;
   align: TextAlign;
+  ocrWordId?: string;
 };
 
 export type ImageMimeType = "image/png" | "image/jpeg" | "image/webp";
@@ -457,6 +458,7 @@ export interface EditorPage {
   pdfTextObjects: PdfTextObject[];
   pdfVectorObjects: PdfVectorObject[];
   skippedPdfAnnotationSubtypes: string[];
+  suppressedOcrWordIds?: readonly string[];
 }
 
 export interface EditorDocument {

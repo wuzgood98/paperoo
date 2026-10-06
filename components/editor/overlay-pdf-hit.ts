@@ -14,6 +14,9 @@ import type {
   Point,
 } from "@/lib/editor/types";
 import { ensureEditorFonts } from "@/lib/fonts/measure-text";
+import { textObjectFromOcrWord } from "@/lib/ocr/edit";
+import { hitTestOcrWord, visibleOcrWords } from "@/lib/ocr/hit";
+import type { OcrTextObject } from "@/lib/ocr/types";
 import { ensurePdfImagePreview } from "@/lib/pdf/pdf-image-preview";
 
 const isLinkAnnotation = (
@@ -24,7 +27,10 @@ const isLinkAnnotation = (
 export const selectPdfObjectAtPoint = (
   page: EditorPage,
   point: Point,
-  options: { shiftKey?: boolean } = {}
+  options: {
+    ocrWords?: readonly OcrTextObject[];
+    shiftKey?: boolean;
+  } = {}
 ): boolean => {
   const formHit = hitTestPdfFormField(
     editorStore.getState().document,
@@ -56,6 +62,14 @@ export const selectPdfObjectAtPoint = (
   const textHit = hitTestPdfText(page.pdfTextObjects, point);
   if (textHit) {
     editorStore.selectPdfText(textHit.id);
+    return true;
+  }
+  const ocrHit = hitTestOcrWord(
+    visibleOcrWords(options.ocrWords ?? [], page.suppressedOcrWordIds),
+    point
+  );
+  if (ocrHit) {
+    editorStore.selectOcrWords([ocrHit.id]);
     return true;
   }
   const imageHit = hitTestPdfImage(page.pdfImageObjects, point);
@@ -94,10 +108,30 @@ export const beginPdfTextEditAtPoint = (
   return true;
 };
 
+export const beginOcrEditAtPoint = (
+  page: EditorPage,
+  point: Point,
+  ocrWords: readonly OcrTextObject[],
+  setEditingId: (id: string | null) => void
+): boolean => {
+  const hit = hitTestOcrWord(
+    visibleOcrWords(ocrWords, page.suppressedOcrWordIds),
+    point
+  );
+  if (!hit) {
+    return false;
+  }
+  const object = textObjectFromOcrWord(hit);
+  editorStore.commitOcrEdit(object, hit.id);
+  setEditingId(object.id);
+  return true;
+};
+
 export interface PdfHoverIds {
   annotationId: string | null;
   formFieldId: string | null;
   imageId: string | null;
+  ocrWordId: string | null;
   textId: string | null;
   vectorId: string | null;
 }
@@ -106,6 +140,7 @@ export const EMPTY_PDF_HOVER: PdfHoverIds = {
   annotationId: null,
   formFieldId: null,
   imageId: null,
+  ocrWordId: null,
   textId: null,
   vectorId: null,
 };
@@ -113,7 +148,8 @@ export const EMPTY_PDF_HOVER: PdfHoverIds = {
 export const pdfHoverIdsAtPoint = (
   page: EditorPage,
   point: Point,
-  document: EditorDocument
+  document: EditorDocument,
+  ocrWords: readonly OcrTextObject[] = []
 ): PdfHoverIds => {
   const formHit = hitTestPdfFormField(document, page.id, point);
   if (formHit) {
@@ -121,6 +157,7 @@ export const pdfHoverIdsAtPoint = (
       annotationId: null,
       formFieldId: formHit.id,
       imageId: null,
+      ocrWordId: null,
       textId: null,
       vectorId: null,
     };
@@ -131,6 +168,7 @@ export const pdfHoverIdsAtPoint = (
       annotationId: annotationHit.id,
       formFieldId: null,
       imageId: null,
+      ocrWordId: null,
       textId: null,
       vectorId: null,
     };
@@ -141,7 +179,22 @@ export const pdfHoverIdsAtPoint = (
       annotationId: null,
       formFieldId: null,
       imageId: null,
+      ocrWordId: null,
       textId: textHit.id,
+      vectorId: null,
+    };
+  }
+  const ocrHit = hitTestOcrWord(
+    visibleOcrWords(ocrWords, page.suppressedOcrWordIds),
+    point
+  );
+  if (ocrHit) {
+    return {
+      annotationId: null,
+      formFieldId: null,
+      imageId: null,
+      ocrWordId: ocrHit.id,
+      textId: null,
       vectorId: null,
     };
   }
@@ -151,6 +204,7 @@ export const pdfHoverIdsAtPoint = (
       annotationId: null,
       formFieldId: null,
       imageId: imageHit.id,
+      ocrWordId: null,
       textId: null,
       vectorId: null,
     };
@@ -165,6 +219,7 @@ export const pdfHoverIdsAtPoint = (
     annotationId: null,
     formFieldId: null,
     imageId: null,
+    ocrWordId: null,
     textId: null,
     vectorId: vectorHit?.id ?? null,
   };
