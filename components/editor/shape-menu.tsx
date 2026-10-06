@@ -33,7 +33,7 @@ export const ShapeMenu = ({ disabled }: { disabled: boolean }) => {
         }
       />
       <PopoverPopup align="start" side="left">
-        <div className="flex flex-col gap-1 p-1">
+        <div className="flex flex-col gap-1">
           {SHAPES.map((item) => (
             <button
               className="hover:bg-accent editor-pressable flex items-center gap-2 rounded-md px-2 py-1.5 text-sm"
