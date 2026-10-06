@@ -13,17 +13,23 @@ import {
   DEFAULT_SHAPE_STYLE,
   DEFAULT_TEXT_STYLE,
   EDITOR_OBJECT_SOURCE,
+  EMPTY_PDF_FORM,
   HIGHLIGHT_OPACITY,
 } from "@/lib/editor/types";
 import type {
   DrawingObject,
   CropBox,
+  EditorDocument,
   EditorObject,
   EditorPage,
   HighlightObject,
   ImageMimeType,
   ImageObject,
   PdfAnnotationObject,
+  PdfFormChoiceOption,
+  PdfFormField,
+  PdfFormModel,
+  PdfFormWidget,
   PdfImageObject,
   PdfLinkAction,
   PdfLinkAnnotation,
@@ -81,11 +87,128 @@ export const findPdfAnnotation = (
 ): PdfAnnotationObject | undefined =>
   page?.pdfAnnotationObjects.find((object) => object.id === objectId);
 
+export const documentForm = (document: EditorDocument): PdfFormModel =>
+  document.form ?? EMPTY_PDF_FORM;
+
+export const findPdfFormField = (
+  document: EditorDocument,
+  fieldId: string | null
+): PdfFormField | undefined =>
+  documentForm(document).fields.find((field) => field.id === fieldId);
+
+export const isPdfFormFieldDirty = (field: PdfFormField): boolean => {
+  switch (field.kind) {
+    case "signature": {
+      return false;
+    }
+    case "listbox": {
+      return field.value.join("\0") !== field.originalValue.join("\0");
+    }
+    case "checkbox": {
+      return field.value !== field.originalValue;
+    }
+    default: {
+      return field.value !== field.originalValue;
+    }
+  }
+};
+
+export const mapDocumentFormFields = (
+  document: EditorDocument,
+  mapper: (field: PdfFormField) => PdfFormField
+): EditorDocument => ({
+  ...document,
+  form: {
+    ...documentForm(document),
+    fields: documentForm(document).fields.map(mapper),
+  },
+});
+
+export const isPdfFormFieldEditable = (field: PdfFormField): boolean =>
+  field.kind !== "signature" && !field.readOnly;
+
+export const pdfFormChoiceDisplay = (
+  options: readonly PdfFormChoiceOption[],
+  exportValue: string | null
+): string => {
+  if (exportValue === null) {
+    return "";
+  }
+  return (
+    options.find((option) => option.exportValue === exportValue)?.display ??
+    exportValue
+  );
+};
+
+export const pdfFormFieldPreviewText = (
+  field: PdfFormField,
+  widget: PdfFormWidget
+): string => {
+  switch (field.kind) {
+    case "checkbox": {
+      return field.value ? "✓" : "";
+    }
+    case "dropdown": {
+      return pdfFormChoiceDisplay(field.options, field.value);
+    }
+    case "listbox": {
+      return field.value
+        .map((value) => pdfFormChoiceDisplay(field.options, value))
+        .join(", ");
+    }
+    case "radio": {
+      return field.value === widget.exportValue ? "●" : "";
+    }
+    case "signature": {
+      return "";
+    }
+    case "text": {
+      if (field.password) {
+        return "•".repeat(field.value.length);
+      }
+      return field.value;
+    }
+    default: {
+      return "";
+    }
+  }
+};
+
+/** Widget order on a page: field list, then widgets. PDF /Tabs R/C/S is not used. */
+export const pdfFormWidgetsOnPage = (
+  document: EditorDocument,
+  pageId: string
+): readonly { field: PdfFormField; widget: PdfFormWidget }[] => {
+  const items: { field: PdfFormField; widget: PdfFormWidget }[] = [];
+  for (const field of documentForm(document).fields) {
+    for (const widget of field.widgets) {
+      if (widget.pageId === pageId) {
+        items.push({ field, widget });
+      }
+    }
+  }
+  return items;
+};
+
 const pointInRect = (point: Point, rect: Rect): boolean =>
   point.x >= rect.x &&
   point.x <= rect.x + rect.width &&
   point.y >= rect.y &&
   point.y <= rect.y + rect.height;
+
+export const hitTestPdfFormField = (
+  document: EditorDocument,
+  pageId: string,
+  point: Point
+): PdfFormField | undefined => {
+  const hits = pdfFormWidgetsOnPage(document, pageId);
+  for (const { field, widget } of hits.toReversed()) {
+    if (pointInRect(point, widget)) {
+      return field;
+    }
+  }
+  return undefined;
+};
 
 const rectsOverlap = (left: Rect, right: Rect): boolean =>
   left.x < right.x + right.width &&

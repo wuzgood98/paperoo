@@ -9,6 +9,7 @@ import {
   boundsFromPoints,
   fittedPdfTextBox,
   fittedPdfTextWidth,
+  hitTestPdfFormField,
   hitTestPdfImage,
   hitTestPdfText,
   isPdfImageDirty,
@@ -36,7 +37,9 @@ import {
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
 import type {
+  EditorDocument,
   EditorPage,
+  PdfFormTextField,
   PdfImageObject,
   PdfLinkAnnotation,
   PdfTextObject,
@@ -857,4 +860,50 @@ test("pdfTextCssInkOffsetFromRunTop aligns CSS ascent with the matrix baseline",
       ascentRatio
     )
   ).toBeCloseTo(0);
+});
+
+test("hitTestPdfFormField hits a widget and returns the field", () => {
+  const field: PdfFormTextField = {
+    align: "left",
+    comb: false,
+    fileSelect: false,
+    id: "field-name",
+    kind: "text",
+    maxLength: null,
+    multiline: false,
+    name: "person.name",
+    originalValue: "Gideon",
+    password: false,
+    readOnly: false,
+    required: false,
+    richText: false,
+    value: "Gideon",
+    widgets: [
+      {
+        exportValue: null,
+        height: 20,
+        id: "widget-1",
+        pageId: "page-1",
+        sourceAnnotId: "12R",
+        width: 200,
+        x: 72,
+        y: 720,
+      },
+    ],
+  };
+  const document: EditorDocument = {
+    form: {
+      fields: [field],
+      hasJavaScript: false,
+      hasXfa: false,
+      signatures: [],
+    },
+    pages: [],
+  };
+  expect(hitTestPdfFormField(document, "page-1", { x: 80, y: 725 })?.id).toBe(
+    "field-name"
+  );
+  expect(
+    hitTestPdfFormField(document, "page-1", { x: 10, y: 10 })
+  ).toBeUndefined();
 });

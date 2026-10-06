@@ -15,12 +15,12 @@ export const loadPdfFile = async (file: File): Promise<void> => {
       throw new Error("This file does not look like a valid PDF.");
     }
 
-    const pages = await pdfSession.open(bytes);
+    const { form, pages } = await pdfSession.open(bytes);
     if (pages.length === 0) {
       throw new Error("This PDF has no pages.");
     }
 
-    editorStore.resetDocument(pages, file.name);
+    editorStore.resetDocument(pages, file.name, form);
   } catch (error) {
     await pdfSession.close();
     const message =

@@ -19,10 +19,12 @@ import {
   findObject,
   findPage,
   findPdfAnnotation,
+  findPdfFormField,
   findPdfImage,
   findPdfText,
   findPdfVector,
   fittedPdfTextBox,
+  mapDocumentFormFields,
   mapPageObjects,
   mapPagePdfAnnotations,
   mapPagePdfImages,
@@ -40,6 +42,7 @@ import {
   DEFAULT_TEXT_STYLE,
   MAX_ZOOM,
   MIN_ZOOM,
+  EMPTY_PDF_FORM,
 } from "@/lib/editor/types";
 import type {
   DrawStyleDefaults,
@@ -53,6 +56,8 @@ import type {
   ImageMimeType,
   PageRotation,
   PdfAnnotationObject,
+  PdfFormField,
+  PdfFormModel,
   PdfImageObject,
   PdfTextObject,
   PdfVectorObject,
@@ -76,6 +81,7 @@ export interface EditorStoreState {
   highlightColor: string;
   isExporting: boolean;
   selectedObjectIds: readonly string[];
+  selectedPdfFormFieldId: string | null;
   selectedPdfImageId: string | null;
   selectedPdfTextId: string | null;
   selectedPdfVectorId: string | null;
@@ -98,7 +104,7 @@ interface StoreInternal {
 
 const initialState = (): EditorStoreState => ({
   currentPageId: null,
-  document: { pages: [] },
+  document: { form: EMPTY_PDF_FORM, pages: [] },
   drawStyle: { ...DEFAULT_DRAW_STYLE },
   errorMessage: null,
   fileName: null,
@@ -106,6 +112,7 @@ const initialState = (): EditorStoreState => ({
   isExporting: false,
   selectedObjectIds: [],
   selectedPdfAnnotationId: null,
+  selectedPdfFormFieldId: null,
   selectedPdfImageId: null,
   selectedPdfTextId: null,
   selectedPdfVectorId: null,
@@ -163,6 +170,11 @@ const setState = (partial: Partial<EditorStoreState>): void => {
 const currentPage = (): EditorPage | undefined =>
   findPage(internal.state.document.pages, internal.state.currentPageId);
 
+const withPages = (pages: EditorPage[]): EditorDocument => ({
+  ...internal.state.document,
+  pages,
+});
+
 export const editorStore = {
   addAsset: (
     bytes: Uint8Array,
@@ -193,19 +205,21 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPageObjects(
-            internal.state.document.pages,
-            pageId,
-            (objects) => [...objects, object]
-          ),
-        },
+        document: withPages(
+          mapPageObjects(internal.state.document.pages, pageId, (objects) => [
+            ...objects,
+            object,
+          ])
+        ),
         selectedObjectIds: select
           ? [object.id]
           : internal.state.selectedObjectIds,
         selectedPdfAnnotationId: select
           ? null
           : internal.state.selectedPdfAnnotationId,
+        selectedPdfFormFieldId: select
+          ? null
+          : internal.state.selectedPdfFormFieldId,
         selectedPdfImageId: select ? null : internal.state.selectedPdfImageId,
         selectedPdfTextId: select ? null : internal.state.selectedPdfTextId,
         selectedPdfVectorId: select ? null : internal.state.selectedPdfVectorId,
@@ -228,6 +242,7 @@ export const editorStore = {
     setState({
       selectedObjectIds: [],
       selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -246,14 +261,14 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: updateObject(
+        document: withPages(
+          updateObject(
             internal.state.document.pages,
             pageId,
             objectId,
             () => object
-          ),
-        },
+          )
+        ),
       };
     }, recordHistory);
   },
@@ -269,14 +284,14 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPagePdfAnnotations(
+        document: withPages(
+          mapPagePdfAnnotations(
             internal.state.document.pages,
             pageId,
             (objects) =>
               objects.map((item) => (item.id === object.id ? object : item))
-          ),
-        },
+          )
+        ),
       };
     }, recordHistory);
   },
@@ -289,14 +304,11 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPagePdfImages(
-            internal.state.document.pages,
-            pageId,
-            (objects) =>
-              objects.map((item) => (item.id === object.id ? object : item))
-          ),
-        },
+        document: withPages(
+          mapPagePdfImages(internal.state.document.pages, pageId, (objects) =>
+            objects.map((item) => (item.id === object.id ? object : item))
+          )
+        ),
       };
     }, recordHistory);
   },
@@ -328,8 +340,8 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: internal.state.document.pages.map((item) => {
+        document: withPages(
+          internal.state.document.pages.map((item) => {
             if (item.id !== pageId) {
               return item;
             }
@@ -358,8 +370,8 @@ export const editorStore = {
                 return object;
               }),
             };
-          }),
-        },
+          })
+        ),
       };
     }, true);
   },
@@ -372,14 +384,11 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPagePdfVectors(
-            internal.state.document.pages,
-            pageId,
-            (objects) =>
-              objects.map((item) => (item.id === object.id ? object : item))
-          ),
-        },
+        document: withPages(
+          mapPagePdfVectors(internal.state.document.pages, pageId, (objects) =>
+            objects.map((item) => (item.id === object.id ? object : item))
+          )
+        ),
       };
     }, recordHistory);
   },
@@ -391,8 +400,8 @@ export const editorStore = {
       commit(() => {
         internal.state = {
           ...internal.state,
-          document: {
-            pages: mapPagePdfAnnotations(
+          document: withPages(
+            mapPagePdfAnnotations(
               internal.state.document.pages,
               pageId,
               (objects) =>
@@ -401,8 +410,8 @@ export const editorStore = {
                     ? { ...object, deleted: true }
                     : object
                 )
-            ),
-          },
+            )
+          ),
           selectedPdfAnnotationId: null,
         };
       }, true);
@@ -413,16 +422,13 @@ export const editorStore = {
       commit(() => {
         internal.state = {
           ...internal.state,
-          document: {
-            pages: mapPagePdfImages(
-              internal.state.document.pages,
-              pageId,
-              (objects) =>
-                objects.map((object) =>
-                  object.id === imageId ? { ...object, deleted: true } : object
-                )
-            ),
-          },
+          document: withPages(
+            mapPagePdfImages(internal.state.document.pages, pageId, (objects) =>
+              objects.map((object) =>
+                object.id === imageId ? { ...object, deleted: true } : object
+              )
+            )
+          ),
           selectedPdfImageId: null,
         };
       }, true);
@@ -433,19 +439,22 @@ export const editorStore = {
       commit(() => {
         internal.state = {
           ...internal.state,
-          document: {
-            pages: mapPagePdfVectors(
+          document: withPages(
+            mapPagePdfVectors(
               internal.state.document.pages,
               pageId,
               (objects) =>
                 objects.map((object) =>
                   object.id === vectorId ? { ...object, deleted: true } : object
                 )
-            ),
-          },
+            )
+          ),
           selectedPdfVectorId: null,
         };
       }, true);
+      return;
+    }
+    if (internal.state.selectedPdfFormFieldId) {
       return;
     }
     if (!pageId || internal.state.selectedObjectIds.length === 0) {
@@ -454,13 +463,13 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: removeObjects(
+        document: withPages(
+          removeObjects(
             internal.state.document.pages,
             pageId,
             internal.state.selectedObjectIds
-          ),
-        },
+          )
+        ),
         selectedObjectIds: [],
       };
     }, true);
@@ -497,16 +506,31 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPagePdfAnnotations(
+        document: withPages(
+          mapPagePdfAnnotations(
             internal.state.document.pages,
             pageId,
             (objects) =>
               objects.map((object) =>
                 object.id === objectId ? updater(object) : object
               )
-          ),
-        },
+          )
+        ),
+      };
+    }, true);
+  },
+
+  patchPdfFormField: (updater: (field: PdfFormField) => PdfFormField): void => {
+    const fieldId = internal.state.selectedPdfFormFieldId;
+    if (!fieldId) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: mapDocumentFormFields(internal.state.document, (field) =>
+          field.id === fieldId ? updater(field) : field
+        ),
       };
     }, true);
   },
@@ -522,16 +546,13 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPagePdfImages(
-            internal.state.document.pages,
-            pageId,
-            (objects) =>
-              objects.map((object) =>
-                object.id === objectId ? updater(object) : object
-              )
-          ),
-        },
+        document: withPages(
+          mapPagePdfImages(internal.state.document.pages, pageId, (objects) =>
+            objects.map((object) =>
+              object.id === objectId ? updater(object) : object
+            )
+          )
+        ),
       };
     }, true);
   },
@@ -545,8 +566,8 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: internal.state.document.pages.map((page) =>
+        document: withPages(
+          internal.state.document.pages.map((page) =>
             page.id === pageId
               ? {
                   ...page,
@@ -555,8 +576,8 @@ export const editorStore = {
                   ),
                 }
               : page
-          ),
-        },
+          )
+        ),
       };
     }, true);
   },
@@ -572,16 +593,13 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPagePdfVectors(
-            internal.state.document.pages,
-            pageId,
-            (objects) =>
-              objects.map((object) =>
-                object.id === objectId ? updater(object) : object
-              )
-          ),
-        },
+        document: withPages(
+          mapPagePdfVectors(internal.state.document.pages, pageId, (objects) =>
+            objects.map((object) =>
+              object.id === objectId ? updater(object) : object
+            )
+          )
+        ),
       };
     }, true);
   },
@@ -595,16 +613,13 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPageObjects(
-            internal.state.document.pages,
-            pageId,
-            (objects) =>
-              objects.map((object) =>
-                ids.has(object.id) ? updater(object) : object
-              )
-          ),
-        },
+        document: withPages(
+          mapPageObjects(internal.state.document.pages, pageId, (objects) =>
+            objects.map((object) =>
+              ids.has(object.id) ? updater(object) : object
+            )
+          )
+        ),
       };
     }, true);
   },
@@ -643,19 +658,15 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: mapPageObjects(
-            internal.state.document.pages,
-            pageId,
-            (objects) => {
-              const selected = objects.filter((object) => ids.has(object.id));
-              const rest = objects.filter((object) => !ids.has(object.id));
-              return placement === "front"
-                ? [...rest, ...selected]
-                : [...selected, ...rest];
-            }
-          ),
-        },
+        document: withPages(
+          mapPageObjects(internal.state.document.pages, pageId, (objects) => {
+            const selected = objects.filter((object) => ids.has(object.id));
+            const rest = objects.filter((object) => !ids.has(object.id));
+            return placement === "front"
+              ? [...rest, ...selected]
+              : [...selected, ...rest];
+          })
+        ),
       };
     }, true);
   },
@@ -668,28 +679,33 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: updateObject(
+        document: withPages(
+          updateObject(
             internal.state.document.pages,
             pageId,
             objectId,
             () => object
-          ),
-        },
+          )
+        ),
       };
     }, false);
   },
 
-  resetDocument: (pages: EditorPage[], fileName: string): void => {
+  resetDocument: (
+    pages: EditorPage[],
+    fileName: string,
+    form: PdfFormModel = EMPTY_PDF_FORM
+  ): void => {
     editorStore.revokeAssets();
     internal.history = emptyHistory();
     setState({
       currentPageId: pages[0]?.id ?? null,
-      document: { pages },
+      document: { form, pages },
       errorMessage: null,
       fileName,
       selectedObjectIds: [],
       selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -716,11 +732,11 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: internal.state.document.pages.map((item) =>
+        document: withPages(
+          internal.state.document.pages.map((item) =>
             item.id === page.id ? { ...item, rotation: nextRotation } : item
-          ),
-        },
+          )
+        ),
       };
     }, true);
   },
@@ -729,6 +745,7 @@ export const editorStore = {
     setState({
       selectedObjectIds: objectIds,
       selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -740,6 +757,19 @@ export const editorStore = {
     setState({
       selectedObjectIds: [],
       selectedPdfAnnotationId: objectId,
+      selectedPdfFormFieldId: null,
+      selectedPdfImageId: null,
+      selectedPdfTextId: null,
+      selectedPdfVectorId: null,
+      tool: "select",
+    });
+  },
+
+  selectPdfFormField: (fieldId: string | null): void => {
+    setState({
+      selectedObjectIds: [],
+      selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: fieldId,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -751,6 +781,7 @@ export const editorStore = {
     setState({
       selectedObjectIds: [],
       selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
       selectedPdfImageId: objectId,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -762,6 +793,7 @@ export const editorStore = {
     setState({
       selectedObjectIds: [],
       selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: objectId,
       selectedPdfVectorId: null,
@@ -773,6 +805,7 @@ export const editorStore = {
     setState({
       selectedObjectIds: [],
       selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: objectId,
@@ -791,6 +824,12 @@ export const editorStore = {
 
   selectedPdfAnnotation: (): PdfAnnotationObject | undefined =>
     findPdfAnnotation(currentPage(), internal.state.selectedPdfAnnotationId),
+
+  selectedPdfFormField: (): PdfFormField | undefined =>
+    findPdfFormField(
+      internal.state.document,
+      internal.state.selectedPdfFormFieldId
+    ),
 
   selectedPdfImage: (): PdfImageObject | undefined =>
     findPdfImage(currentPage(), internal.state.selectedPdfImageId),
@@ -816,6 +855,7 @@ export const editorStore = {
       currentPageId: pageId,
       selectedObjectIds: [],
       selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
@@ -851,9 +891,10 @@ export const editorStore = {
         currentPageId: currentExists
           ? internal.state.currentPageId
           : (pages[0]?.id ?? null),
-        document: { pages },
+        document: withPages(pages),
         selectedObjectIds: [],
         selectedPdfAnnotationId: null,
+        selectedPdfFormFieldId: null,
         selectedPdfImageId: null,
         selectedPdfTextId: null,
         selectedPdfVectorId: null,
@@ -865,8 +906,8 @@ export const editorStore = {
     commit(() => {
       internal.state = {
         ...internal.state,
-        document: {
-          pages: internal.state.document.pages.map((page) => {
+        document: withPages(
+          internal.state.document.pages.map((page) => {
             const target = page.pdfImageObjects.find(
               (item) => item.id === objectId
             );
@@ -894,8 +935,8 @@ export const editorStore = {
                 return { ...object, previewAssetId };
               }),
             };
-          }),
-        },
+          })
+        ),
       };
     }, false);
   },
@@ -921,6 +962,8 @@ export const editorStore = {
         tool === "select" ? internal.state.selectedObjectIds : [],
       selectedPdfAnnotationId:
         tool === "select" ? internal.state.selectedPdfAnnotationId : null,
+      selectedPdfFormFieldId:
+        tool === "select" ? internal.state.selectedPdfFormFieldId : null,
       selectedPdfImageId:
         tool === "select" ? internal.state.selectedPdfImageId : null,
       selectedPdfTextId:

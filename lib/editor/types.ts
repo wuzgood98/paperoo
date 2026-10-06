@@ -339,6 +339,110 @@ export interface PdfVectorObject {
   y: number;
 }
 
+export type PdfFormFieldKind =
+  | "text"
+  | "checkbox"
+  | "radio"
+  | "dropdown"
+  | "listbox"
+  | "signature";
+
+export interface PdfFormChoiceOption {
+  display: string;
+  exportValue: string;
+}
+
+export interface PdfFormWidget {
+  exportValue: string | null;
+  height: number;
+  id: string;
+  pageId: string;
+  sourceAnnotId: string;
+  width: number;
+  x: number;
+  y: number;
+}
+
+interface PdfFormFieldBase {
+  id: string;
+  name: string;
+  readOnly: boolean;
+  required: boolean;
+  widgets: PdfFormWidget[];
+}
+
+export interface PdfFormTextField extends PdfFormFieldBase {
+  align: TextAlign;
+  comb: boolean;
+  fileSelect: boolean;
+  kind: "text";
+  maxLength: number | null;
+  multiline: boolean;
+  originalValue: string;
+  password: boolean;
+  richText: boolean;
+  value: string;
+}
+
+export interface PdfFormCheckboxField extends PdfFormFieldBase {
+  kind: "checkbox";
+  originalValue: boolean;
+  value: boolean;
+}
+
+export interface PdfFormRadioField extends PdfFormFieldBase {
+  kind: "radio";
+  options: PdfFormChoiceOption[];
+  originalValue: string | null;
+  value: string | null;
+}
+
+export interface PdfFormDropdownField extends PdfFormFieldBase {
+  editable: boolean;
+  kind: "dropdown";
+  options: PdfFormChoiceOption[];
+  originalValue: string | null;
+  value: string | null;
+}
+
+export interface PdfFormListboxField extends PdfFormFieldBase {
+  kind: "listbox";
+  multiSelect: boolean;
+  options: PdfFormChoiceOption[];
+  originalValue: string[];
+  value: string[];
+}
+
+export interface PdfFormSignatureField extends PdfFormFieldBase {
+  kind: "signature";
+}
+
+export type PdfFormField =
+  | PdfFormTextField
+  | PdfFormCheckboxField
+  | PdfFormRadioField
+  | PdfFormDropdownField
+  | PdfFormListboxField
+  | PdfFormSignatureField;
+
+export interface PdfFormSignatureInfo {
+  fieldName: string;
+}
+
+export interface PdfFormModel {
+  fields: PdfFormField[];
+  hasJavaScript: boolean;
+  hasXfa: boolean;
+  signatures: PdfFormSignatureInfo[];
+}
+
+export const EMPTY_PDF_FORM: PdfFormModel = {
+  fields: [],
+  hasJavaScript: false,
+  hasXfa: false,
+  signatures: [],
+};
+
 export interface EditorPage {
   id: string;
   sourceIndex: number;
@@ -356,6 +460,7 @@ export interface EditorPage {
 }
 
 export interface EditorDocument {
+  form?: PdfFormModel;
   pages: EditorPage[];
 }
 

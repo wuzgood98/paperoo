@@ -5,6 +5,7 @@ import { BoldIcon, ItalicIcon } from "lucide-react";
 import { ColorField } from "@/components/editor/color-field";
 import { ToolbarTip } from "@/components/editor/editor-toolbar";
 import { PdfAnnotationInspector } from "@/components/editor/pdf-annotation-inspector";
+import { PdfFormInspector } from "@/components/editor/pdf-form-inspector";
 import { PdfImageInspector } from "@/components/editor/pdf-image-inspector";
 import { PdfTextInspector } from "@/components/editor/pdf-text-inspector";
 import { PdfVectorInspector } from "@/components/editor/pdf-vector-inspector";
@@ -21,6 +22,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import {
   findPage,
+  findPdfFormField,
   findPdfImage,
   findPdfText,
   findPdfAnnotation,
@@ -66,6 +68,12 @@ export const InspectorBar = () => {
       state.selectedPdfAnnotationId
     )
   );
+  const selectedPdfFormField = useEditorStore((state) =>
+    findPdfFormField(state.document, state.selectedPdfFormFieldId)
+  );
+  if (selectedPdfFormField) {
+    return <PdfFormInspector field={selectedPdfFormField} />;
+  }
   if (selectedPdfText) {
     return <PdfTextInspector object={selectedPdfText} />;
   }

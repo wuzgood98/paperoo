@@ -1,6 +1,6 @@
 import { normalizeRotation } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
-import type { EditorPage } from "@/lib/editor/types";
+import type { EditorPage, PdfFormModel } from "@/lib/editor/types";
 import {
   DEFAULT_PDF_TEXT_COLOR,
   MAX_PDF_BYTES,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/editor/types";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
 import { extractPdfAnnotationObjects } from "@/lib/pdf/extract-annotations";
+import { extractPdfForm } from "@/lib/pdf/extract-forms";
 import {
   extractPdfImageObjects,
   toPdfImageOps,
@@ -73,7 +74,9 @@ class PdfSession {
     this.#evictIdle();
   }
 
-  async open(bytes: Uint8Array): Promise<EditorPage[]> {
+  async open(
+    bytes: Uint8Array
+  ): Promise<{ form: PdfFormModel; pages: EditorPage[] }> {
     await this.close();
     if (bytes.byteLength > MAX_PDF_BYTES) {
       throw new Error("This PDF is larger than the 80 MB limit.");
@@ -185,11 +188,38 @@ class PdfSession {
           width: viewport.width,
         } satisfies EditorPage;
         page.cleanup();
-        return editorPage;
+        return { editorPage, rawAnnotations };
       })
     );
 
-    return editorPages.filter((page) => page !== null);
+    const built = editorPages.filter(
+      (entry): entry is NonNullable<typeof entry> => entry !== null
+    );
+    const formPages = built.map((entry) => ({
+      annotations: entry.rawAnnotations,
+      page: {
+        cropBox: entry.editorPage.cropBox,
+        id: entry.editorPage.id,
+        sourceRotate: entry.editorPage.sourceRotate,
+      },
+    }));
+    const [hasJavaScript, signatures, , calculationOrderIds] =
+      await Promise.all([
+        this.#doc.hasJSActions(),
+        this.#doc.getSignatures(),
+        this.#doc.getFieldObjects(),
+        this.#doc.getCalculationOrderIds(),
+      ]);
+    const form = extractPdfForm({
+      hasJavaScript: hasJavaScript || (calculationOrderIds?.length ?? 0) > 0,
+      hasXfa: this.#doc.isPureXfa,
+      pages: formPages,
+      signatures: signatures ?? [],
+    });
+    return {
+      form,
+      pages: built.map((entry) => entry.editorPage),
+    };
   }
 
   async getPage(sourceIndex: number): Promise<PDFPageProxy | null> {

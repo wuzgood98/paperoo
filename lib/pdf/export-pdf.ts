@@ -75,6 +75,10 @@ import type {
 } from "@/lib/editor/types";
 import { FONT_FILES, wrapText } from "@/lib/fonts/measure-text";
 import { applyPdfAnnotationEdits } from "@/lib/pdf/export-annotations";
+import {
+  applyPdfFormEdits,
+  copyPagesWithAcroForm,
+} from "@/lib/pdf/export-forms";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
 
 export interface ExportAsset {
@@ -837,12 +841,13 @@ export const exportDocument = async (
     throw error;
   }
   await applyPdfAnnotationEdits(source, input.document);
+  await applyPdfFormEdits(source, input.document, input.fontBytes);
 
   const output = await PDFDocument.create();
   output.registerFontkit(fontkit);
 
   const indices = input.document.pages.map((page) => page.sourceIndex);
-  const copied = await output.copyPages(source, indices);
+  const copied = await copyPagesWithAcroForm(source, output, indices);
 
   for (const [index, page] of copied.entries()) {
     output.addPage(page);

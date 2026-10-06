@@ -13,11 +13,14 @@ import type {
 import { OverlayObject } from "@/components/editor/overlay-object";
 import {
   beginPdfTextEditAtPoint,
+  EMPTY_PDF_HOVER,
   pdfHoverIdsAtPoint,
   selectPdfObjectAtPoint,
 } from "@/components/editor/overlay-pdf-hit";
+import type { PdfHoverIds } from "@/components/editor/overlay-pdf-hit";
 import { OverlayPreviews } from "@/components/editor/overlay-previews";
 import { PdfAnnotationLayer } from "@/components/editor/pdf-annotation-layer";
+import { PdfFormLayer } from "@/components/editor/pdf-form-layer";
 import { PdfImageLayer } from "@/components/editor/pdf-image-layer";
 import { PdfTextLayer } from "@/components/editor/pdf-text-layer";
 import { PdfVectorLayer } from "@/components/editor/pdf-vector-layer";
@@ -55,6 +58,10 @@ export const EditorOverlay = ({
   const selectedPdfAnnotationId = useEditorStore(
     (state) => state.selectedPdfAnnotationId
   );
+  const selectedPdfFormFieldId = useEditorStore(
+    (state) => state.selectedPdfFormFieldId
+  );
+  const editorDocument = useEditorStore((state) => state.document);
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
   const shapeStyle = useEditorStore((state) => state.shapeStyle);
@@ -69,14 +76,8 @@ export const EditorOverlay = ({
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingPdfTextId, setEditingPdfTextId] = useState<string | null>(null);
-  const [hoveredPdfImageId, setHoveredPdfImageId] = useState<string | null>(
-    null
-  );
-  const [hoveredPdfTextId, setHoveredPdfTextId] = useState<string | null>(null);
-  const [hoveredPdfVectorId, setHoveredPdfVectorId] = useState<string | null>(
-    null
-  );
-  const [hoveredPdfAnnotationId, setHoveredPdfAnnotationId] = useState<
+  const [pdfHover, setPdfHover] = useState<PdfHoverIds>(EMPTY_PDF_HOVER);
+  const [editingPdfFormFieldId, setEditingPdfFormFieldId] = useState<
     string | null
   >(null);
   const [transformingId, setTransformingId] = useState<string | null>(null);
@@ -112,6 +113,7 @@ export const EditorOverlay = ({
   const clearInlineEditing = () => {
     setEditingId(null);
     setEditingPdfTextId(null);
+    setEditingPdfFormFieldId(null);
   };
 
   return (
@@ -123,7 +125,7 @@ export const EditorOverlay = ({
       onContextMenu={(event) => {
         if (event.target === event.currentTarget) {
           editorStore.clearSelection();
-          setEditingPdfTextId(null);
+          clearInlineEditing();
         }
       }}
       onDoubleClick={(event) => {
@@ -209,21 +211,15 @@ export const EditorOverlay = ({
         }
       }}
       onPointerLeave={() => {
-        setHoveredPdfImageId(null);
-        setHoveredPdfTextId(null);
-        setHoveredPdfVectorId(null);
-        setHoveredPdfAnnotationId(null);
+        setPdfHover(EMPTY_PDF_HOVER);
       }}
       onPointerMove={(event) => {
         onPointerMove(event);
         if (tool !== "select" || gestureRef.current) {
           return;
         }
-        const hover = pdfHoverIdsAtPoint(page, toPage(event));
-        setHoveredPdfTextId((current) =>
-          current === hover.textId ? current : hover.textId
-        );
-        if (hover.imageId && hover.imageId !== hoveredPdfImageId) {
+        const hover = pdfHoverIdsAtPoint(page, toPage(event), editorDocument);
+        if (hover.imageId && hover.imageId !== pdfHover.imageId) {
           const image = page.pdfImageObjects.find(
             (item) => item.id === hover.imageId
           );
@@ -231,15 +227,7 @@ export const EditorOverlay = ({
             void ensurePdfImagePreview(image, page.sourceIndex);
           }
         }
-        setHoveredPdfImageId((current) =>
-          current === hover.imageId ? current : hover.imageId
-        );
-        setHoveredPdfVectorId((current) =>
-          current === hover.vectorId ? current : hover.vectorId
-        );
-        setHoveredPdfAnnotationId((current) =>
-          current === hover.annotationId ? current : hover.annotationId
-        );
+        setPdfHover(hover);
       }}
       onPointerUp={onPointerUp}
       ref={rootRef}
@@ -258,7 +246,7 @@ export const EditorOverlay = ({
         boundsRef={boundsRef}
         canvasRotation={normalizeRotation(page.sourceRotate + page.rotation)}
         gestureRef={gestureRef}
-        hoveredId={hoveredPdfAnnotationId}
+        hoveredId={pdfHover.annotationId}
         nodeRefs={nodeRefs}
         objects={page.pdfAnnotationObjects}
         onTransformStart={setTransformingId}
@@ -273,7 +261,7 @@ export const EditorOverlay = ({
         boundsRef={boundsRef}
         crop={page.cropBox}
         gestureRef={gestureRef}
-        hoveredId={hoveredPdfVectorId}
+        hoveredId={pdfHover.vectorId}
         nodeRefs={nodeRefs}
         objects={page.pdfVectorObjects}
         onTransformStart={setTransformingId}
@@ -287,7 +275,7 @@ export const EditorOverlay = ({
       <PdfImageLayer
         boundsRef={boundsRef}
         gestureRef={gestureRef}
-        hoveredId={hoveredPdfImageId}
+        hoveredId={pdfHover.imageId}
         nodeRefs={nodeRefs}
         objects={page.pdfImageObjects}
         onTransformStart={setTransformingId}
@@ -300,13 +288,27 @@ export const EditorOverlay = ({
       />
       <PdfTextLayer
         editingId={editingPdfTextId}
-        hoveredId={hoveredPdfTextId}
+        hoveredId={pdfHover.textId}
         objects={page.pdfTextObjects}
         onExitEdit={() => {
           setEditingPdfTextId(null);
         }}
         page={page}
         selectedId={selectedPdfTextId}
+        zoom={zoom}
+      />
+      <PdfFormLayer
+        editingId={editingPdfFormFieldId}
+        hoveredId={pdfHover.formFieldId}
+        onBeginEdit={(fieldId) => {
+          setEditingPdfTextId(null);
+          setEditingPdfFormFieldId(fieldId);
+        }}
+        onExitEdit={() => {
+          setEditingPdfFormFieldId(null);
+        }}
+        pageId={page.id}
+        selectedId={selectedPdfFormFieldId}
         zoom={zoom}
       />
       {page.objects.map((object) => (
