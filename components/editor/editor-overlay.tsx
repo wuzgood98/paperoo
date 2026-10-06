@@ -305,6 +305,7 @@ export const EditorOverlay = ({
         onExitEdit={() => {
           setEditingPdfTextId(null);
         }}
+        page={page}
         selectedId={selectedPdfTextId}
         zoom={zoom}
       />

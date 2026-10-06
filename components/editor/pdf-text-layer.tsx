@@ -5,22 +5,32 @@ import type { CSSProperties } from "react";
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
+  captionUnderlineCssOffsetFromRunTop,
+  dirtyPdfTextCoverBox,
   fittedPdfTextBox,
   isPdfTextDirty,
   measurePdfTextWidth,
+  pdfLinkTextAppearance,
+  pdfTextCssInkOffsetFromRunTop,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
   pdfTextOverlayBox,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
-import type { PdfTextObject } from "@/lib/editor/types";
-import { ensureEditorFonts, fontFamilyCss } from "@/lib/fonts/measure-text";
+import type { EditorPage, PdfTextObject, Rect } from "@/lib/editor/types";
+import {
+  cssFontAscentRatio,
+  ensureEditorFonts,
+  fontFamilyCss,
+  LIBERATION_SANS_ASCENT_RATIO,
+} from "@/lib/fonts/measure-text";
 import { cn } from "@/lib/utils";
 
 const pdfTextInkStyle = (
   object: PdfTextObject,
   fontSizeCss: number,
-  zoom: number
+  zoom: number,
+  fillColor: string = object.color
 ): CSSProperties => {
   const fill = pdfTextNeedsFill(object.textRenderingMode);
   const stroke = pdfTextNeedsStroke(object.textRenderingMode);
@@ -29,7 +39,7 @@ const pdfTextInkStyle = (
     WebkitTextStroke: stroke
       ? `${strokeWidthCss}px ${object.strokeColor}`
       : undefined,
-    color: fill ? object.color : "transparent",
+    color: fill ? fillColor : "transparent",
     fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
     fontSize: fontSizeCss,
     fontStyle: object.italic === true ? "italic" : "normal",
@@ -50,13 +60,48 @@ const overlayFrame = (
   return pdfTextOverlayBox(object, measured);
 };
 
-const PdfTextEditor = ({
-  object,
-  onExit,
+const inkAscentRatio = (object: PdfTextObject, fontsReady: boolean): number => {
+  if (!fontsReady) {
+    return LIBERATION_SANS_ASCENT_RATIO;
+  }
+  return cssFontAscentRatio(
+    object.fontFamily ?? "sans",
+    object.fontWeight ?? 400,
+    object.italic === true
+  );
+};
+
+const PdfTextCoverPlate = ({
+  cover,
+  runBox,
   zoom,
 }: {
+  cover: Rect;
+  runBox: Rect;
+  zoom: number;
+}) => (
+  <div
+    className="absolute bg-white"
+    style={{
+      height: pageToCss(cover.height, zoom),
+      left: pageToCss(cover.x - runBox.x, zoom),
+      top: pageToCss(cover.y - runBox.y, zoom),
+      width: pageToCss(cover.width, zoom),
+    }}
+  />
+);
+
+const PdfTextEditor = ({
+  fontsReady,
+  object,
+  onExit,
+  page,
+  zoom,
+}: {
+  fontsReady: boolean;
   object: PdfTextObject;
   onExit: () => void;
+  page: EditorPage;
   zoom: number;
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -64,7 +109,18 @@ const PdfTextEditor = ({
   const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? object.text;
   const frame = overlayFrame(object, value);
-  const fontSizeCss = pageToCss(object.fontSize ?? object.height, zoom);
+  const fontSize = object.fontSize ?? object.height;
+  const fontSizeCss = pageToCss(fontSize, zoom);
+  const appearance = pdfLinkTextAppearance(page, object);
+  const underline = appearance?.underline ?? object.captionUnderline;
+  const cover = dirtyPdfTextCoverBox(frame, fontSize, underline);
+  const inkTop = pdfTextCssInkOffsetFromRunTop(
+    object,
+    frame,
+    page.cropBox,
+    page.sourceRotate,
+    inkAscentRatio(object, fontsReady)
+  );
 
   useEffect(() => {
     void ensureEditorFonts();
@@ -89,10 +145,10 @@ const PdfTextEditor = ({
       className="absolute origin-center"
       style={objectWrapperStyle({ ...frame, rotation: object.rotation }, zoom)}
     >
-      <div className="absolute inset-0 bg-white" />
+      <PdfTextCoverPlate cover={cover} runBox={frame} zoom={zoom} />
       <input
         aria-label="Edit PDF text"
-        className="relative h-full w-full min-w-0 border-0 bg-transparent p-0 outline-none select-text"
+        className="absolute left-0 min-w-0 border-0 bg-transparent p-0 outline-none select-text"
         dir={object.dir === "rtl" ? "rtl" : "ltr"}
         onBlur={() => {
           if (discardRef.current) {
@@ -121,7 +177,12 @@ const PdfTextEditor = ({
           event.stopPropagation();
         }}
         ref={inputRef}
-        style={pdfTextInkStyle(object, fontSizeCss, zoom)}
+        style={{
+          ...pdfTextInkStyle(object, fontSizeCss, zoom),
+          height: fontSizeCss,
+          top: pageToCss(inkTop, zoom),
+          width: "100%",
+        }}
         type="text"
         value={value}
       />
@@ -134,6 +195,7 @@ export const PdfTextLayer = ({
   hoveredId,
   objects,
   onExitEdit,
+  page,
   selectedId,
   zoom,
 }: {
@@ -141,20 +203,31 @@ export const PdfTextLayer = ({
   hoveredId: string | null;
   objects: readonly PdfTextObject[];
   onExitEdit: () => void;
+  page: EditorPage;
   selectedId: string | null;
   zoom: number;
 }) => {
   const hasDirty = objects.some((object) => isPdfTextDirty(object));
   const isEditing = editingId !== null;
+  const [fontsReady, setFontsReady] = useState(false);
 
   useEffect(() => {
-    void ensureEditorFonts();
+    const loadFonts = async (): Promise<void> => {
+      await ensureEditorFonts();
+      setFontsReady(true);
+    };
+    void loadFonts();
   }, []);
 
   useEffect(() => {
-    if (hasDirty || isEditing) {
-      void ensureEditorFonts();
+    if (!(hasDirty || isEditing)) {
+      return;
     }
+    const loadFonts = async (): Promise<void> => {
+      await ensureEditorFonts();
+      setFontsReady(true);
+    };
+    void loadFonts();
   }, [hasDirty, isEditing]);
 
   return (
@@ -163,9 +236,11 @@ export const PdfTextLayer = ({
         if (object.id === editingId) {
           return (
             <PdfTextEditor
+              fontsReady={fontsReady}
               key={`edit-${object.id}`}
               object={object}
               onExit={onExitEdit}
+              page={page}
               zoom={zoom}
             />
           );
@@ -173,33 +248,59 @@ export const PdfTextLayer = ({
         if (!isPdfTextDirty(object)) {
           return null;
         }
+        const linkAppearance = pdfLinkTextAppearance(page, object);
+        const fillColor = linkAppearance?.fillColor ?? object.color;
+        const underline = linkAppearance?.underline;
+        const frame = overlayFrame(object);
+        const fontSize = object.fontSize ?? object.height;
+        const cover = dirtyPdfTextCoverBox(frame, fontSize, underline);
+        const inkTop = pdfTextCssInkOffsetFromRunTop(
+          object,
+          frame,
+          page.cropBox,
+          page.sourceRotate,
+          inkAscentRatio(object, fontsReady)
+        );
         return (
           <div
             className="pointer-events-none absolute origin-center"
             key={`dirty-${object.id}`}
-            style={objectWrapperStyle(
-              { ...overlayFrame(object), rotation: 0 },
-              zoom
-            )}
+            style={objectWrapperStyle({ ...frame, rotation: 0 }, zoom)}
           >
-            <div className="absolute inset-0 bg-white" />
+            <PdfTextCoverPlate cover={cover} runBox={frame} zoom={zoom} />
             <div
-              className="relative h-full w-full whitespace-nowrap"
+              className="absolute left-0 whitespace-nowrap"
               style={{
                 ...pdfTextInkStyle(
                   object,
-                  pageToCss(object.fontSize ?? object.height, zoom),
-                  zoom
+                  pageToCss(fontSize, zoom),
+                  zoom,
+                  fillColor
                 ),
+                top: pageToCss(inkTop, zoom),
                 transform:
                   object.rotation === 0
                     ? undefined
                     : `rotate(${object.rotation}deg)`,
-                transformOrigin: "left center",
+                transformOrigin: "left top",
               }}
             >
               {object.text}
             </div>
+            {underline ? (
+              <div
+                className="absolute left-0"
+                style={{
+                  backgroundColor: underline.color,
+                  height: pageToCss(underline.thickness, zoom),
+                  top: pageToCss(
+                    captionUnderlineCssOffsetFromRunTop(underline),
+                    zoom
+                  ),
+                  width: "100%",
+                }}
+              />
+            ) : null}
           </div>
         );
       })}

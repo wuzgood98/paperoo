@@ -250,6 +250,30 @@ export type TextItemTransform = readonly [
   number,
 ];
 
+/** Baseline origin from a pdf.js text-item matrix (ISO 32000-1 §9.4.2). */
+export const pdfTextMatrixOrigin = (transform: TextItemTransform): Point => ({
+  x: transform[4],
+  y: transform[5],
+});
+
+export const pdfTextBaselineDisplayed = (
+  transform: TextItemTransform,
+  crop: CropBox,
+  sourceRotate: PageRotation
+): Point =>
+  userPointToDisplayed(pdfTextMatrixOrigin(transform), crop, sourceRotate);
+
+export const pdfTextBaselineUserSpace = (
+  transform: TextItemTransform,
+  crop: CropBox,
+  sourceRotate: PageRotation
+): Point =>
+  displayedPointToUserSpace(
+    pdfTextBaselineDisplayed(transform, crop, sourceRotate),
+    crop,
+    sourceRotate
+  );
+
 export interface DisplayedTextBox extends Rect {
   fontSize: number;
   rotation: number;

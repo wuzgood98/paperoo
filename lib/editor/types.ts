@@ -111,7 +111,16 @@ export type PdfTextTransform = readonly [
   number,
 ];
 
+export interface PdfTextCaptionUnderline {
+  color: string;
+  /** Line center Y in displayed page space, relative to run box top. */
+  offsetFromRunTop: number;
+  thickness: number;
+}
+
 export interface PdfTextObject {
+  captionFill?: string;
+  captionUnderline?: PdfTextCaptionUnderline;
   color: string;
   dir: PdfTextDir;
   fontFamily?: FontFamily;

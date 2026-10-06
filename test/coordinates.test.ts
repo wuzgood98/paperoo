@@ -5,6 +5,7 @@ import {
   DEFAULT_DESCENT_FLOOR,
   displayedToUserSpace,
   imageCtmToDisplayedBox,
+  pdfTextBaselineUserSpace,
   textItemToDisplayedBox,
   userPointToDisplayed,
   pageToScreen,
@@ -247,6 +248,28 @@ test("textItemToDisplayedBox covers a descent floor under a high-ascent run", ()
   expect(user.y).toBeCloseTo(baselineY - belowBaseline);
   expect(user.height).toBeCloseTo(em * ascentRatio + belowBaseline);
   expect(user.y + user.height - em * ascentRatio).toBeCloseTo(baselineY);
+});
+
+test("pdfTextBaselineUserSpace keeps the matrix origin through a descent-floor box", () => {
+  const em = 20;
+  const ascentRatio = 0.9;
+  const baselineY = 200;
+  const transform = [em, 0, 0, em, 72, baselineY] as const;
+  const box = textItemToDisplayedBox(
+    transform,
+    40,
+    em,
+    ascentRatio,
+    letterCrop,
+    0
+  );
+  const user = displayedToUserSpace(box, letterCrop, 0);
+  const liberationNoDescender = 0.6831875 * em;
+
+  expect(user.y + user.height - liberationNoDescender).not.toBeCloseTo(
+    baselineY
+  );
+  expect(pdfTextBaselineUserSpace(transform, letterCrop, 0).y).toBe(baselineY);
 });
 
 test("imageCtmToDisplayedBox maps a unit-square CTM into displayed space", () => {
