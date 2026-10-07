@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useRef } from "react";
 
+import { LogoMark } from "@/components/brand/logo-mark";
 import { DocumentSearch } from "@/components/editor/document-search";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -98,6 +99,7 @@ export const EditorToolbar = () => {
   return (
     <header className="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3">
       <div className="flex items-center gap-2 pr-2">
+        <LogoMark className="size-5 shrink-0" />
         <span className="text-sm font-semibold tracking-tight">Paperoo</span>
         <span className="text-muted-foreground hidden max-w-56 truncate text-xs sm:inline">
           {fileName ?? "Untitled"}
