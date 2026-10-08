@@ -6,6 +6,7 @@ import { useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 
 import { ColorField } from "@/components/editor/color-field";
+import { inspectorStripClassName } from "@/components/editor/inspector-strip";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -42,7 +43,7 @@ const MarkupInspector = ({ object }: { object: PdfMarkupAnnotation }) => (
       value={object.color}
     />
     {object.type === "pdf-highlight" ? (
-      <div className="flex min-w-40 items-center gap-2">
+      <div className="flex min-w-40 items-center gap-2 max-md:max-w-full max-md:min-w-0">
         <span className="text-muted-foreground text-xs">Opacity</span>
         <Slider
           max={1}
@@ -160,7 +161,7 @@ const LinkInspector = ({
   };
 
   return (
-    <div className="border-border bg-background border-b px-3 py-2">
+    <div className="border-border bg-background border-b px-3 py-2 max-md:overflow-x-auto max-md:overscroll-x-contain">
       <form
         className="flex max-w-lg min-w-0 flex-col gap-2"
         noValidate
@@ -266,16 +267,16 @@ export const PdfAnnotationInspector = ({
   }
   if (isPdfMarkupAnnotation(object)) {
     return (
-      <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+      <div className={inspectorStripClassName}>
         <MarkupInspector object={object} />
       </div>
     );
   }
   if (object.type === "pdf-free-text") {
     return (
-      <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+      <div className={inspectorStripClassName}>
         <Textarea
-          className="min-h-8 min-w-48 flex-1"
+          className="min-h-8 min-w-48 flex-1 max-md:max-w-full max-md:min-w-0"
           onChange={(event) =>
             editorStore.patchPdfAnnotation((current) =>
               current.id === object.id && current.type === "pdf-free-text"
@@ -319,9 +320,9 @@ export const PdfAnnotationInspector = ({
   }
   if (object.type === "pdf-text-note") {
     return (
-      <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+      <div className={inspectorStripClassName}>
         <Textarea
-          className="min-h-8 min-w-64 flex-1"
+          className="min-h-8 min-w-64 flex-1 max-md:max-w-full max-md:min-w-0"
           onChange={(event) =>
             editorStore.patchPdfAnnotation((current) =>
               current.id === object.id && current.type === "pdf-text-note"

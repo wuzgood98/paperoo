@@ -72,7 +72,7 @@ export const EmptyState = () => {
             Open sample
           </Button>
         </div>
-        <p className="text-muted-foreground flex items-center justify-center gap-1.5 text-xs">
+        <p className="text-muted-foreground hidden items-center justify-center gap-1.5 text-xs md:flex">
           Open
           <Kbd>⌘O</Kbd>· Undo
           <Kbd>⌘Z</Kbd>

@@ -103,6 +103,11 @@ export const EditorOverlay = ({
   const selectedIds = new Set(selectedObjectIds);
   const selectedOcrIds = new Set(selectedOcrWordIds);
   const placingSignature = tool === "signature" && pending !== null;
+  const captureTouch =
+    tool === "draw" ||
+    tool === "highlight" ||
+    tool === "shape" ||
+    placingSignature;
   const pendingScaled = pending
     ? scaleSignaturePoints(pending, SIGNATURE_PLACE_SIZE)
     : null;
@@ -135,7 +140,8 @@ export const EditorOverlay = ({
   return (
     <div
       className={cn(
-        "absolute inset-0 touch-none select-none",
+        "absolute inset-0 select-none",
+        captureTouch && "touch-none",
         placingSignature && "cursor-crosshair"
       )}
       onContextMenu={(event) => {

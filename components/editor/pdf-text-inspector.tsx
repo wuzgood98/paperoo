@@ -1,6 +1,7 @@
 "use client";
 
 import { ColorField } from "@/components/editor/color-field";
+import { inspectorStripClassName } from "@/components/editor/inspector-strip";
 import { FONT_FAMILIES, fontFamilyFromSelect } from "@/components/editor/utils";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,7 +24,7 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => {
   const showStroke = pdfTextNeedsStroke(object.textRenderingMode);
 
   return (
-    <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+    <div className={inspectorStripClassName}>
       {showFill ? (
         <ColorField
           label="Color"

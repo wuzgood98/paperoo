@@ -2,23 +2,42 @@
 
 import {
   DownloadIcon,
+  EllipsisVerticalIcon,
   FileUpIcon,
   PrinterIcon,
   Redo2Icon,
+  SearchIcon,
   Undo2Icon,
   ZoomInIcon,
   ZoomOutIcon,
 } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { LogoMark } from "@/components/brand/logo-mark";
 import { DocumentSearch } from "@/components/editor/document-search";
+import { PageSheetButton } from "@/components/editor/page-sidebar";
+import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { Button } from "@/components/ui/button";
-import { Kbd } from "@/components/ui/kbd";
+import {
+  Dialog,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "@/components/ui/menu";
 import { Separator } from "@/components/ui/separator";
 import { toastManager } from "@/components/ui/toast-manager";
 import { Toggle } from "@/components/ui/toggle";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   editorStore,
   useCanRedo,
@@ -60,25 +79,37 @@ const printPdf = async () => {
   }
 };
 
-export const ToolbarTip = ({
-  children,
-  label,
-  shortcut,
-}: {
-  children: React.ReactElement;
-  label: string;
-  shortcut?: string;
-}) => (
-  <Tooltip>
-    <TooltipTrigger render={children} />
-    <TooltipPopup>
-      <span className="flex items-center gap-2">
-        {label}
-        {shortcut ? <Kbd>{shortcut}</Kbd> : null}
-      </span>
-    </TooltipPopup>
-  </Tooltip>
-);
+const SearchSheetButton = () => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Button
+        pressable
+        aria-label="Search document"
+        className="md:hidden"
+        onClick={() => setOpen(true)}
+        size="icon-sm"
+        variant="ghost"
+      >
+        <SearchIcon />
+      </Button>
+      <Dialog onOpenChange={setOpen} open={open}>
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Search</DialogTitle>
+          </DialogHeader>
+          <DialogPanel>
+            <DocumentSearch
+              className="w-full max-w-none min-w-0"
+              onGoToHit={() => setOpen(false)}
+            />
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+    </>
+  );
+};
 
 export const EditorToolbar = () => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -97,15 +128,17 @@ export const EditorToolbar = () => {
   );
 
   return (
-    <header className="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3">
-      <div className="flex items-center gap-2 pr-2">
+    <header className="border-border flex h-12 shrink-0 items-center gap-1 border-b px-2 md:gap-2 md:px-3">
+      <div className="flex min-w-0 items-center gap-2 pr-2">
         <LogoMark className="size-5 shrink-0" />
-        <span className="text-sm font-semibold tracking-tight">Paperoo</span>
-        <span className="text-muted-foreground hidden max-w-56 truncate text-xs sm:inline">
+        <span className="hidden text-sm font-semibold tracking-tight md:inline">
+          Paperoo
+        </span>
+        <span className="text-muted-foreground min-w-0 truncate text-xs md:max-w-56">
           {fileName ?? "Untitled"}
         </span>
       </div>
-      <Separator orientation="vertical" />
+      <Separator className="hidden md:block" orientation="vertical" />
       <input
         accept="application/pdf"
         className="sr-only"
@@ -152,59 +185,70 @@ export const EditorToolbar = () => {
           <Redo2Icon />
         </Button>
       </ToolbarTip>
-      <Separator orientation="vertical" />
-      <ToolbarTip label="Zoom out">
-        <Button
+      <div className="hidden items-center gap-2 md:flex">
+        <Separator orientation="vertical" />
+        <ToolbarTip label="Zoom out">
+          <Button
+            pressable
+            disabled={!ready || zoom <= MIN_ZOOM}
+            onClick={() => editorStore.zoomBy(-ZOOM_STEP)}
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Zoom out"
+          >
+            <ZoomOutIcon />
+          </Button>
+        </ToolbarTip>
+        <span className="text-muted-foreground min-w-12 text-center text-xs tabular-nums">
+          {Math.round(zoom * 100)}%
+        </span>
+        <ToolbarTip label="Zoom in">
+          <Button
+            pressable
+            disabled={!ready || zoom >= MAX_ZOOM}
+            onClick={() => editorStore.zoomBy(ZOOM_STEP)}
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Zoom in"
+          >
+            <ZoomInIcon />
+          </Button>
+        </ToolbarTip>
+        <Toggle
           pressable
-          disabled={!ready || zoom <= MIN_ZOOM}
-          onClick={() => editorStore.zoomBy(-ZOOM_STEP)}
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Zoom out"
+          disabled={!ready}
+          onPressedChange={() => editorStore.fitPage()}
+          pressed={zoomMode === "fit-page"}
+          size="sm"
+          aria-label="Fit page"
         >
-          <ZoomOutIcon />
-        </Button>
-      </ToolbarTip>
-      <span className="text-muted-foreground min-w-12 text-center text-xs tabular-nums">
-        {Math.round(zoom * 100)}%
-      </span>
-      <ToolbarTip label="Zoom in">
-        <Button
+          Fit
+        </Toggle>
+        <Toggle
           pressable
-          disabled={!ready || zoom >= MAX_ZOOM}
-          onClick={() => editorStore.zoomBy(ZOOM_STEP)}
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Zoom in"
+          disabled={!ready}
+          onPressedChange={() => editorStore.fitWidth()}
+          pressed={zoomMode === "fit-width"}
+          size="sm"
+          aria-label="Fit width"
         >
-          <ZoomInIcon />
-        </Button>
-      </ToolbarTip>
-      <Toggle
-        pressable
-        disabled={!ready}
-        onPressedChange={() => editorStore.fitPage()}
-        pressed={zoomMode === "fit-page"}
-        size="sm"
-        aria-label="Fit page"
-      >
-        Fit
-      </Toggle>
-      <Toggle
-        pressable
-        disabled={!ready}
-        onPressedChange={() => editorStore.fitWidth()}
-        pressed={zoomMode === "fit-width"}
-        size="sm"
-        aria-label="Fit width"
-      >
-        Width
-      </Toggle>
+          Width
+        </Toggle>
+      </div>
       <div className="ml-auto flex items-center gap-1">
-        {ready ? <DocumentSearch /> : null}
+        <PageSheetButton />
+        {ready ? (
+          <>
+            <div className="hidden md:block">
+              <DocumentSearch />
+            </div>
+            <SearchSheetButton />
+          </>
+        ) : null}
         {hasOcrWords ? (
           <Toggle
             aria-label="Show OCR regions"
+            className="hidden md:inline-flex"
             disabled={!ready}
             onPressedChange={(pressed) => {
               editorStore.setShowOcrRegions(pressed);
@@ -220,6 +264,7 @@ export const EditorToolbar = () => {
           <Button
             pressable
             aria-label="Print"
+            className="hidden md:inline-flex"
             disabled={!ready || isExporting}
             onClick={async () => {
               await printPdf();
@@ -234,6 +279,7 @@ export const EditorToolbar = () => {
           <Button
             pressable
             aria-label="Export PDF"
+            className="hidden md:inline-flex"
             disabled={!ready || isExporting}
             onClick={async () => {
               await exportPdf();
@@ -244,6 +290,69 @@ export const EditorToolbar = () => {
             <DownloadIcon />
           </Button>
         </ToolbarTip>
+        <Menu>
+          <MenuTrigger
+            className="md:hidden"
+            disabled={!ready}
+            render={
+              <Button
+                pressable
+                aria-label="More"
+                disabled={!ready}
+                size="icon-sm"
+                variant="ghost"
+              >
+                <EllipsisVerticalIcon />
+              </Button>
+            }
+          />
+          <MenuPopup align="end">
+            <MenuRadioGroup
+              onValueChange={(value) => {
+                if (value === "fit-page") {
+                  editorStore.fitPage();
+                  return;
+                }
+                if (value === "fit-width") {
+                  editorStore.fitWidth();
+                }
+              }}
+              value={zoomMode}
+            >
+              <MenuRadioItem value="fit-page">Fit</MenuRadioItem>
+              <MenuRadioItem value="fit-width">Width</MenuRadioItem>
+            </MenuRadioGroup>
+            {hasOcrWords ? (
+              <MenuCheckboxItem
+                checked={showOcrRegions}
+                onCheckedChange={(checked) => {
+                  editorStore.setShowOcrRegions(checked);
+                }}
+              >
+                Show OCR regions
+              </MenuCheckboxItem>
+            ) : null}
+            <MenuSeparator />
+            <MenuItem
+              disabled={isExporting}
+              onClick={async () => {
+                await printPdf();
+              }}
+            >
+              <PrinterIcon />
+              Print
+            </MenuItem>
+            <MenuItem
+              disabled={isExporting}
+              onClick={async () => {
+                await exportPdf();
+              }}
+            >
+              <DownloadIcon />
+              Export PDF
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </div>
     </header>
   );

@@ -193,7 +193,7 @@ export const EditorViewport = () => {
     <div className="relative flex h-full min-h-0 flex-col">
       <InspectorBar />
       <div
-        className="min-h-0 flex-1 overflow-auto"
+        className="min-h-0 flex-1 overflow-auto overscroll-contain"
         onDragOver={(event) => {
           event.preventDefault();
         }}

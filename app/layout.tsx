@@ -1,6 +1,6 @@
 /* oxlint-disable react/no-danger -- Next.js JSON-LD guide uses a script tag */
 
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import "./globals.css";
@@ -16,6 +16,17 @@ const fontMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
 });
+
+export const viewport: Viewport = {
+  colorScheme: "light dark",
+  initialScale: 1,
+  themeColor: [
+    { color: "#ffffff", media: "(prefers-color-scheme: light)" },
+    { color: "#171717", media: "(prefers-color-scheme: dark)" },
+  ],
+  viewportFit: "cover",
+  width: "device-width",
+};
 
 export const metadata: Metadata = {
   alternates: {

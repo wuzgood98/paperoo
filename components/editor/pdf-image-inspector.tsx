@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 
+import { inspectorStripClassName } from "@/components/editor/inspector-strip";
 import { Button } from "@/components/ui/button";
 import { toastManager } from "@/components/ui/toast-manager";
 import { editorStore } from "@/lib/editor/store";
@@ -12,7 +13,7 @@ export const PdfImageInspector = ({ object }: { object: PdfImageObject }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+    <div className={inspectorStripClassName}>
       <input
         accept="image/png,image/jpeg,image/webp"
         className="sr-only"

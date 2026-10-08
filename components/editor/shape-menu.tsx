@@ -1,6 +1,7 @@
 "use client";
 
 import { CircleIcon, MinusIcon, SquareIcon } from "lucide-react";
+import { useSyncExternalStore } from "react";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
 import { Toggle } from "@/components/ui/toggle";
@@ -13,9 +14,20 @@ const SHAPES: { icon: React.ReactNode; id: ShapeKind; label: string }[] = [
   { icon: <CircleIcon />, id: "circle", label: "Circle" },
 ];
 
+const MD_QUERY = "(min-width: 768px)";
+
+const subscribeMd = (onChange: () => void) => {
+  const media = window.matchMedia(MD_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+};
+
+const getMdSnapshot = () => window.matchMedia(MD_QUERY).matches;
+
 export const ShapeMenu = ({ disabled }: { disabled: boolean }) => {
   const tool = useEditorStore((state) => state.tool);
   const shape = useEditorStore((state) => state.shapeStyle.shape);
+  const isMdUp = useSyncExternalStore(subscribeMd, getMdSnapshot, () => true);
 
   return (
     <Popover>
@@ -32,7 +44,10 @@ export const ShapeMenu = ({ disabled }: { disabled: boolean }) => {
           </Toggle>
         }
       />
-      <PopoverPopup align="start" side="left">
+      <PopoverPopup
+        align={isMdUp ? "start" : "center"}
+        side={isMdUp ? "left" : "top"}
+      >
         <div className="flex flex-col gap-1">
           {SHAPES.map((item) => (
             <button

@@ -3,12 +3,13 @@
 import { BoldIcon, ItalicIcon } from "lucide-react";
 
 import { ColorField } from "@/components/editor/color-field";
-import { ToolbarTip } from "@/components/editor/editor-toolbar";
+import { inspectorStripClassName } from "@/components/editor/inspector-strip";
 import { PdfAnnotationInspector } from "@/components/editor/pdf-annotation-inspector";
 import { PdfFormInspector } from "@/components/editor/pdf-form-inspector";
 import { PdfImageInspector } from "@/components/editor/pdf-image-inspector";
 import { PdfTextInspector } from "@/components/editor/pdf-text-inspector";
 import { PdfVectorInspector } from "@/components/editor/pdf-vector-inspector";
+import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { FONT_FAMILIES, fontFamilyFromSelect } from "@/components/editor/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,7 +98,7 @@ export const InspectorBar = () => {
   }
 
   return (
-    <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+    <div className={inspectorStripClassName}>
       {selected.type === "text" ? (
         <>
           <div className="flex items-center gap-2">
@@ -115,7 +116,7 @@ export const InspectorBar = () => {
               value={selected.fontFamily}
               items={FONT_FAMILIES}
             >
-              <SelectTrigger className="w-32">
+              <SelectTrigger className="w-32 max-md:max-w-full">
                 <SelectValue placeholder="Select a font family" />
               </SelectTrigger>
               <SelectContent>
@@ -137,7 +138,7 @@ export const InspectorBar = () => {
               }
               type="number"
               value={selected.fontSize}
-              className="w-24"
+              className="w-24 max-md:max-w-full"
             />
           </div>
           <ToolbarTip label="Bold">

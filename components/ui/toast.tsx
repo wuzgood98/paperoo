@@ -99,7 +99,7 @@ const Toasts = ({
           "fixed z-60 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           // Vertical positioning
           "data-[position*=top]:top-(--toast-inset)",
-          "data-[position*=bottom]:bottom-(--toast-inset)",
+          "data-[position*=bottom]:bottom-[calc(var(--toast-inset)+var(--editor-mobile-tool-rail,0px)+env(safe-area-inset-bottom,0px))]",
           // Horizontal positioning
           "data-[position*=left]:start-(--toast-inset)",
           "data-[position*=right]:end-(--toast-inset)",

@@ -149,6 +149,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  --editor-mobile-tool-rail: 0px;
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -236,6 +237,12 @@
   src: url("/fonts/LiberationSans-BoldItalic.ttf") format("truetype");
 }
 
+@media (width < 48rem) {
+  :root {
+    --editor-mobile-tool-rail: 3rem;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -245,6 +252,11 @@
   }
   html {
     @apply font-sans;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html,
+  body {
+    overscroll-behavior: none;
   }
 }
 
@@ -262,13 +274,12 @@
 
 @layer components {
   .editor-pressable {
+    touch-action: manipulation;
     transition: transform 160ms var(--ease-out);
   }
 
-  @media (hover: hover) and (pointer: fine) {
-    .editor-pressable:active {
-      transform: scale(0.97);
-    }
+  .editor-pressable:active {
+    transform: scale(0.97);
   }
 
   @media (prefers-reduced-motion: reduce) {

@@ -15,6 +15,7 @@ import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { DocumentSearchHit } from "@/lib/ocr/search";
 import { searchDocumentText } from "@/lib/ocr/search";
 import { useOcrSession } from "@/lib/ocr/session";
+import { cn } from "@/lib/utils";
 
 const hitValue = (hit: DocumentSearchHit): string =>
   `${hit.pageId}:${hit.objectId}`;
@@ -32,7 +33,13 @@ const goToSearchHit = (hit: DocumentSearchHit): void => {
   editorStore.selectOcrWords([hit.objectId]);
 };
 
-export const DocumentSearch = () => {
+export const DocumentSearch = ({
+  className,
+  onGoToHit,
+}: {
+  className?: string;
+  onGoToHit?: () => void;
+}) => {
   const pages = useEditorStore((state) => state.document.pages);
   const ocr = useOcrSession();
   const [query, setQuery] = useState("");
@@ -51,7 +58,7 @@ export const DocumentSearch = () => {
   );
 
   return (
-    <div className="max-w-56 min-w-40">
+    <div className={cn("max-w-56 min-w-40", className)}>
       <Combobox
         autoHighlight
         filter={null}
@@ -66,6 +73,7 @@ export const DocumentSearch = () => {
           const hit = hits.find((item) => hitValue(item) === value);
           if (hit) {
             goToSearchHit(hit);
+            onGoToHit?.();
           }
         }}
         open={open && query.trim().length > 0}
@@ -77,7 +85,7 @@ export const DocumentSearch = () => {
           showTrigger={false}
           size="sm"
         />
-        <ComboboxPopup className="w-72">
+        <ComboboxPopup className="w-72 max-w-[min(18rem,calc(100vw-2rem))]">
           <ComboboxEmpty>No matches</ComboboxEmpty>
           <ComboboxList>
             {(hit) => (

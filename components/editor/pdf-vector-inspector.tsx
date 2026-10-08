@@ -1,13 +1,14 @@
 "use client";
 
 import { ColorField } from "@/components/editor/color-field";
+import { inspectorStripClassName } from "@/components/editor/inspector-strip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { editorStore } from "@/lib/editor/store";
 import type { PdfVectorObject } from "@/lib/editor/types";
 
 export const PdfVectorInspector = ({ object }: { object: PdfVectorObject }) => (
-  <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2">
+  <div className={inspectorStripClassName}>
     {object.fill ? (
       <ColorField
         label="Fill"

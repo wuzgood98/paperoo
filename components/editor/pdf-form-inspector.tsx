@@ -1,8 +1,10 @@
 "use client";
 
+import { inspectorStripClassName } from "@/components/editor/inspector-strip";
 import { documentForm } from "@/lib/editor/object-utils";
 import { useEditorStore } from "@/lib/editor/store";
 import type { PdfFormField, PdfFormFieldKind } from "@/lib/editor/types";
+import { cn } from "@/lib/utils";
 
 const KIND_LABEL: Record<PdfFormFieldKind, string> = {
   checkbox: "Checkbox",
@@ -35,7 +37,7 @@ export const PdfFormInspector = ({ field }: { field: PdfFormField }) => {
   }
 
   return (
-    <div className="border-border bg-background flex flex-wrap items-center gap-3 border-b px-3 py-2 text-sm">
+    <div className={cn(inspectorStripClassName, "text-sm")}>
       <span className="font-medium">{field.name}</span>
       <span className="text-muted-foreground">{KIND_LABEL[field.kind]}</span>
       {field.required ? (
