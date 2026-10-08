@@ -30,7 +30,7 @@ export const ToolRail = () => {
   const disabled = status !== "ready";
 
   return (
-    <aside className="border-border bg-background flex shrink-0 items-center gap-1 overscroll-x-contain max-md:touch-pan-x max-md:overflow-x-auto max-md:border-t max-md:px-2 max-md:py-1.5 md:touch-auto md:flex-col md:overflow-x-visible md:overscroll-auto md:border-t-0 md:border-l md:px-0 md:py-2">
+    <aside className="border-border bg-background flex shrink-0 items-center gap-1 overscroll-x-contain max-md:touch-pan-x max-md:justify-center max-md:overflow-x-auto max-md:border-t max-md:px-2 max-md:py-1.5 md:touch-auto md:flex-col md:overflow-x-visible md:overscroll-auto md:border-t-0 md:border-l md:px-0 md:py-2">
       {TOOLS.map((item) => (
         <Tooltip key={item.id}>
           <TooltipTrigger
