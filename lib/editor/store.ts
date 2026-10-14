@@ -180,6 +180,64 @@ const withPages = (pages: EditorPage[]): EditorDocument => ({
   pages,
 });
 
+const isSourceOrder = (pages: readonly EditorPage[]): boolean =>
+  pages.every(
+    (page, index) =>
+      index === 0 || page.sourceIndex >= (pages[index - 1]?.sourceIndex ?? 0)
+  );
+
+/** Insert pages the user has not reordered; otherwise keep their order. */
+const mergeHydratedPages = (
+  existing: readonly EditorPage[],
+  incoming: readonly EditorPage[]
+): EditorPage[] => {
+  const known = new Set(existing.map((page) => page.id));
+  const fresh = incoming.filter((page) => !known.has(page.id));
+  if (fresh.length === 0) {
+    return [...existing];
+  }
+  if (isSourceOrder(existing)) {
+    return [...existing, ...fresh].toSorted(
+      (left, right) => left.sourceIndex - right.sourceIndex
+    );
+  }
+  const merged = [...existing];
+  const ordered = [...fresh].toSorted(
+    (left, right) => left.sourceIndex - right.sourceIndex
+  );
+  for (const page of ordered) {
+    const index = merged.findIndex(
+      (entry) => entry.sourceIndex > page.sourceIndex
+    );
+    if (index === -1) {
+      merged.push(page);
+    } else {
+      merged.splice(index, 0, page);
+    }
+  }
+  return merged;
+};
+
+const isPlaceholderForm = (form: PdfFormModel | undefined): boolean =>
+  !form ||
+  (form.fields.length === 0 &&
+    form.signatures.length === 0 &&
+    !form.hasJavaScript &&
+    !form.hasXfa);
+
+const patchHistoryDocuments = (
+  patch: (document: EditorDocument) => EditorDocument
+): void => {
+  const patchSnapshot = (snapshot: HistorySnapshot): HistorySnapshot => ({
+    ...snapshot,
+    document: patch(snapshot.document),
+  });
+  internal.history = {
+    future: internal.history.future.map(patchSnapshot),
+    past: internal.history.past.map(patchSnapshot),
+  };
+};
+
 export const editorStore = {
   addAsset: (
     bytes: Uint8Array,
@@ -232,6 +290,26 @@ export const editorStore = {
         tool: "select",
       };
     }, true);
+  },
+
+  appendPages: (pages: EditorPage[]): void => {
+    if (pages.length === 0) {
+      return;
+    }
+    const merged = mergeHydratedPages(internal.state.document.pages, pages);
+    if (merged.length === internal.state.document.pages.length) {
+      return;
+    }
+    internal.state = {
+      ...internal.state,
+      currentPageId: internal.state.currentPageId ?? merged[0]?.id ?? null,
+      document: { ...internal.state.document, pages: merged },
+    };
+    patchHistoryDocuments((document) => ({
+      ...document,
+      pages: mergeHydratedPages(document.pages, structuredClone(pages)),
+    }));
+    emit();
   },
 
   canRedo: (): boolean => internal.history.future.length > 0,
@@ -926,6 +1004,19 @@ export const editorStore = {
     if (syncFitZoom && internal.state.zoomMode !== "custom") {
       editorStore.recomputeFitZoom();
     }
+  },
+
+  setDocumentForm: (form: PdfFormModel): void => {
+    internal.state = {
+      ...internal.state,
+      document: { ...internal.state.document, form },
+    };
+    patchHistoryDocuments((document) =>
+      isPlaceholderForm(document.form)
+        ? { ...document, form: structuredClone(form) }
+        : document
+    );
+    emit();
   },
 
   setDrawStyle: (drawStyle: Partial<DrawStyleDefaults>): void => {
