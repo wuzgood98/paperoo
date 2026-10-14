@@ -129,7 +129,7 @@ export const EditorToolbar = () => {
 
   return (
     <header className="border-border flex h-12 shrink-0 items-center gap-1 border-b px-2 md:gap-2 md:px-3">
-      <div className="flex min-w-0 items-center gap-2 pr-2 md:w-[calc(var(--editor-page-sidebar)-0.75rem-0.5rem)]">
+      <div className="flex min-w-0 items-center gap-2 pr-2 md:w-[calc(var(--editor-page-sidebar)-0.8rem-0.5rem)]">
         <LogoMark className="size-5 shrink-0" />
         <span className="hidden text-sm font-semibold tracking-tight md:inline">
           Paperoo
