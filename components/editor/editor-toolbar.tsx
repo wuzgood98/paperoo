@@ -129,12 +129,15 @@ export const EditorToolbar = () => {
 
   return (
     <header className="border-border flex h-12 shrink-0 items-center gap-1 border-b px-2 md:gap-2 md:px-3">
-      <div className="flex min-w-0 items-center gap-2 pr-2">
+      <div className="flex min-w-0 items-center gap-2 pr-2 md:w-[calc(var(--editor-page-sidebar)-0.75rem-0.5rem)]">
         <LogoMark className="size-5 shrink-0" />
         <span className="hidden text-sm font-semibold tracking-tight md:inline">
           Paperoo
         </span>
-        <span className="text-muted-foreground min-w-0 truncate text-xs md:max-w-56">
+        <span
+          className="text-muted-foreground w-12 min-w-0 truncate text-xs md:w-auto md:flex-1"
+          title={fileName ?? undefined}
+        >
           {fileName ?? "Untitled"}
         </span>
       </div>

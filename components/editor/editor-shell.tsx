@@ -58,10 +58,10 @@ export const EditorShell = () => {
   }, []);
 
   return (
-    <div className="bg-background flex h-svh min-h-0 flex-col overflow-hidden pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]">
+    <div className="bg-background flex h-svh min-h-0 flex-col overflow-hidden pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] [--editor-page-sidebar:220px]">
       <EditorHotkeys />
       <EditorToolbar />
-      <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[220px_minmax(0,1fr)_56px]">
+      <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[var(--editor-page-sidebar)_minmax(0,1fr)_56px]">
         <PageSidebar />
         <main className="bg-muted/40 min-h-0 flex-1 overflow-hidden">
           <EditorMain status={status} />
