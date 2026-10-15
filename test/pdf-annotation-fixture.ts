@@ -54,6 +54,54 @@ export const buildBlueLinkCaptionFixture = async (): Promise<Uint8Array> => {
   return new Uint8Array(await doc.save());
 };
 
+/**
+ * "Company | <url>" line as a resume export lays it out: a "|" run whose right
+ * edge grazes the link rect, and a blue URL extracted as two runs (a font
+ * change splits it) inside the rect.
+ */
+export const buildSplitLinkCaptionFixture = async (): Promise<Uint8Array> => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage(LETTER);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const regular = await doc.embedFont(StandardFonts.Helvetica);
+  const oblique = await doc.embedFont(StandardFonts.HelveticaOblique);
+  const blue = rgb(0, 0, 1);
+  const size = 12;
+  const baseline = 700;
+  let x = 72;
+  const draw = (
+    text: string,
+    font: typeof regular,
+    fill = rgb(0, 0, 0)
+  ): number => {
+    page.drawText(text, { color: fill, font, size, x, y: baseline });
+    const start = x;
+    x += font.widthOfTextAtSize(text, size);
+    return start;
+  };
+  draw("Bozoma Labs |", bold);
+  x += regular.widthOfTextAtSize(" ", size);
+  const urlStart = draw("https://bozoma", regular, blue);
+  draw("labs.com", oblique, blue);
+  page.drawLine({
+    color: blue,
+    end: { x, y: baseline - 2 },
+    start: { x: urlStart, y: baseline - 2 },
+    thickness: 1,
+  });
+  addAnnot(doc, 0, {
+    A: doc.context.obj({
+      S: PDFName.of("URI"),
+      URI: PDFString.of("https://bozomalabs.com"),
+    }),
+    Border: [0, 0, 0],
+    Rect: [urlStart - 2, baseline - 4, x + 2, baseline + 12],
+    Subtype: PDFName.of("Link"),
+    Type: PDFName.of("Annot"),
+  });
+  return new Uint8Array(await doc.save());
+};
+
 export const buildPdfAnnotationFixture = async (): Promise<Uint8Array> => {
   const doc = await PDFDocument.create();
   const page1 = doc.addPage(LETTER);

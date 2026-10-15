@@ -23,6 +23,8 @@ import {
   pdfImageCoverBox,
   pdfImageOriginalBox,
   pdfImageWithGestureBox,
+  pdfLinkEditableLabel,
+  pdfLinkPrimaryCoverRects,
   pdfLinkTextAppearance,
   pdfTextCssInkOffsetFromRunTop,
   pdfTextCoverRects,
@@ -1032,4 +1034,81 @@ test("a longer link label keeps the cover measured from the original run", () =>
       run.x + run.width + PDF_TEXT_COVER_BLEED
     );
   }
+});
+
+const resumeLinkLine = (): EditorPage => {
+  const run = (
+    id: string,
+    caption: string,
+    box: Pick<PdfTextObject, "height" | "width" | "x" | "y">
+  ): PdfTextObject =>
+    linkCaptionRun({ ...box, id, originalText: caption, text: caption });
+  return {
+    ...linkCaptionPage(linkCaptionRun(), []),
+    pdfAnnotationObjects: [
+      {
+        ...linkForCaption(),
+        quads: [{ height: 12.649, width: 126.608, x: 149.369, y: 648.807 }],
+      },
+    ],
+    pdfTextObjects: [
+      run("company", "Bozoma Labs", {
+        height: 12.708,
+        width: 71.464,
+        x: 72,
+        y: 649.167,
+      }),
+      run("pipe", "|", {
+        height: 12.708,
+        width: 2.857,
+        x: 146.514,
+        y: 649.167,
+      }),
+      run("space", " ", { height: 0, width: 4.069, x: 149.371, y: 659.125 }),
+      run("url", "https://bozomalabs.com", {
+        height: 12.708,
+        width: 116.09,
+        x: 152.423,
+        y: 649.167,
+      }),
+    ],
+  };
+};
+
+test("a link label leaves out a separator that grazes the link rect", () => {
+  const page = resumeLinkLine();
+  const [link] = page.pdfAnnotationObjects;
+  if (link?.type !== "pdf-link") {
+    throw new Error("missing link");
+  }
+  const { label, runs } = pdfLinkEditableLabel(page, link);
+  expect(label).toBe("https://bozomalabs.com");
+  expect(runs.map((run) => run.id)).toEqual(["url"]);
+});
+
+test("the primary cover hides the original underline across the link", () => {
+  const page = resumeLinkLine();
+  const [link] = page.pdfAnnotationObjects;
+  const primary = page.pdfTextObjects.find((run) => run.id === "url");
+  if (link?.type !== "pdf-link" || !primary) {
+    throw new Error("missing link line");
+  }
+  const underline = { color: "#0000ff", offsetFromRunTop: 11, thickness: 1 };
+  const covers = pdfLinkPrimaryCoverRects(
+    page,
+    link,
+    [primary],
+    { ...primary, coverRects: [] },
+    underline
+  );
+  expect(covers).toHaveLength(1);
+  const [band] = covers;
+  expect(band?.x).toBeLessThanOrEqual(149.369);
+  expect((band?.x ?? 0) + (band?.width ?? 0)).toBeGreaterThanOrEqual(
+    149.369 + 126.608
+  );
+  expect(band?.y).toBeLessThan(primary.y + 11 - 0.5);
+  expect((band?.y ?? 0) + (band?.height ?? 0)).toBeGreaterThan(
+    primary.y + 11 + 0.5
+  );
 });

@@ -2,16 +2,24 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { AnnotationMode, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { expect, test } from "vitest";
+import type { PDFPageProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { afterEach, expect, test } from "vitest";
 
 import { pdfTextMatrixOrigin } from "@/lib/editor/coordinates";
 import type { TextItemTransform } from "@/lib/editor/coordinates";
 import {
   pdfLinkActionsEqual,
   pdfLinkBoxAfterLabel,
+  pdfLinkEditableLabel,
   pdfLinkOverlappingTextRuns,
+  pdfLinkTextAppearance,
 } from "@/lib/editor/object-utils";
-import type { EditorDocument, PdfLinkAnnotation } from "@/lib/editor/types";
+import { editorStore } from "@/lib/editor/store";
+import type {
+  EditorDocument,
+  EditorPage,
+  PdfLinkAnnotation,
+} from "@/lib/editor/types";
 import { DEFAULT_PDF_TEXT_COLOR } from "@/lib/editor/types";
 import { FONT_FILES } from "@/lib/fonts/measure-text";
 import { exportDocument } from "@/lib/pdf/export-pdf";
@@ -34,6 +42,7 @@ import {
   annotHasUri,
   buildBlueLinkCaptionFixture,
   buildPdfAnnotationFixture,
+  buildSplitLinkCaptionFixture,
   countPageAnnotSubtypes,
 } from "./pdf-annotation-fixture";
 import { loadPdfJsDocument } from "./pdfjs-node";
@@ -284,6 +293,110 @@ test("export keeps blue fill after link label edit", async () => {
   });
 
   expect(await captionFillColor(output, nextLabel)).toBe("#0000ff");
+});
+
+const splitLinkPage = async (): Promise<{
+  bytes: Uint8Array;
+  link: PdfLinkAnnotation;
+  page: EditorPage;
+}> => {
+  const bytes = await buildSplitLinkCaptionFixture();
+  const base = await editorDocumentFromBytes(bytes, {
+    withVectorsAndColors: true,
+  });
+  const [page] = base.pages;
+  const link = page?.pdfAnnotationObjects.find(
+    (object): object is PdfLinkAnnotation => object.type === "pdf-link"
+  );
+  if (!(page && link)) {
+    throw new Error("missing split link fixture");
+  }
+  return { bytes, link, page };
+};
+
+afterEach(() => {
+  editorStore.clearDocument();
+});
+
+test("a link label ignores runs that only touch the link rect", async () => {
+  const { link, page } = await splitLinkPage();
+  const { label, runs } = pdfLinkEditableLabel(page, link);
+  expect(label).toBe("https://bozomalabs.com");
+  expect(runs.map((run) => run.text)).toEqual(["https://bozoma", "labs.com"]);
+});
+
+type OperatorList = Awaited<ReturnType<PDFPageProxy["getOperatorList"]>>;
+
+const FILL_OPS = new Set<number>([OPS.fill, OPS.eoFill]);
+
+interface LabelPaintOrder {
+  labelIndex: number;
+  lastFillIndex: number;
+}
+
+/** Operator index of the `label` text show and of the last fill on the page. */
+const labelPaintOrder = (
+  list: OperatorList,
+  label: string
+): LabelPaintOrder => {
+  let labelIndex = -1;
+  let lastFillIndex = -1;
+  for (const [index, fn] of list.fnArray.entries()) {
+    const args = list.argsArray[index];
+    if (!Array.isArray(args)) {
+      continue;
+    }
+    const isFill =
+      FILL_OPS.has(fn) || (fn === OPS.constructPath && FILL_OPS.has(args[0]));
+    if (isFill) {
+      lastFillIndex = index;
+    }
+    const isShow = fn === OPS.showText || fn === OPS.showSpacedText;
+    if (isShow && Array.isArray(args[0])) {
+      const shown = args[0].map((glyph) => glyph?.unicode ?? "").join("");
+      if (shown === label) {
+        labelIndex = index;
+      }
+    }
+  }
+  return { labelIndex, lastFillIndex };
+};
+
+test("a label edit across split runs paints every cover before the label", async () => {
+  const { bytes, link, page } = await splitLinkPage();
+  const [, second] = pdfLinkOverlappingTextRuns(link, page.pdfTextObjects);
+  editorStore.resetDocument([page], "split.pdf");
+  const nextLabel = "https://bozomalabs.coms";
+  editorStore.commitPdfLinkLabel(nextLabel, null, {
+    linkId: link.id,
+    pageId: page.id,
+  });
+  const [edited] = editorStore.getState().document.pages;
+  if (!edited) {
+    throw new Error("missing edited page");
+  }
+  const emptied = edited.pdfTextObjects.find((run) => run.id === second?.id);
+  expect(emptied?.text).toBe("");
+  expect(emptied && pdfLinkTextAppearance(edited, emptied)).toBeNull();
+
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document: { pages: [edited] },
+    fontBytes: {
+      [FONT_FILES.sans[400]]: await liberationSansBytes(),
+    },
+  });
+  const pdf = await loadPdfJsDocument(output).promise;
+  const exported = await pdf.getPage(1);
+  const { labelIndex, lastFillIndex } = labelPaintOrder(
+    await exported.getOperatorList({
+      annotationMode: AnnotationMode.DISABLE,
+    }),
+    nextLabel
+  );
+  expect(labelIndex).toBeGreaterThan(-1);
+  expect(lastFillIndex).toBeLessThan(labelIndex);
 });
 
 test("export keeps the original caption baseline after a label edit", async () => {
