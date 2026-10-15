@@ -163,6 +163,7 @@ export const EditorOverlay = ({
       onPointerCancel={(event) => {
         ocrDragAnchorRef.current = null;
         gestureRef.current = null;
+        boundsRef.current = null;
         setDraft(null);
         setTransformingId(null);
         event.currentTarget.releasePointerCapture(event.pointerId);
