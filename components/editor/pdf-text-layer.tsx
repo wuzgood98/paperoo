@@ -260,6 +260,32 @@ export const PdfTextLayer = ({
   return (
     <>
       {objects.map((object) => {
+        if (object.id === editingId || !isPdfTextDirty(object)) {
+          return null;
+        }
+        // Covers paint in their own pass, under every run's text and the
+        // inline editor: a run emptied by a link label edit must not hide
+        // the caption drawn by the run before it.
+        const frame = overlayFrame(object);
+        return (
+          <div
+            className="pointer-events-none absolute origin-center"
+            key={`cover-${object.id}`}
+            style={objectWrapperStyle({ ...frame, rotation: 0 }, zoom)}
+          >
+            {pdfTextCoverRects(object, page).map((cover) => (
+              <PdfTextCoverPlate
+                cover={cover}
+                coverColor={pdfTextCoverColor(object)}
+                key={`${cover.x}:${cover.y}:${cover.width}:${cover.height}`}
+                runBox={frame}
+                zoom={zoom}
+              />
+            ))}
+          </div>
+        );
+      })}
+      {objects.map((object) => {
         if (object.id === editingId) {
           return (
             <PdfTextEditor
@@ -272,7 +298,7 @@ export const PdfTextLayer = ({
             />
           );
         }
-        if (!isPdfTextDirty(object)) {
+        if (!isPdfTextDirty(object) || object.text === "") {
           return null;
         }
         const linkAppearance = pdfLinkTextAppearance(page, object);
@@ -280,7 +306,6 @@ export const PdfTextLayer = ({
         const underline = linkAppearance?.underline;
         const frame = overlayFrame(object);
         const fontSizeCss = pageToCss(object.fontSize ?? object.height, zoom);
-        const covers = pdfTextCoverRects(object, page);
         const inkTop = pdfTextCssInkOffsetFromRunTop(
           object,
           frame,
@@ -294,15 +319,6 @@ export const PdfTextLayer = ({
             key={`dirty-${object.id}`}
             style={objectWrapperStyle({ ...frame, rotation: 0 }, zoom)}
           >
-            {covers.map((cover) => (
-              <PdfTextCoverPlate
-                cover={cover}
-                coverColor={pdfTextCoverColor(object)}
-                key={`${cover.x}:${cover.y}:${cover.width}:${cover.height}`}
-                runBox={frame}
-                zoom={zoom}
-              />
-            ))}
             <div
               className="absolute left-0 whitespace-nowrap"
               style={{

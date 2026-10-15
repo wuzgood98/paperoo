@@ -254,11 +254,72 @@ export const pdfLinkActionsEqual = (
   }
 };
 
+/** Share of a run's width and height a link quad must cover to own the run. */
+const PDF_LINK_RUN_COVERAGE = 0.5;
+
+const spanOverlap = (
+  start: number,
+  length: number,
+  otherStart: number,
+  otherLength: number
+): number =>
+  Math.max(
+    0,
+    Math.min(start + length, otherStart + otherLength) -
+      Math.max(start, otherStart)
+  );
+
+const coversEnoughOf = (overlap: number, size: number): boolean =>
+  overlap / size >= PDF_LINK_RUN_COVERAGE;
+
+/**
+ * True when `quad` covers most of `run`. A run that only grazes the link rect,
+ * such as a "|" separator ending a hair inside the rect, is not part of the
+ * link label.
+ */
+const linkQuadOwnsRun = (run: Rect, quad: Rect): boolean => {
+  if (!rectsOverlap(run, quad)) {
+    return false;
+  }
+  if (run.width <= 0 || run.height <= 0) {
+    return true;
+  }
+  return (
+    coversEnoughOf(
+      spanOverlap(run.x, run.width, quad.x, quad.width),
+      run.width
+    ) &&
+    coversEnoughOf(
+      spanOverlap(run.y, run.height, quad.y, quad.height),
+      run.height
+    )
+  );
+};
+
+/**
+ * Reading order: runs sharing a line by x, lines by y. PDF.js inserts
+ * zero-height space runs at the baseline, so a run with no height shares a
+ * line with any run whose box contains its y.
+ */
+const compareRunsInReadingOrder = (
+  left: PdfTextObject,
+  right: PdfTextObject
+): number => {
+  const overlap =
+    Math.min(left.y + left.height, right.y + right.height) -
+    Math.max(left.y, right.y);
+  const minHeight = Math.min(left.height, right.height);
+  const sameLine = minHeight > 0 ? overlap > minHeight / 2 : overlap >= 0;
+  return sameLine ? left.x - right.x : left.y - right.y;
+};
+
+const isBlankRun = (run: PdfTextObject): boolean => run.text.trim() === "";
+
 export const pdfLinkOverlappingTextRuns = (
   link: PdfLinkAnnotation,
   textRuns: readonly PdfTextObject[]
-): PdfTextObject[] =>
-  textRuns
+): PdfTextObject[] => {
+  const runs = textRuns
     .filter((run) => {
       const runBox: Rect = {
         height: run.height,
@@ -266,9 +327,17 @@ export const pdfLinkOverlappingTextRuns = (
         x: run.x,
         y: run.y,
       };
-      return link.quads.some((quad) => rectsOverlap(runBox, quad));
+      return link.quads.some((quad) => linkQuadOwnsRun(runBox, quad));
     })
-    .toSorted((left, right) => left.y - right.y || left.x - right.x);
+    .toSorted(compareRunsInReadingOrder);
+  // Spaces at either end are padding from the link rect, not label text.
+  const first = runs.findIndex((run) => !isBlankRun(run));
+  if (first === -1) {
+    return [];
+  }
+  const last = runs.findLastIndex((run) => !isBlankRun(run));
+  return runs.slice(first, last + 1);
+};
 
 export interface PdfLinkEditableLabel {
   editable: boolean;
@@ -920,7 +989,9 @@ export const pdfLinkForDirtyCaptionRun = (
   page: EditorPage,
   run: PdfTextObject
 ): PdfLinkAnnotation | undefined => {
-  if (!isPdfTextDirty(run)) {
+  // An emptied run only hides its old glyphs; the primary run draws the
+  // caption and its underline.
+  if (!isPdfTextDirty(run) || run.text === "") {
     return undefined;
   }
   for (const object of page.pdfAnnotationObjects) {
@@ -1256,6 +1327,46 @@ export const measurePdfTextCoverRects = (
  * Cover rects for a dirty run. Prefers the rects measured on the main thread
  * when editing began; the export worker has no canvas to measure glyph ink.
  */
+const rectsEqual = (left: Rect, right: Rect): boolean =>
+  left.x === right.x &&
+  left.y === right.y &&
+  left.width === right.width &&
+  left.height === right.height;
+
+/**
+ * Covers for the primary run of an edited link label: its own glyph covers
+ * plus a band over the original underline across the whole link, which the
+ * glyph covers (measured before the edit) leave visible.
+ */
+export const pdfLinkPrimaryCoverRects = (
+  page: EditorPage,
+  link: PdfLinkAnnotation,
+  runs: readonly PdfTextObject[],
+  primary: PdfTextObject,
+  underline: PdfTextCaptionUnderline | null | undefined
+): Rect[] => {
+  const covers =
+    primary.coverRects ??
+    measurePdfTextCoverRects(primary, page, page.pdfTextObjects);
+  if (!underline || !isUprightRun(primary.rotation)) {
+    return covers;
+  }
+  const spans = [...link.quads, ...runs];
+  const left = Math.min(...spans.map((span) => span.x));
+  const right = Math.max(...spans.map((span) => span.x + span.width));
+  const half = underline.thickness / 2 + PDF_TEXT_COVER_BLEED;
+  const center = primary.y + underline.offsetFromRunTop;
+  const band: Rect = {
+    height: half * 2,
+    width: right - left + PDF_TEXT_COVER_BLEED * 2,
+    x: left - PDF_TEXT_COVER_BLEED,
+    y: center - half,
+  };
+  return covers.some((cover) => rectsEqual(cover, band))
+    ? covers
+    : [...covers, band];
+};
+
 export const pdfTextCoverRects = (
   object: PdfTextObject,
   page: EditorPage

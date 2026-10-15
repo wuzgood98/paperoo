@@ -335,6 +335,34 @@ type DirtyTextFont =
   | { kind: "bundled"; font: PDFFont }
   | { kind: "reused"; reused: ReusedPdfFontText };
 
+/**
+ * Hide a dirty run's original glyphs. The cover leaves the original operators
+ * in the page stream. A sampled page color hides that on flat tints; white
+ * remains the fallback. The rects follow original glyph ink and stop at
+ * neighbouring runs.
+ */
+const drawDirtyPdfTextCovers = (
+  page: PDFPage,
+  object: PdfTextObject,
+  editorPage: EditorPage
+): void => {
+  const coverColor = color(pdfTextCoverColor(object));
+  for (const cover of pdfTextCoverRects(object, editorPage)) {
+    const coverUser = displayedToUserSpace(
+      cover,
+      editorPage.cropBox,
+      editorPage.sourceRotate
+    );
+    page.drawRectangle({
+      color: coverColor,
+      height: coverUser.height,
+      width: coverUser.width,
+      x: coverUser.x,
+      y: coverUser.y,
+    });
+  }
+};
+
 const drawDirtyPdfText = async (
   page: PDFPage,
   object: PdfTextObject,
@@ -377,25 +405,6 @@ const drawDirtyPdfText = async (
   );
   const linkAppearance = pdfLinkTextAppearance(editorPage, object);
   const fillHex = linkAppearance?.fillColor ?? object.color;
-  const covers = pdfTextCoverRects(object, editorPage);
-  // The cover leaves the original operators in the page stream. A sampled
-  // page color hides that on flat tints; white remains the fallback. The
-  // rects follow original glyph ink and stop at neighbouring runs.
-  const coverColor = color(pdfTextCoverColor(object));
-  for (const cover of covers) {
-    const coverUser = displayedToUserSpace(
-      cover,
-      editorPage.cropBox,
-      editorPage.sourceRotate
-    );
-    page.drawRectangle({
-      color: coverColor,
-      height: coverUser.height,
-      width: coverUser.width,
-      x: coverUser.x,
-      y: coverUser.y,
-    });
-  }
 
   const baseline = pdfTextBaselineUserSpace(
     object.transform,
@@ -1037,8 +1046,14 @@ export const exportDocument = async (
       }
       drawInvisibleOcrWords(page, ocrWords, editorPage, ocrFont);
     }
-    for (const object of editorPage.pdfTextObjects) {
-      if (!isPdfTextDirty(object)) {
+    const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
+    // Every cover goes down before any text: a run emptied by a link label
+    // edit must not hide the caption drawn by the run before it.
+    for (const object of dirtyText) {
+      drawDirtyPdfTextCovers(page, object, editorPage);
+    }
+    for (const object of dirtyText) {
+      if (object.text === "") {
         continue;
       }
       // oxlint-disable-next-line eslint/no-await-in-loop -- font cache is filled in order

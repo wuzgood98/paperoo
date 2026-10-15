@@ -32,6 +32,7 @@ import {
   measurePdfTextWidth,
   pdfLinkBoxAfterLabel,
   pdfLinkEditableLabel,
+  pdfLinkPrimaryCoverRects,
   removeObjects,
   updateObject,
 } from "@/lib/editor/object-utils";
@@ -513,6 +514,13 @@ export const editorStore = {
       return;
     }
     const box = pdfLinkBoxAfterLabel(link, primary, label);
+    const coverRects = pdfLinkPrimaryCoverRects(
+      page,
+      link,
+      runs,
+      primary,
+      sampledCaption?.underline
+    );
     const runIds = new Set(runs.map((run) => run.id));
     commit(() => {
       internal.state = {
@@ -538,6 +546,7 @@ export const editorStore = {
                     ...fitted,
                     captionFill: sampledCaption?.fill,
                     captionUnderline: sampledCaption?.underline,
+                    coverRects,
                     text: label,
                   };
                 }
