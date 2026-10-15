@@ -1028,6 +1028,13 @@ export const pdfLinkTextAppearance = (
   }
   const runBox = pdfTextOverlayBox(run, measurePdfTextWidth(run));
   const found = findCaptionUnderlineDecoration(page, runBox);
+  if (run.captionFill) {
+    // Pixels showed the caption color but no rule under it.
+    return {
+      fillColor: run.captionFill,
+      underline: found ?? defaultCaptionUnderline(runBox, run.captionFill),
+    };
+  }
   let fillColor = run.color;
   if (run.color === DEFAULT_PDF_TEXT_COLOR && found?.color) {
     fillColor = found.color;

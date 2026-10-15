@@ -4,15 +4,16 @@ import type { ImagePixelSource } from "@/lib/pdf/canvas-pixels";
 
 const NEAR_WHITE = 240;
 const COLOR_BUCKET = 16;
+/**
+ * Share of the row width an underline row must ink. A rule spans the whole
+ * run; glyph bottoms and descenders leave gaps between letters.
+ */
+const UNDERLINE_ROW_COVERAGE = 0.6;
+
 export interface SampledCaptionInk {
   fill: string;
-  underline: PdfTextCaptionUnderline;
-}
-
-interface UnderlineStreak {
-  color: string;
-  rowCount: number;
-  startRow: number;
+  /** Null when no rule was found below the baseline. */
+  underline: PdfTextCaptionUnderline | null;
 }
 
 const bucketChannel = (value: number): number =>
@@ -23,6 +24,10 @@ const bucketKey = (r: number, g: number, b: number): string =>
 
 const isPaper = (r: number, g: number, b: number): boolean =>
   r >= NEAR_WHITE && g >= NEAR_WHITE && b >= NEAR_WHITE;
+
+/** Ink coverage of a pixel on white paper: 0 for paper, 1 for a solid color. */
+const inkOf = (r: number, g: number, b: number): number =>
+  (255 - Math.min(r, g, b)) / 255;
 
 const dominantColorInBand = (
   source: ImagePixelSource,
@@ -67,97 +72,121 @@ const dominantColorInBand = (
   return rgbToHex(rgb[0], rgb[1], rgb[2]);
 };
 
-const nextUnderlineStreak = (
-  streak: UnderlineStreak | null,
-  color: string,
-  y: number
-): UnderlineStreak | null => {
-  if (streak !== null && streak.color === color && streak.startRow === y + 1) {
-    return { color, rowCount: streak.rowCount + 1, startRow: y };
+interface RowInk {
+  /** Mean ink across the row, 0..1. */
+  ink: number;
+  /** Share of the row's pixels that are not paper, 0..1. */
+  coverage: number;
+}
+
+const rowInk = (
+  source: ImagePixelSource,
+  originX: number,
+  y: number,
+  bandWidth: number
+): RowInk => {
+  let ink = 0;
+  let inked = 0;
+  for (let x = 0; x < bandWidth; x += 1) {
+    const rgb = readPixel(source, originX + x, y);
+    if (!rgb) {
+      continue;
+    }
+    const [r, g, b] = rgb;
+    if (isPaper(r, g, b)) {
+      continue;
+    }
+    ink += inkOf(r, g, b);
+    inked += 1;
   }
-  if (streak === null || streak.rowCount <= 1) {
-    return { color, rowCount: 1, startRow: y };
-  }
-  return streak;
+  return { coverage: inked / bandWidth, ink: ink / bandWidth };
 };
 
-const findUnderlineInBand = (
+/** Darkest non-paper color in one row; the rule's solid core. */
+const darkestColorInRow = (
+  source: ImagePixelSource,
+  originX: number,
+  y: number,
+  bandWidth: number
+): string | null => {
+  let darkest: [number, number, number] | null = null;
+  let darkestInk = 0;
+  for (let x = 0; x < bandWidth; x += 1) {
+    const rgb = readPixel(source, originX + x, y);
+    if (!rgb) {
+      continue;
+    }
+    const ink = inkOf(rgb[0], rgb[1], rgb[2]);
+    if (ink > darkestInk) {
+      darkest = rgb;
+      darkestInk = ink;
+    }
+  }
+  return darkest ? rgbToHex(darkest[0], darkest[1], darkest[2]) : null;
+};
+
+/**
+ * The first run of full-width ink rows at or below `yStart`, in pixels from
+ * the band top. Center and thickness come from the ink-weighted rows, so
+ * anti-aliased edges land between pixel rows instead of snapping to one.
+ */
+const findUnderlineBelow = (
   source: ImagePixelSource,
   originX: number,
   originY: number,
   bandWidth: number,
-  localHeight: number,
   yStart: number,
-  yEnd: number,
-  preferredColor: string | null
+  yEnd: number
 ): PdfTextCaptionUnderline | null => {
-  const preferredBucket = preferredColor
-    ? bucketKey(
-        Number.parseInt(preferredColor.slice(1, 3), 16),
-        Number.parseInt(preferredColor.slice(3, 5), 16),
-        Number.parseInt(preferredColor.slice(5, 7), 16)
-      )
-    : null;
-
-  let best: UnderlineStreak | null = null;
-
-  for (let y = yEnd - 1; y >= yStart; y -= 1) {
-    const rowCounts = new Map<string, number>();
-    const rowSamples = new Map<string, [number, number, number]>();
-    for (let x = 0; x < bandWidth; x += 1) {
-      const rgb = readPixel(source, originX + x, originY + y);
-      if (!rgb) {
-        continue;
+  let weighted = 0;
+  let total = 0;
+  let peakInk = 0;
+  let peakRow = -1;
+  for (let y = yStart; y < yEnd; y += 1) {
+    const row = rowInk(source, originX, originY + y, bandWidth);
+    if (row.coverage < UNDERLINE_ROW_COVERAGE) {
+      if (total > 0) {
+        break;
       }
-      const [r, g, b] = rgb;
-      if (isPaper(r, g, b)) {
-        continue;
-      }
-      const key = bucketKey(r, g, b);
-      rowCounts.set(key, (rowCounts.get(key) ?? 0) + 1);
-      rowSamples.set(key, rgb);
-    }
-    let rowBestKey: string | null = null;
-    let rowBestCount = 0;
-    for (const [key, count] of rowCounts) {
-      if (count > rowBestCount) {
-        rowBestKey = key;
-        rowBestCount = count;
-      }
-    }
-    if (!rowBestKey || rowBestCount < bandWidth * 0.35) {
       continue;
     }
-    if (preferredBucket && rowBestKey !== preferredBucket) {
-      continue;
+    weighted += (y + 0.5) * row.ink;
+    total += row.ink;
+    if (row.ink > peakInk) {
+      peakInk = row.ink;
+      peakRow = y;
     }
-    const rgb = rowSamples.get(rowBestKey);
-    if (!rgb) {
-      continue;
-    }
-    const color = rgbToHex(rgb[0], rgb[1], rgb[2]);
-    best = nextUnderlineStreak(best, color, y);
   }
-
-  if (!best) {
+  if (total <= 0 || peakRow < 0) {
     return null;
   }
-  const thickness = Math.max(1, best.rowCount);
-  const centerRow = best.startRow + (thickness - 1) / 2;
+  const color = darkestColorInRow(
+    source,
+    originX,
+    originY + peakRow,
+    bandWidth
+  );
+  if (!color) {
+    return null;
+  }
   return {
-    color: best.color,
-    offsetFromRunTop: (centerRow + 0.5) / Math.max(1, localHeight),
-    thickness: thickness / Math.max(1, localHeight),
+    color,
+    offsetFromRunTop: weighted / total,
+    thickness: total / peakInk,
   };
 };
 
 /**
- * Sample caption fill and underline from RGBA pixels. `rect` selects a sub-region
- * of `source` in pixel coordinates.
+ * Sample caption fill and underline from RGBA pixels. `rect` selects a
+ * sub-region of `source` in pixel coordinates; `baselineRow` is the text
+ * baseline in pixels from the top of `rect`. Fill is read above the
+ * baseline and the underline only below it, so glyph bottoms are never
+ * mistaken for the rule. Results are in pixels from the top of `rect`.
  */
 export const sampleCaptionInk = (
   source: ImagePixelSource,
-  rect: Rect
+  rect: Rect,
+  baselineRow: number
 ): SampledCaptionInk | null => {
   const x0 = Math.max(0, Math.floor(rect.x));
   const y0 = Math.max(0, Math.floor(rect.y));
@@ -168,63 +197,20 @@ export const sampleCaptionInk = (
   if (bandWidth <= 0 || localHeight <= 0) {
     return null;
   }
-
-  const textBandEnd = Math.max(1, Math.floor(localHeight * 0.72));
-  const underlineBandStart = Math.floor(localHeight * 0.65);
-  const fill = dominantColorInBand(source, x0, y0, bandWidth, 0, textBandEnd);
+  const baseline = Math.min(localHeight, Math.max(1, Math.round(baselineRow)));
+  const fill = dominantColorInBand(source, x0, y0, bandWidth, 0, baseline);
   if (!fill) {
     return null;
   }
-  const underline = findUnderlineInBand(
-    source,
-    x0,
-    y0,
-    bandWidth,
-    localHeight,
-    underlineBandStart,
-    localHeight,
-    fill
-  ) ??
-    findUnderlineInBand(
+  return {
+    fill,
+    underline: findUnderlineBelow(
       source,
       x0,
       y0,
       bandWidth,
-      localHeight,
-      underlineBandStart,
-      localHeight,
-      null
-    ) ?? {
-      color: fill,
-      offsetFromRunTop: 0.92,
-      thickness: Math.max(1 / localHeight, 0.08),
-    };
-
-  return {
-    fill,
-    underline: {
-      color: underline.color,
-      offsetFromRunTop: underline.offsetFromRunTop * localHeight,
-      thickness: Math.max(0.5, underline.thickness * localHeight),
-    },
-  };
-};
-
-export const scaleCaptionInkToDisplayedBox = (
-  ink: SampledCaptionInk,
-  pixelHeight: number,
-  displayedHeight: number
-): SampledCaptionInk => {
-  if (pixelHeight <= 0 || displayedHeight <= 0) {
-    return ink;
-  }
-  const scale = displayedHeight / pixelHeight;
-  return {
-    fill: ink.fill,
-    underline: {
-      color: ink.underline.color,
-      offsetFromRunTop: ink.underline.offsetFromRunTop * scale,
-      thickness: Math.max(0.5, ink.underline.thickness * scale),
-    },
+      baseline,
+      localHeight
+    ),
   };
 };

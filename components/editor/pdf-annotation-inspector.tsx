@@ -128,7 +128,7 @@ const LinkInspector = ({
       let sampled: SampledCaptionInk | null = null;
       try {
         const [caption] = await Promise.all([
-          sampleLinkCaptionFromPage(page, primary, zoom),
+          sampleLinkCaptionFromPage(page, primary),
           ...runs.map((run) => ensurePdfTextMeasured(page, run, zoom)),
         ]);
         sampled = caption;

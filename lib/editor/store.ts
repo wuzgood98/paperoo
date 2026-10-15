@@ -545,7 +545,7 @@ export const editorStore = {
                     ...object,
                     ...fitted,
                     captionFill: sampledCaption?.fill,
-                    captionUnderline: sampledCaption?.underline,
+                    captionUnderline: sampledCaption?.underline ?? undefined,
                     coverRects,
                     text: label,
                   };

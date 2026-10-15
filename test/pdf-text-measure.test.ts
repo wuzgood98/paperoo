@@ -141,6 +141,24 @@ test("a measurement lands on its run after the selection moves", async () => {
   expect(runById("pdf-2")?.coverRects).toBeUndefined();
 });
 
+test("the font probe reads the run's page, not its text item index", async () => {
+  probe.mockResolvedValue("abc");
+  const editorPage: EditorPage = {
+    ...page(),
+    pdfTextObjects: [{ ...run("pdf-1", "Hello"), sourceIndex: 42 }],
+    sourceIndex: 1,
+  };
+  editorStore.resetDocument([editorPage], "demo.pdf");
+  const [target] = editorPage.pdfTextObjects;
+  if (!target) {
+    throw new Error("fixture has no first run");
+  }
+
+  await ensurePdfTextMeasured(editorPage, target, 1, env);
+
+  expect(probe).toHaveBeenCalledWith(1, "ABCDEF+TestSans");
+});
+
 test("a failed font probe still stores the cover and no reuse", async () => {
   probe.mockRejectedValue(new Error("pdf-lib could not parse the file"));
   const editorPage = page();

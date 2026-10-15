@@ -143,11 +143,13 @@ const sampleCoverSafely = async (
 };
 
 const probeFontSafely = async (
+  page: EditorPage,
   object: PdfTextObject,
   env: PdfTextMeasureEnv
 ): Promise<string> => {
   try {
-    return await env.probeFontGlyphs(object.sourceIndex, object.baseFontName);
+    // The run's own sourceIndex is its text item; the font lives on the page.
+    return await env.probeFontGlyphs(page.sourceIndex, object.baseFontName);
   } catch {
     return "";
   }
@@ -172,7 +174,7 @@ export const measurePdfTextForEdit = async (
     object.coverColor
       ? null
       : sampleCoverSafely(page, object, zoom, coverRects, env),
-    object.reusableFontGlyphs ?? probeFontSafely(object, env),
+    object.reusableFontGlyphs ?? probeFontSafely(page, object, env),
   ]);
   const measurement: PdfTextMeasurement = { coverRects, reusableFontGlyphs };
   if (sample) {
