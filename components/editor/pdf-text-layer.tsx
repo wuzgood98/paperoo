@@ -132,7 +132,7 @@ const PdfTextEditor = ({
     if (!input) {
       return;
     }
-    input.focus();
+    input.focus({ preventScroll: true });
     const { length } = input.value;
     input.setSelectionRange(length, length);
   }, []);

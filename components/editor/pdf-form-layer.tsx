@@ -96,7 +96,7 @@ const FormTextControl = ({
     if (!input) {
       return;
     }
-    input.focus();
+    input.focus({ preventScroll: true });
     const { length } = input.value;
     input.setSelectionRange(length, length);
   }, [field.multiline]);

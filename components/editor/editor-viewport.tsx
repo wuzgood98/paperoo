@@ -27,7 +27,9 @@ export const EditorViewport = () => {
   const currentPageId = useEditorStore((state) => state.currentPageId);
   const zoom = useEditorStore((state) => state.zoom);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const fromScrollSpyRef = useRef(false);
+  const inspectorRef = useRef<HTMLDivElement>(null);
+  const skipRevealRef = useRef(false);
+  const revealedRef = useRef<{ id: string; index: number } | null>(null);
   const ignoreScrollSpyUntil = useRef(0);
   const [previewZoom, setPreviewZoom] = useState<number | null>(null);
   const [trackedZoom, setTrackedZoom] = useState(zoom);
@@ -111,8 +113,12 @@ export const EditorViewport = () => {
       ) {
         return;
       }
+      // Count the inspector strip as viewport so selecting an object does not
+      // read as a resize and refit zoom to a differently sized current page.
+      const stripHeight =
+        inspectorRef.current?.getBoundingClientRect().height ?? 0;
       editorStore.setViewportSize({
-        height: entry.contentRect.height,
+        height: Math.round(entry.contentRect.height + stripHeight),
         width: entry.contentRect.width,
       });
     });
@@ -149,7 +155,7 @@ export const EditorViewport = () => {
       if (!activeId || activeId === editorStore.getState().currentPageId) {
         return;
       }
-      fromScrollSpyRef.current = true;
+      skipRevealRef.current = true;
       editorStore.setCurrentPage(activeId, { syncFitZoom: false });
     };
 
@@ -169,16 +175,54 @@ export const EditorViewport = () => {
     };
   }, [displayZoom, pages]);
 
+  // The inspector strip sits above the scroller, so mounting or resizing it
+  // moves every page on screen. Shift scrollTop by the same amount to keep
+  // the content still. Resize observers run before paint, so nothing jumps.
+  const hasPages = pages.length > 0;
+  useEffect(() => {
+    const strip = inspectorRef.current;
+    const scroller = scrollerRef.current;
+    if (!(hasPages && strip && scroller)) {
+      return;
+    }
+    let previousHeight: number | null = null;
+    const observer = new ResizeObserver(() => {
+      const { height } = strip.getBoundingClientRect();
+      if (previousHeight !== null && height !== previousHeight) {
+        ignoreScrollSpyUntil.current =
+          performance.now() + SCROLL_SPY_SUPPRESS_MS;
+        scroller.scrollTop += height - previousHeight;
+      }
+      previousHeight = height;
+    });
+    observer.observe(strip);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasPages]);
+
+  const activatePage = (pageId: string): void => {
+    skipRevealRef.current = true;
+    editorStore.setCurrentPage(pageId, { syncFitZoom: false });
+  };
+
   useEffect(() => {
     if (!currentPageId) {
       return;
     }
-    if (fromScrollSpyRef.current) {
-      fromScrollSpyRef.current = false;
-      return;
-    }
     const index = pages.findIndex((page) => page.id === currentPageId);
     if (index === -1) {
+      return;
+    }
+    // `pages` changes on every document edit (including text measurement
+    // when an edit opens). Reveal only when the current page or its slot moves.
+    const revealed = revealedRef.current;
+    if (revealed?.id === currentPageId && revealed.index === index) {
+      return;
+    }
+    revealedRef.current = { id: currentPageId, index };
+    if (skipRevealRef.current) {
+      skipRevealRef.current = false;
       return;
     }
     ignoreScrollSpyUntil.current = performance.now() + SCROLL_SPY_SUPPRESS_MS;
@@ -191,7 +235,9 @@ export const EditorViewport = () => {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <InspectorBar />
+      <div ref={inspectorRef}>
+        <InspectorBar />
+      </div>
       <div
         className="min-h-0 flex-1 overflow-auto overscroll-contain"
         onDragOver={(event) => {
@@ -228,6 +274,7 @@ export const EditorViewport = () => {
               >
                 <EditorPageFrame
                   displayZoom={displayZoom}
+                  onActivate={activatePage}
                   page={page}
                   zoom={zoom}
                 />
