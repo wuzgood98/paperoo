@@ -13,10 +13,13 @@ import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
 
 export const EditorPageFrame = ({
   displayZoom,
+  onActivate,
   page,
   zoom,
 }: {
   displayZoom: number;
+  // Make this page current without scrolling it; it is already under the pointer.
+  onActivate: (pageId: string) => void;
   page: EditorPage;
   zoom: number;
 }) => {
@@ -80,7 +83,7 @@ export const EditorPageFrame = ({
         if (page.id === editorStore.getState().currentPageId) {
           return;
         }
-        editorStore.setCurrentPage(page.id, { syncFitZoom: false });
+        onActivate(page.id);
       }}
       ref={rootRef}
       style={{
