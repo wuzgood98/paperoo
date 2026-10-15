@@ -8,17 +8,55 @@ export interface HotkeyDefinition {
   shift?: boolean;
 }
 
-const isInputElement = (target: EventTarget | null): boolean => {
+// Input types with no text editing (and so no native undo). Anything else,
+// including unknown types the browser treats as text, counts as text entry.
+const CONTROL_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+type TargetKind = "control" | "none" | "text";
+
+// "text" swallows every hotkey; "control" (range, color, checkbox, select…)
+// only swallows unmodified keys, since those controls have no native ⌘Z/⌘Y.
+const getTargetKind = (target: EventTarget | null): TargetKind => {
   if (!(target instanceof HTMLElement)) {
+    return "none";
+  }
+
+  if (target.isContentEditable || target.tagName === "TEXTAREA") {
+    return "text";
+  }
+
+  if (target.tagName === "SELECT") {
+    return "control";
+  }
+
+  if (target.tagName === "INPUT") {
+    const type = (target.getAttribute("type") ?? "").toLowerCase();
+    return CONTROL_INPUT_TYPES.has(type) ? "control" : "text";
+  }
+
+  return "none";
+};
+
+const isBlockedByTarget = (
+  target: EventTarget | null,
+  hotkey: HotkeyDefinition
+): boolean => {
+  if (hotkey.allowInInput) {
     return false;
   }
 
-  if (target.isContentEditable) {
-    return true;
-  }
-
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  const kind = getTargetKind(target);
+  return kind === "text" || (kind === "control" && !hotkey.meta);
 };
 
 const isMetaPressed = (event: KeyboardEvent): boolean =>
@@ -57,7 +95,7 @@ export const bindHotkeys = (
         continue;
       }
 
-      if (isInputElement(event.target) && !hotkey.allowInInput) {
+      if (isBlockedByTarget(event.target, hotkey)) {
         return;
       }
 
