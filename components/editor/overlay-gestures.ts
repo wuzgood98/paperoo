@@ -122,8 +122,11 @@ export const useOverlayGestures = ({
   zoom: number;
 }) => {
   const toPage = (event: { clientX: number; clientY: number }): Point => {
+    // The pointerdown snapshot only holds for an in-flight gesture; hover and
+    // clicks after a scroll or zoom need the page's current position.
+    const cached = gestureRef.current ? boundsRef.current : null;
     const bounds =
-      boundsRef.current ?? snapshotBounds(requireOverlayRoot(rootRef.current));
+      cached ?? snapshotBounds(requireOverlayRoot(rootRef.current));
     return screenToPage({ x: event.clientX, y: event.clientY }, bounds, zoom);
   };
 
@@ -161,6 +164,7 @@ export const useOverlayGestures = ({
   const finishGesture = (object: GestureTarget | null): void => {
     const gesture = gestureRef.current;
     gestureRef.current = null;
+    boundsRef.current = null;
     setTransformingId(null);
     if (!object || !gesture) {
       return;
@@ -349,6 +353,7 @@ export const useOverlayGestures = ({
         editorStore.addObject(createShapeObject(rect, shapeStyle.shape));
       }
       gestureRef.current = null;
+      boundsRef.current = null;
     }
   };
 
