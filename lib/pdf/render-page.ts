@@ -139,5 +139,33 @@ export const renderPdfPage = async (
   }
 };
 
+/**
+ * Render one displayed-space rect of a page at `scale` pixels per point, at
+ * device ratio 1, into a canvas sized to that rect. Pixel row 0 is exactly
+ * `rect.y`, so sampled offsets need no rounding correction.
+ */
+export const renderPdfPageRegion = async (
+  page: PDFPageProxy,
+  rect: { height: number; width: number; x: number; y: number },
+  scale: number,
+  rotation?: number
+): Promise<HTMLCanvasElement> => {
+  const viewport = page.getViewport({
+    offsetX: -rect.x * scale,
+    offsetY: -rect.y * scale,
+    rotation,
+    scale,
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(rect.width * scale));
+  canvas.height = Math.max(1, Math.ceil(rect.height * scale));
+  await page.render({
+    annotationMode: AnnotationMode.DISABLE,
+    canvas,
+    viewport,
+  }).promise;
+  return canvas;
+};
+
 export const thumbnailScale = (pageWidth: number): number =>
   THUMBNAIL_WIDTH / Math.max(pageWidth, 1);
