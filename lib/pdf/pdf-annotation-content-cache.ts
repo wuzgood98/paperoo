@@ -1,3 +1,5 @@
+import { displayedCanvasRotation } from "@/lib/editor/coordinates";
+import type { EditorPage } from "@/lib/editor/types";
 import { AnnotationMode } from "@/lib/pdf/pdfjs";
 import { renderPdfPage } from "@/lib/pdf/render-page";
 import { pdfSession } from "@/lib/pdf/session";
@@ -36,6 +38,13 @@ export const getPageContentCanvas = async (
     pdfSession.releasePageRef(sourceIndex);
   }
 };
+
+/** Page content canvas in displayed space, so displayed rects map by scale only. */
+export const getDisplayedPageContentCanvas = (
+  page: Pick<EditorPage, "sourceIndex" | "sourceRotate">,
+  scale: number
+): Promise<HTMLCanvasElement | null> =>
+  getPageContentCanvas(page.sourceIndex, scale, displayedCanvasRotation(page));
 
 export const invalidatePageContentCanvas = (
   sourceIndex: number,

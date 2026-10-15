@@ -40,6 +40,8 @@ import { loadPdfJsDocument } from "./pdfjs-node";
 const FAKE_OPS = {
   nextLineSetSpacingShowText: 47,
   nextLineShowText: 46,
+  paintFormXObjectBegin: 74,
+  paintFormXObjectEnd: 75,
   restore: 11,
   save: 10,
   setFillCMYKColor: 61,
@@ -671,4 +673,45 @@ test("extractPdfTextObjects uses item paint records when provided", () => {
   expect(objects[0]?.strokeColor).toBe("#ff0000");
   expect(objects[0]?.strokeWidth).toBe(2);
   expect(objects[0]?.originalStrokeColor).toBe("#ff0000");
+});
+
+test("form XObject color does not leak onto later text", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [["#112233"], [], ["Pattern"], [], [[]]],
+      fnArray: [
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.paintFormXObjectBegin,
+        FAKE_OPS.setFillColorN,
+        FAKE_OPS.paintFormXObjectEnd,
+        FAKE_OPS.showText,
+      ],
+    },
+    FAKE_OPS
+  );
+  expect(paints).toEqual([
+    {
+      color: "#112233",
+      strokeColor: null,
+      strokeWidth: 1,
+      textRenderingMode: 0,
+    },
+  ]);
+});
+
+test("text inside a form XObject keeps the form fill", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [["#000000"], [], ["#1a1a1a"], [[]], []],
+      fnArray: [
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.paintFormXObjectBegin,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+        FAKE_OPS.paintFormXObjectEnd,
+      ],
+    },
+    FAKE_OPS
+  );
+  expect(paints[0]?.color).toBe("#1a1a1a");
 });

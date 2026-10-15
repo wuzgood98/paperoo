@@ -2,6 +2,10 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { expect, test } from "vitest";
 
 import {
+  embeddedFontCanDraw,
+  embeddedFontHasShown,
+} from "@/lib/pdf/embedded-font";
+import {
   collectPdfFontFaces,
   extractPdfTextObjects,
   resolvePdfFont,
@@ -163,4 +167,64 @@ test("extracts fontWeight 700 from HelveticaBold via commonObjs", async () => {
   expect(boldObject?.fontWeight).toBe(700);
 
   await task.destroy();
+});
+
+test("extractPdfTextObjects keeps embedded glyph coverage and refuses Type3", () => {
+  const objects = extractPdfTextObjects(
+    {
+      items: [
+        {
+          fontName: "g_d0_f1",
+          height: 48,
+          str: "Prompt",
+          transform: [48, 0, 0, 48, 72, 700],
+          width: 180,
+        },
+        {
+          fontName: "g_d0_f1",
+          height: 48,
+          str: "Engineering",
+          transform: [48, 0, 0, 48, 72, 640],
+          width: 280,
+        },
+        {
+          fontName: "g_d0_f2",
+          height: 12,
+          str: "Hi",
+          transform: [12, 0, 0, 12, 72, 600],
+          width: 20,
+        },
+      ],
+      styles: {
+        g_d0_f1: { ascent: 0.8, descent: -0.2, fontFamily: "sans-serif" },
+      },
+    },
+    {
+      cropBox: { height: 792, width: 612, x: 0, y: 0 },
+      id: "page-1",
+      sourceRotate: 0,
+    },
+    {
+      g_d0_f1: { name: "ABCDEF+GoogleSans-Medium" },
+      g_d0_f2: { isType3: true, name: "Type3Face" },
+    }
+  );
+  const [title, , type3] = objects;
+  expect(title?.baseFontName).toBe("ABCDEF+GoogleSans-Medium");
+  expect(title?.ascentRatio).toBe(0.8);
+  expect(title?.descentRatio).toBe(0.2);
+  expect(title?.embeddedFontGlyphs).toBe("EPegimnoprt");
+  expect(title && embeddedFontHasShown(title, "Prompt")).toBe(true);
+  expect(title && embeddedFontHasShown(title, "Prompts")).toBe(false);
+  expect(type3?.embeddedFontUnavailable).toBe(true);
+  expect(type3 && embeddedFontHasShown(type3, "Hi")).toBe(false);
+
+  // Preview and export only reuse the face once the export lookup is probed.
+  expect(title && embeddedFontCanDraw(title, "Prompt")).toBe(false);
+  const probed = title && { ...title, reusableFontGlyphs: "Pmoprt" };
+  expect(probed && embeddedFontCanDraw(probed, "Prompt")).toBe(true);
+  const noToUnicode = title && { ...title, reusableFontGlyphs: "" };
+  expect(noToUnicode && embeddedFontCanDraw(noToUnicode, "Prompt")).toBe(false);
+  const partial = title && { ...title, reusableFontGlyphs: "Pmort" };
+  expect(partial && embeddedFontCanDraw(partial, "Prompt")).toBe(false);
 });

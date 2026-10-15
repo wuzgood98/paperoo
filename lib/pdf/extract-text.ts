@@ -18,6 +18,7 @@ import type {
   PdfTextObject,
   PdfTextTransform,
 } from "@/lib/editor/types";
+import { collectEmbeddedFontGlyphs } from "@/lib/pdf/embedded-font";
 import type { PdfTextItemPaint } from "@/lib/pdf/extract-text-colors";
 
 export interface ExtractableTextStyle {
@@ -57,7 +58,9 @@ export interface PdfJsTextContent {
 
 export interface PdfFontFaceMeta {
   bold?: boolean;
+  isType3?: boolean;
   italic?: boolean;
+  missingFile?: boolean;
   name?: string;
 }
 
@@ -65,7 +68,9 @@ export interface PdfFontFaceMeta {
 export interface PdfJsFontFaceData {
   black?: boolean;
   bold?: boolean;
+  isType3Font?: boolean;
   italic?: boolean;
+  missingFile?: boolean;
   name?: string;
 }
 
@@ -87,7 +92,9 @@ const parseFontFace = (
   }
   return {
     bold: value.bold === true || value.black === true,
+    isType3: value.isType3Font === true,
     italic: value.italic === true,
+    missingFile: value.missingFile === true,
     name: value.name,
   };
 };
@@ -257,6 +264,28 @@ const itemPaintAt = (
   sourceIndex: number
 ): PdfTextItemPaint => itemPaints?.[sourceIndex] ?? defaultItemPaint();
 
+const embeddedRunFields = (
+  item: { fontName?: string },
+  style: { ascent?: number; descent?: number } | undefined,
+  face: PdfFontFaceMeta | undefined,
+  glyphsByFont: ReadonlyMap<string, string>
+) => {
+  const ascentRatio =
+    style?.ascent !== undefined && style.ascent > 0
+      ? style.ascent
+      : DEFAULT_ASCENT_RATIO;
+  return {
+    ascentRatio,
+    baseFontName: face?.name,
+    descentRatio: Math.abs(style?.descent ?? 0),
+    embeddedFontGlyphs: item.fontName
+      ? (glyphsByFont.get(item.fontName) ?? "")
+      : "",
+    embeddedFontUnavailable:
+      face?.isType3 === true || face?.missingFile === true,
+  };
+};
+
 export const extractPdfTextObjects = (
   content: ExtractableTextContent,
   page: {
@@ -269,6 +298,7 @@ export const extractPdfTextObjects = (
   itemPaints?: readonly PdfTextItemPaint[]
 ): PdfTextObject[] => {
   const objects: PdfTextObject[] = [];
+  const glyphsByFont = collectEmbeddedFontGlyphs(content.items);
 
   for (const [sourceIndex, item] of content.items.entries()) {
     const transform = toTransform(item.transform);
@@ -281,6 +311,7 @@ export const extractPdfTextObjects = (
     const fontFamily = resolvePdfFont(style?.fontFamily);
     const fontWeight = resolvePdfFontWeight(face?.name, face?.bold);
     const italic = resolvePdfFontItalic(face?.name, face?.italic);
+    const embedded = embeddedRunFields(item, style, face, glyphsByFont);
     const box = textItemToDisplayedBox(
       transform,
       item.width ?? 0,
@@ -293,6 +324,7 @@ export const extractPdfTextObjects = (
     const paint = itemPaintAt(itemPaints, sourceIndex);
 
     objects.push({
+      ...embedded,
       color: paint.color,
       dir: toDir(item.dir),
       fontFamily,

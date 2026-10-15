@@ -24,7 +24,9 @@ import type {
   PdfLinkAnnotation,
   PdfMarkupAnnotation,
 } from "@/lib/editor/types";
+import type { SampledCaptionInk } from "@/lib/pdf/sample-caption-ink";
 import { sampleLinkCaptionFromPage } from "@/lib/pdf/sample-link-caption-from-page";
+import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
 
 const isOpenableHttpUrl = (url: string): boolean =>
   url.startsWith("http://") || url.startsWith("https://");
@@ -121,10 +123,21 @@ const LinkInspector = ({
       editorStore.commitPdfLinkLabel(trimmed);
       return;
     }
-    void (async () => {
-      const sampled = await sampleLinkCaptionFromPage(page, primary, zoom);
-      editorStore.commitPdfLinkLabel(trimmed, sampled);
-    })();
+    const target = { linkId: object.id, pageId: page.id };
+    const commitWithSamples = async (): Promise<void> => {
+      let sampled: SampledCaptionInk | null = null;
+      try {
+        const [caption] = await Promise.all([
+          sampleLinkCaptionFromPage(page, primary, zoom),
+          ...runs.map((run) => ensurePdfTextMeasured(page, run, zoom)),
+        ]);
+        sampled = caption;
+      } catch {
+        // Sampling is best effort; commit with white covers and plain caption.
+      }
+      editorStore.commitPdfLinkLabel(trimmed, sampled, target);
+    };
+    void commitWithSamples();
   };
 
   const blurField = (commit: () => void): void => {

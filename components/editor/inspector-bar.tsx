@@ -75,8 +75,8 @@ export const InspectorBar = () => {
   if (selectedPdfFormField) {
     return <PdfFormInspector field={selectedPdfFormField} />;
   }
-  if (selectedPdfText) {
-    return <PdfTextInspector object={selectedPdfText} />;
+  if (selectedPdfText && currentPage) {
+    return <PdfTextInspector object={selectedPdfText} page={currentPage} />;
   }
   if (selectedPdfImage) {
     return <PdfImageInspector object={selectedPdfImage} />;

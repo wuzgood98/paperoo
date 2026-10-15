@@ -120,9 +120,28 @@ export interface PdfTextCaptionUnderline {
 }
 
 export interface PdfTextObject {
+  /** Font-wide ascent as a fraction of font size, from the PDF font descriptor. */
+  ascentRatio?: number;
+  /** BaseFont name, including any subset tag, used to reuse the embedded font. */
+  baseFontName?: string;
   captionFill?: string;
   captionUnderline?: PdfTextCaptionUnderline;
+  /** Sampled page color painted behind a dirty run. White when unset. */
+  coverColor?: string;
+  /** True when the sampled ring was not one dominant color. */
+  coverColorUncertain?: boolean;
+  /**
+   * Cover rects measured once on the main thread from the original glyph ink,
+   * so preview and the export worker (no canvas) paint the same patch.
+   */
+  coverRects?: Rect[];
   color: string;
+  /** Font-wide descent as a fraction of font size. Negative PDF values are stored as magnitudes. */
+  descentRatio?: number;
+  /** Code points already shown in this embedded font, across the document. */
+  embeddedFontGlyphs?: string;
+  /** Type3 or non-embedded faces cannot be reused for a replacement. */
+  embeddedFontUnavailable?: boolean;
   dir: PdfTextDir;
   fontFamily?: FontFamily;
   fontName: string;
@@ -140,6 +159,11 @@ export interface PdfTextObject {
   originalText: string;
   originalTextRenderingMode: number;
   pageId: string;
+  /**
+   * Code points the export can encode with this run's font resource (its
+   * inverted ToUnicode). Unset until probed; unset or empty means no reuse.
+   */
+  reusableFontGlyphs?: string;
   rotation: number;
   sourceIndex: number;
   strokeColor: string;

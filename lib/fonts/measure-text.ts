@@ -81,26 +81,103 @@ export const wrapText = (
   return lines;
 };
 
+export interface PdfTextGlyphInk {
+  ascent: number;
+  descent: number;
+  /** Left edge of the glyph ink, in font-size pixels, from the start of the string. */
+  left: number;
+  width: number;
+}
+
+let measureContext: CanvasRenderingContext2D | null | undefined;
+
+/** One shared 2D context; measuring runs on every render of a dirty run. */
+const sharedMeasureContext = (): CanvasRenderingContext2D | null => {
+  if (measureContext === undefined) {
+    measureContext = document.createElement("canvas").getContext("2d");
+  }
+  return measureContext;
+};
+
+/** A canvas `font` shorthand's inputs; `familyCss` overrides the bundled family. */
+export interface CanvasFontOptions {
+  familyCss?: string;
+  fontFamily: FontFamily;
+  fontSize: number;
+  fontWeight: FontWeight;
+  italic: boolean;
+}
+
+const canvasFont = (options: CanvasFontOptions): string => {
+  const family = options.familyCss ?? fontFamilyCss(options.fontFamily);
+  const style = options.italic ? "italic " : "";
+  return `${style}${options.fontWeight} ${options.fontSize}px ${family}`;
+};
+
+/** Per-glyph ink for the original string. Null when canvas metrics are unavailable. */
+export const measurePdfTextGlyphInk = (
+  text: string,
+  options: CanvasFontOptions
+): PdfTextGlyphInk[] | null => {
+  if (typeof document === "undefined" || text.length === 0) {
+    return null;
+  }
+  const context = sharedMeasureContext();
+  if (!context) {
+    return null;
+  }
+  context.font = canvasFont(options);
+  const glyphs: PdfTextGlyphInk[] = [];
+  let cursor = 0;
+  for (const char of text) {
+    const metrics = context.measureText(char);
+    const { actualBoundingBoxAscent, actualBoundingBoxDescent, width } =
+      metrics;
+    const leftBearing = metrics.actualBoundingBoxLeft;
+    const rightBearing = metrics.actualBoundingBoxRight;
+    if (
+      !Number.isFinite(actualBoundingBoxAscent) ||
+      !Number.isFinite(actualBoundingBoxDescent) ||
+      !Number.isFinite(width)
+    ) {
+      return null;
+    }
+    const left = Number.isFinite(leftBearing) ? leftBearing : 0;
+    const right = Number.isFinite(rightBearing) ? rightBearing : width;
+    const inkWidth = Math.max(0, left + right);
+    if (
+      inkWidth > 0 &&
+      actualBoundingBoxAscent + actualBoundingBoxDescent > 0
+    ) {
+      glyphs.push({
+        ascent: actualBoundingBoxAscent,
+        descent: actualBoundingBoxDescent,
+        left: cursor - left,
+        width: inkWidth,
+      });
+    }
+    cursor += width;
+  }
+  if (glyphs.length === 0) {
+    return null;
+  }
+  return glyphs;
+};
+
 export const canvasTextWidth = (
   text: string,
-  options: {
-    fontFamily: FontFamily;
-    fontSize: number;
-    fontWeight: FontWeight;
-    italic: boolean;
-  }
+  options: CanvasFontOptions
 ): number => {
   if (typeof document === "undefined") {
     return text.length * options.fontSize * 0.5;
   }
 
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
+  const context = sharedMeasureContext();
   if (!context) {
     return text.length * options.fontSize * 0.5;
   }
 
-  context.font = `${options.italic ? "italic " : ""}${options.fontWeight} ${options.fontSize}px ${fontFamilyCss(options.fontFamily)}`;
+  context.font = canvasFont(options);
   return context.measureText(text).width;
 };
 

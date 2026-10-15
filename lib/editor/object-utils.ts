@@ -1,4 +1,5 @@
 import {
+  DEFAULT_ASCENT_RATIO,
   objectCenter,
   pdfTextBaselineDisplayed,
   rotatePoint,
@@ -46,7 +47,15 @@ import type {
   Size,
   TextObject,
 } from "@/lib/editor/types";
-import { canvasTextWidth } from "@/lib/fonts/measure-text";
+import type {
+  CanvasFontOptions,
+  PdfTextGlyphInk,
+} from "@/lib/fonts/measure-text";
+import {
+  canvasTextWidth,
+  measurePdfTextGlyphInk,
+} from "@/lib/fonts/measure-text";
+import { pdfTextPreviewFontCss } from "@/lib/pdf/embedded-font";
 
 export const editorPageOrder = (
   pages: readonly { sourceIndex: number }[]
@@ -700,16 +709,22 @@ export const pdfTextOverlayBox = (
         y: object.y,
       };
 
+/** Canvas font for drawing `text` in a run, in the face preview would use. */
+export const pdfTextCanvasFont = (
+  object: PdfTextObject,
+  text: string
+): CanvasFontOptions => ({
+  familyCss: pdfTextPreviewFontCss(object, text),
+  fontFamily: object.fontFamily ?? "sans",
+  fontSize: object.fontSize ?? object.height,
+  fontWeight: object.fontWeight ?? 400,
+  italic: object.italic === true,
+});
+
 export const measurePdfTextWidth = (
   object: PdfTextObject,
   text: string = object.text
-): number =>
-  canvasTextWidth(text, {
-    fontFamily: object.fontFamily ?? "sans",
-    fontSize: object.fontSize ?? object.height,
-    fontWeight: object.fontWeight ?? 400,
-    italic: object.italic === true,
-  });
+): number => canvasTextWidth(text, pdfTextCanvasFont(object, text));
 
 export const pdfLinkBoxAfterLabel = (
   _link: PdfLinkAnnotation,
@@ -947,6 +962,301 @@ export const pdfLinkTextAppearance = (
   }
   return { fillColor, underline };
 };
+
+/** Page-space outset so anti-aliased fringes of the original glyphs stay covered. */
+export const PDF_TEXT_COVER_BLEED = 1;
+
+/** Cover color when the page behind a run could not be sampled. */
+export const PDF_TEXT_COVER_FALLBACK_COLOR = "#ffffff";
+
+export const pdfTextCoverColor = (
+  object: Pick<PdfTextObject, "coverColor">
+): string => object.coverColor ?? PDF_TEXT_COVER_FALLBACK_COLOR;
+
+const MIN_COVER_EDGE = 0.25;
+
+/** Runs within this many degrees of 0 are measured as horizontal text. */
+const UPRIGHT_TOLERANCE_DEG = 1;
+
+const isUprightRun = (rotation: number): boolean => {
+  const turns = ((rotation % 360) + 360) % 360;
+  return turns < UPRIGHT_TOLERANCE_DEG || turns > 360 - UPRIGHT_TOLERANCE_DEG;
+};
+
+const fontDescriptorInk = (object: PdfTextObject) => {
+  const fontSize = object.fontSize ?? object.height;
+  const ascentRatio =
+    object.ascentRatio !== undefined && object.ascentRatio > 0
+      ? object.ascentRatio
+      : DEFAULT_ASCENT_RATIO;
+  return {
+    ascent: fontSize * ascentRatio,
+    descent: fontSize * Math.abs(object.descentRatio ?? 0),
+  };
+};
+
+const uprightBaselineY = (
+  object: PdfTextObject,
+  page: Pick<EditorPage, "cropBox" | "sourceRotate">
+): number =>
+  pdfTextBaselineDisplayed(object.transform, page.cropBox, page.sourceRotate).y;
+
+/** Smallest rect containing every rect, or null for none. */
+export const unionRects = (rects: readonly Rect[]): Rect | null => {
+  if (rects.length === 0) {
+    return null;
+  }
+  let left = Number.POSITIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (const rect of rects) {
+    left = Math.min(left, rect.x);
+    top = Math.min(top, rect.y);
+    right = Math.max(right, rect.x + rect.width);
+    bottom = Math.max(bottom, rect.y + rect.height);
+  }
+  return { height: bottom - top, width: right - left, x: left, y: top };
+};
+
+const subtractRect = (subject: Rect, cutter: Rect): Rect[] => {
+  const subjectRight = subject.x + subject.width;
+  const subjectBottom = subject.y + subject.height;
+  const overlapLeft = Math.max(subject.x, cutter.x);
+  const overlapTop = Math.max(subject.y, cutter.y);
+  const overlapRight = Math.min(subjectRight, cutter.x + cutter.width);
+  const overlapBottom = Math.min(subjectBottom, cutter.y + cutter.height);
+  if (overlapRight <= overlapLeft || overlapBottom <= overlapTop) {
+    return [subject];
+  }
+  const parts: Rect[] = [];
+  if (overlapTop > subject.y) {
+    parts.push({
+      height: overlapTop - subject.y,
+      width: subject.width,
+      x: subject.x,
+      y: subject.y,
+    });
+  }
+  if (overlapBottom < subjectBottom) {
+    parts.push({
+      height: subjectBottom - overlapBottom,
+      width: subject.width,
+      x: subject.x,
+      y: overlapBottom,
+    });
+  }
+  if (overlapLeft > subject.x) {
+    parts.push({
+      height: overlapBottom - overlapTop,
+      width: overlapLeft - subject.x,
+      x: subject.x,
+      y: overlapTop,
+    });
+  }
+  if (overlapRight < subjectRight) {
+    parts.push({
+      height: overlapBottom - overlapTop,
+      width: subjectRight - overlapRight,
+      x: overlapRight,
+      y: overlapTop,
+    });
+  }
+  return parts;
+};
+
+const clipRects = (
+  subjects: readonly Rect[],
+  cutters: readonly Rect[]
+): Rect[] => {
+  let current = [...subjects];
+  for (const cutter of cutters) {
+    const next: Rect[] = [];
+    for (const subject of current) {
+      for (const part of subtractRect(subject, cutter)) {
+        if (part.width > MIN_COVER_EDGE && part.height > MIN_COVER_EDGE) {
+          next.push(part);
+        }
+      }
+    }
+    current = next;
+  }
+  return current;
+};
+
+/**
+ * Measures per-glyph ink for a string. Production uses the browser canvas;
+ * there is none in the export worker or tests, so callers can pass another.
+ */
+export type GlyphInkMeasurer = (
+  text: string,
+  font: CanvasFontOptions
+) => PdfTextGlyphInk[] | null;
+
+const glyphInkRects = (
+  object: PdfTextObject,
+  baselineY: number,
+  measureInk: GlyphInkMeasurer
+): Rect[] | null => {
+  if (!isUprightRun(object.rotation) || object.dir === "rtl") {
+    return null;
+  }
+  const glyphs = measureInk(
+    object.originalText,
+    pdfTextCanvasFont(object, object.originalText)
+  );
+  if (!glyphs) {
+    return null;
+  }
+  return glyphs.map((glyph) => ({
+    height: glyph.ascent + glyph.descent,
+    width: glyph.width,
+    x: object.x + glyph.left,
+    y: baselineY - glyph.ascent,
+  }));
+};
+
+/** Original glyph ink, without the cover bleed or the font-wide descent floor. */
+export const pdfTextOriginalInkBox = (
+  object: PdfTextObject,
+  page: Pick<EditorPage, "cropBox" | "sourceRotate">,
+  measureInk: GlyphInkMeasurer = measurePdfTextGlyphInk
+): Rect => {
+  if (!isUprightRun(object.rotation)) {
+    return {
+      height: object.height,
+      width: object.width,
+      x: object.x,
+      y: object.y,
+    };
+  }
+  const baselineY = uprightBaselineY(object, page);
+  const glyphs = glyphInkRects(object, baselineY, measureInk);
+  const glyphBox = glyphs ? unionRects(glyphs) : null;
+  if (glyphBox) {
+    return glyphBox;
+  }
+  const { ascent, descent } = fontDescriptorInk(object);
+  return {
+    height: ascent + descent,
+    width: object.width,
+    x: object.x,
+    y: baselineY - ascent,
+  };
+};
+
+/** Glyph ink can pass the font descriptor box (accents, swashes). */
+const NEIGHBOUR_REACH_EM = 0.5;
+
+const rectsIntersect = (left: Rect, right: Rect): boolean =>
+  left.x < right.x + right.width &&
+  right.x < left.x + left.width &&
+  left.y < right.y + right.height &&
+  right.y < left.y + left.height;
+
+/**
+ * Cheap outer bound for a neighbour's ink, from font metrics only. Neighbours
+ * outside it skip the per-glyph canvas measuring.
+ */
+const neighbourReachBox = (
+  object: PdfTextObject,
+  page: Pick<EditorPage, "cropBox" | "sourceRotate">
+): Rect => {
+  const reach = (object.fontSize ?? object.height) * NEIGHBOUR_REACH_EM;
+  const box = isUprightRun(object.rotation)
+    ? {
+        ...fontDescriptorInk(object),
+        baselineY: uprightBaselineY(object, page),
+      }
+    : null;
+  const top = Math.min(object.y, box ? box.baselineY - box.ascent : object.y);
+  const bottom = Math.max(
+    object.y + object.height,
+    box ? box.baselineY + box.descent : object.y + object.height
+  );
+  return {
+    height: bottom - top + reach * 2,
+    width: object.width + reach * 2,
+    x: object.x - reach,
+    y: top - reach,
+  };
+};
+
+const neighbourInkRects = (
+  object: PdfTextObject,
+  page: Pick<EditorPage, "cropBox" | "sourceRotate">,
+  measureInk: GlyphInkMeasurer
+): Rect[] => {
+  const glyphs = glyphInkRects(
+    object,
+    uprightBaselineY(object, page),
+    measureInk
+  );
+  if (glyphs) {
+    return glyphs;
+  }
+  return [pdfTextOriginalInkBox(object, page, measureInk)];
+};
+
+/**
+ * Cover for a dirty run: original glyph ink, not the replacement width, with
+ * pieces removed where that ink would paint over a neighbouring run.
+ */
+export const measurePdfTextCoverRects = (
+  object: PdfTextObject,
+  page: EditorPage,
+  neighbours: readonly PdfTextObject[],
+  measureInk: GlyphInkMeasurer = measurePdfTextGlyphInk
+): Rect[] => {
+  const fontSize = object.fontSize ?? object.height;
+  const underline =
+    pdfLinkTextAppearance(page, object)?.underline ?? object.captionUnderline;
+  const bleed = PDF_TEXT_COVER_BLEED;
+  let seed: Rect;
+  if (isUprightRun(object.rotation)) {
+    const ink = pdfTextOriginalInkBox(object, page, measureInk);
+    const leftPad = fontSize * PDF_TEXT_COVER_LEFT_EM;
+    let top = ink.y - bleed;
+    let bottom = ink.y + ink.height + bleed;
+    const left = Math.min(ink.x, object.x) - leftPad - bleed;
+    const right = Math.max(ink.x + ink.width, object.x + object.width) + bleed;
+    if (underline) {
+      const half = underline.thickness / 2;
+      const center = object.y + underline.offsetFromRunTop;
+      top = Math.min(top, center - half - bleed);
+      bottom = Math.max(bottom, center + half + bleed);
+    }
+    seed = { height: bottom - top, width: right - left, x: left, y: top };
+  } else {
+    seed = dirtyPdfTextCoverBox(
+      { height: object.height, width: object.width, x: object.x, y: object.y },
+      fontSize,
+      underline
+    );
+  }
+  const cutters: Rect[] = [];
+  for (const neighbour of neighbours) {
+    if (
+      neighbour.id === object.id ||
+      !rectsIntersect(seed, neighbourReachBox(neighbour, page))
+    ) {
+      continue;
+    }
+    cutters.push(...neighbourInkRects(neighbour, page, measureInk));
+  }
+  return clipRects([seed], cutters);
+};
+
+/**
+ * Cover rects for a dirty run. Prefers the rects measured on the main thread
+ * when editing began; the export worker has no canvas to measure glyph ink.
+ */
+export const pdfTextCoverRects = (
+  object: PdfTextObject,
+  page: EditorPage
+): Rect[] =>
+  object.coverRects ??
+  measurePdfTextCoverRects(object, page, page.pdfTextObjects);
 
 export const hitTestPdfText = (
   objects: readonly PdfTextObject[],
