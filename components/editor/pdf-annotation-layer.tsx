@@ -23,7 +23,7 @@ import type {
   PdfFreeTextAnnotation,
   Point,
 } from "@/lib/editor/types";
-import { getPageContentCanvas } from "@/lib/pdf/pdf-annotation-content-cache";
+import { getDisplayedPageContentCanvas } from "@/lib/pdf/pdf-annotation-content-cache";
 import { cn } from "@/lib/utils";
 
 interface RefBox<T> {
@@ -94,11 +94,9 @@ const FreeTextPreview = ({
 
 const PdfAnnotationDirtyBackdrop = ({
   page,
-  rotation,
   zoom,
 }: {
   page: EditorPage;
-  rotation: number;
   zoom: number;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -112,11 +110,9 @@ const PdfAnnotationDirtyBackdrop = ({
     }
     let cancelled = false;
     const draw = async () => {
-      const source = await getPageContentCanvas(
-        page.sourceIndex,
-        zoom,
-        rotation
-      );
+      // Displayed space: this canvas sits in the overlay, which the page
+      // frame rotates with CSS, and regions are displayed rects.
+      const source = await getDisplayedPageContentCanvas(page, zoom);
       const canvas = canvasRef.current;
       if (!source || !canvas || cancelled) {
         return;
@@ -149,7 +145,7 @@ const PdfAnnotationDirtyBackdrop = ({
     return () => {
       cancelled = true;
     };
-  }, [dirty, page, rotation, zoom]);
+  }, [dirty, page, zoom]);
 
   if (dirty.length === 0) {
     return null;
@@ -195,7 +191,6 @@ const AnnotationPreviewContent = ({
 
 export const PdfAnnotationLayer = ({
   boundsRef,
-  canvasRotation,
   gestureRef,
   hoveredId,
   nodeRefs,
@@ -209,7 +204,6 @@ export const PdfAnnotationLayer = ({
   zoom,
 }: {
   boundsRef: RefBox<PageBounds | null>;
-  canvasRotation: number;
   gestureRef: RefBox<Gesture | null>;
   hoveredId: string | null;
   nodeRefs: RefBox<Map<string, HTMLDivElement>>;
@@ -226,11 +220,7 @@ export const PdfAnnotationLayer = ({
 
   return (
     <>
-      <PdfAnnotationDirtyBackdrop
-        page={page}
-        rotation={canvasRotation}
-        zoom={zoom}
-      />
+      <PdfAnnotationDirtyBackdrop page={page} zoom={zoom} />
       {objects.map((object) =>
         shouldPaintPdfAnnotationPreview(object) ? (
           <div

@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import {
   centerRotateCtm,
   DEFAULT_DESCENT_FLOOR,
+  displayedCanvasRotation,
   displayedToUserSpace,
   imageCtmToDisplayedBox,
   pdfTextBaselineUserSpace,
@@ -307,4 +308,11 @@ test("pixelSnapOffset lands left and top on the device-pixel grid", () => {
       );
     }
   }
+});
+
+test("displayedCanvasRotation ignores the user's page rotation", () => {
+  // Overlay rects are in source-rotated space; user rotation is CSS on top.
+  expect(displayedCanvasRotation({ sourceRotate: 0 })).toBe(0);
+  expect(displayedCanvasRotation({ sourceRotate: 90 })).toBe(90);
+  expect(displayedCanvasRotation({ sourceRotate: 450 })).toBe(90);
 });

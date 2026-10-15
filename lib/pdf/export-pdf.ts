@@ -3,6 +3,7 @@ import {
   BlendMode,
   EncryptedPDFError,
   PDFDocument,
+  PDFName,
   StandardFonts,
   TextRenderingMode,
   beginText,
@@ -44,13 +45,14 @@ import {
   userPointToDisplayed,
 } from "@/lib/editor/coordinates";
 import {
-  dirtyPdfTextCoverBox,
   fittedPdfTextBox,
   isPdfImageDirty,
   isPdfTextDirty,
   isPdfVectorDirty,
   pdfLinkTextAppearance,
   pdfImageCoverBox,
+  pdfTextCoverColor,
+  pdfTextCoverRects,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
   pdfVectorCoverPathStyle,
@@ -75,12 +77,15 @@ import type {
 } from "@/lib/editor/types";
 import { FONT_FILES, wrapText } from "@/lib/fonts/measure-text";
 import type { OcrTextObject } from "@/lib/ocr/types";
+import { embeddedFontCanDraw } from "@/lib/pdf/embedded-font";
 import { applyPdfAnnotationEdits } from "@/lib/pdf/export-annotations";
 import {
   applyPdfFormEdits,
   copyPagesWithAcroForm,
 } from "@/lib/pdf/export-forms";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
+import { reusedFontHex, reuseEmbeddedPdfFont } from "@/lib/pdf/reuse-pdf-font";
+import type { ReusedPdfFontText } from "@/lib/pdf/reuse-pdf-font";
 
 export interface ExportAsset {
   bytes: Uint8Array;
@@ -265,6 +270,71 @@ const drawTextObject = async (
   page.pushOperators(popGraphicsState());
 };
 
+const reusedTextMode = (
+  needsFill: boolean,
+  needsStroke: boolean
+): TextRenderingMode => {
+  if (needsStroke && needsFill) {
+    return TextRenderingMode.FillAndOutline;
+  }
+  if (needsStroke) {
+    return TextRenderingMode.Outline;
+  }
+  return TextRenderingMode.Fill;
+};
+
+interface ReusedPdfTextDraw {
+  fillHex: string;
+  object: PdfTextObject;
+  /** Text origin (baseline start) in PDF user space. */
+  origin: Point;
+  reused: ReusedPdfFontText;
+  size: number;
+}
+
+const pushReusedPdfText = (
+  page: PDFPage,
+  { fillHex, object, origin, reused, size }: ReusedPdfTextDraw
+): void => {
+  const needsFill = pdfTextNeedsFill(object.textRenderingMode);
+  const needsStroke = pdfTextNeedsStroke(object.textRenderingMode);
+  const mode = reusedTextMode(needsFill, needsStroke);
+  const zero = degrees(0);
+  const ops: PDFOperator[] = [
+    pushGraphicsState(),
+    beginText(),
+    setTextRenderingMode(mode),
+  ];
+  if (needsFill) {
+    ops.push(setFillingColor(color(fillHex)));
+  }
+  if (needsStroke) {
+    ops.push(
+      setStrokingColor(color(object.strokeColor)),
+      setLineWidth(object.strokeWidth)
+    );
+  }
+  ops.push(
+    setFontAndSize(PDFName.of(reused.resourceName), size),
+    rotateAndSkewTextRadiansAndTranslate(
+      toRadians(zero),
+      toRadians(zero),
+      toRadians(zero),
+      origin.x,
+      origin.y
+    ),
+    showText(reusedFontHex(reused.encoded)),
+    endText(),
+    popGraphicsState()
+  );
+  page.pushOperators(...ops);
+};
+
+/** The run's own font resource, or a bundled face when it cannot be reused. */
+type DirtyTextFont =
+  | { kind: "bundled"; font: PDFFont }
+  | { kind: "reused"; reused: ReusedPdfFontText };
+
 const drawDirtyPdfText = async (
   page: PDFPage,
   object: PdfTextObject,
@@ -277,18 +347,28 @@ const drawDirtyPdfText = async (
   const size = object.fontSize ?? object.height;
   const weight = object.fontWeight ?? 400;
   const italic = object.italic === true;
-  const font = await embedFontForStyle(
-    family,
-    weight,
-    italic,
-    fonts,
-    doc,
-    fontBytes
-  );
+  const reused = embeddedFontCanDraw(object, object.text)
+    ? reuseEmbeddedPdfFont(page, object)
+    : null;
+  const textFont: DirtyTextFont = reused
+    ? { kind: "reused", reused }
+    : {
+        font: await embedFontForStyle(
+          family,
+          weight,
+          italic,
+          fonts,
+          doc,
+          fontBytes
+        ),
+        kind: "bundled",
+      };
 
   const fitted = fittedPdfTextBox(
     object,
-    font.widthOfTextAtSize(object.text, size)
+    textFont.kind === "reused"
+      ? textFont.reused.width
+      : textFont.font.widthOfTextAtSize(object.text, size)
   );
   const user = displayedToUserSpace(
     fitted,
@@ -297,23 +377,25 @@ const drawDirtyPdfText = async (
   );
   const linkAppearance = pdfLinkTextAppearance(editorPage, object);
   const fillHex = linkAppearance?.fillColor ?? object.color;
-  const cover = dirtyPdfTextCoverBox(fitted, size, linkAppearance?.underline);
-  const coverUser = displayedToUserSpace(
-    cover,
-    editorPage.cropBox,
-    editorPage.sourceRotate
-  );
-  // White cover leaves the original operators in the page stream. It fails on
-  // non-white and image backgrounds. Width grows with a longer replacement so
-  // the extra glyphs stay on a white field. Left pad hides ink left of the
-  // text origin (side bearing / rule start).
-  page.drawRectangle({
-    color: rgb(1, 1, 1),
-    height: coverUser.height,
-    width: coverUser.width,
-    x: coverUser.x,
-    y: coverUser.y,
-  });
+  const covers = pdfTextCoverRects(object, editorPage);
+  // The cover leaves the original operators in the page stream. A sampled
+  // page color hides that on flat tints; white remains the fallback. The
+  // rects follow original glyph ink and stop at neighbouring runs.
+  const coverColor = color(pdfTextCoverColor(object));
+  for (const cover of covers) {
+    const coverUser = displayedToUserSpace(
+      cover,
+      editorPage.cropBox,
+      editorPage.sourceRotate
+    );
+    page.drawRectangle({
+      color: coverColor,
+      height: coverUser.height,
+      width: coverUser.width,
+      x: coverUser.x,
+      y: coverUser.y,
+    });
+  }
 
   const baseline = pdfTextBaselineUserSpace(
     object.transform,
@@ -348,6 +430,19 @@ const drawDirtyPdfText = async (
       thickness: underline.thickness,
     });
   };
+
+  if (textFont.kind === "reused") {
+    pushReusedPdfText(page, {
+      fillHex,
+      object,
+      origin: { x: textX, y: textY },
+      reused: textFont.reused,
+      size,
+    });
+    drawLinkCaptionUnderline();
+    return;
+  }
+  const { font } = textFont;
 
   if (!needsStroke) {
     page.drawText(object.text, {

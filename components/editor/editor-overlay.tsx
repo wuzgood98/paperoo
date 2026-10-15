@@ -26,7 +26,6 @@ import { PdfFormLayer } from "@/components/editor/pdf-form-layer";
 import { PdfImageLayer } from "@/components/editor/pdf-image-layer";
 import { PdfTextLayer } from "@/components/editor/pdf-text-layer";
 import { PdfVectorLayer } from "@/components/editor/pdf-vector-layer";
-import { normalizeRotation } from "@/lib/editor/coordinates";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import {
   createSignatureObject,
@@ -295,7 +294,6 @@ export const EditorOverlay = ({
       />
       <PdfAnnotationLayer
         boundsRef={boundsRef}
-        canvasRotation={normalizeRotation(page.sourceRotate + page.rotation)}
         gestureRef={gestureRef}
         hoveredId={pdfHover.annotationId}
         nodeRefs={nodeRefs}

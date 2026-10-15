@@ -66,7 +66,9 @@ import type {
   TextStyleDefaults,
   ZoomMode,
 } from "@/lib/editor/types";
+import { mergeEmbeddedFontGlyphs } from "@/lib/pdf/embedded-font";
 import type { SampledCaptionInk } from "@/lib/pdf/sample-caption-ink";
+import type { PdfTextMeasurement } from "@/lib/pdf/sample-pdf-text-cover";
 
 export interface ViewportSize {
   width: number;
@@ -238,6 +240,23 @@ const patchHistoryDocuments = (
   };
 };
 
+const mapPdfTextObject = (
+  pages: readonly EditorPage[],
+  pageId: string,
+  objectId: string,
+  updater: (object: PdfTextObject) => PdfTextObject
+): EditorPage[] =>
+  pages.map((page) =>
+    page.id === pageId
+      ? {
+          ...page,
+          pdfTextObjects: page.pdfTextObjects.map((object) =>
+            object.id === objectId ? updater(object) : object
+          ),
+        }
+      : page
+  );
+
 export const editorStore = {
   addAsset: (
     bytes: Uint8Array,
@@ -296,7 +315,9 @@ export const editorStore = {
     if (pages.length === 0) {
       return;
     }
-    const merged = mergeHydratedPages(internal.state.document.pages, pages);
+    const merged = mergeEmbeddedFontGlyphs(
+      mergeHydratedPages(internal.state.document.pages, pages)
+    );
     if (merged.length === internal.state.document.pages.length) {
       return;
     }
@@ -307,8 +328,43 @@ export const editorStore = {
     };
     patchHistoryDocuments((document) => ({
       ...document,
-      pages: mergeHydratedPages(document.pages, structuredClone(pages)),
+      pages: mergeEmbeddedFontGlyphs(
+        mergeHydratedPages(document.pages, structuredClone(pages))
+      ),
     }));
+    emit();
+  },
+
+  /**
+   * Store facts measured from a run's original ink and font. They describe the
+   * source PDF, not an edit, so they skip undo and fill every history snapshot.
+   * Fields already set are kept.
+   */
+  applyPdfTextMeasurement: (
+    pageId: string,
+    objectId: string,
+    measurement: PdfTextMeasurement
+  ): void => {
+    const fill = (object: PdfTextObject): PdfTextObject => ({
+      ...object,
+      coverColor: object.coverColor ?? measurement.coverColor,
+      coverColorUncertain:
+        object.coverColor === undefined
+          ? measurement.coverColorUncertain
+          : object.coverColorUncertain,
+      coverRects: object.coverRects ?? measurement.coverRects,
+      reusableFontGlyphs:
+        object.reusableFontGlyphs ?? measurement.reusableFontGlyphs,
+    });
+    const patch = (document: EditorDocument): EditorDocument => ({
+      ...document,
+      pages: mapPdfTextObject(document.pages, pageId, objectId, fill),
+    });
+    internal.state = {
+      ...internal.state,
+      document: patch(internal.state.document),
+    };
+    patchHistoryDocuments(patch);
     emit();
   },
 
@@ -434,10 +490,12 @@ export const editorStore = {
 
   commitPdfLinkLabel: (
     label: string,
-    sampledCaption: SampledCaptionInk | null = null
+    sampledCaption: SampledCaptionInk | null = null,
+    /** Pin the link when committing after an await; defaults to the selection. */
+    target: { linkId: string; pageId: string } | null = null
   ): void => {
-    const pageId = internal.state.currentPageId;
-    const objectId = internal.state.selectedPdfAnnotationId;
+    const pageId = target?.pageId ?? internal.state.currentPageId;
+    const objectId = target?.linkId ?? internal.state.selectedPdfAnnotationId;
     if (!pageId || !objectId) {
       return;
     }
@@ -682,19 +740,24 @@ export const editorStore = {
     if (!pageId || !objectId) {
       return;
     }
+    editorStore.patchPdfTextById(pageId, objectId, updater);
+  },
+
+  /** Patch one run by id; async callers must not rely on the live selection. */
+  patchPdfTextById: (
+    pageId: string,
+    objectId: string,
+    updater: (object: PdfTextObject) => PdfTextObject
+  ): void => {
     commit(() => {
       internal.state = {
         ...internal.state,
         document: withPages(
-          internal.state.document.pages.map((page) =>
-            page.id === pageId
-              ? {
-                  ...page,
-                  pdfTextObjects: page.pdfTextObjects.map((object) =>
-                    object.id === objectId ? updater(object) : object
-                  ),
-                }
-              : page
+          mapPdfTextObject(
+            internal.state.document.pages,
+            pageId,
+            objectId,
+            updater
           )
         ),
       };
@@ -819,7 +882,7 @@ export const editorStore = {
     internal.history = emptyHistory();
     setState({
       currentPageId: pages[0]?.id ?? null,
-      document: { form, pages },
+      document: { form, pages: mergeEmbeddedFontGlyphs(pages) },
       errorMessage: null,
       fileName,
       selectedObjectIds: [],

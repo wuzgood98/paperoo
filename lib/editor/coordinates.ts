@@ -37,6 +37,15 @@ export const normalizeRotation = (degrees: number): PageRotation => {
   return 0;
 };
 
+/**
+ * Rotation for a page canvas whose pixels line up with displayed space, where
+ * the overlay and every run box live: the source /Rotate only. The user's
+ * page rotation is a CSS transform on top, so samplers must not apply it.
+ */
+export const displayedCanvasRotation = (page: {
+  sourceRotate: number;
+}): PageRotation => normalizeRotation(page.sourceRotate);
+
 export const rotatePoint = (
   point: Point,
   origin: Point,

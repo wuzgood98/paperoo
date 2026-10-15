@@ -6,12 +6,13 @@ import type { CSSProperties } from "react";
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
   captionUnderlineCssOffsetFromRunTop,
-  dirtyPdfTextCoverBox,
   fittedPdfTextBox,
   isPdfTextDirty,
   measurePdfTextWidth,
   pdfLinkTextAppearance,
   pdfTextCssInkOffsetFromRunTop,
+  pdfTextCoverColor,
+  pdfTextCoverRects,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
   pdfTextOverlayBox,
@@ -21,13 +22,15 @@ import type { EditorPage, PdfTextObject, Rect } from "@/lib/editor/types";
 import {
   cssFontAscentRatio,
   ensureEditorFonts,
-  fontFamilyCss,
   LIBERATION_SANS_ASCENT_RATIO,
 } from "@/lib/fonts/measure-text";
+import { pdfTextPreviewFontCss } from "@/lib/pdf/embedded-font";
+import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
 import { cn } from "@/lib/utils";
 
 const pdfTextInkStyle = (
   object: PdfTextObject,
+  text: string,
   fontSizeCss: number,
   zoom: number,
   fillColor: string = object.color
@@ -40,7 +43,7 @@ const pdfTextInkStyle = (
       ? `${strokeWidthCss}px ${object.strokeColor}`
       : undefined,
     color: fill ? fillColor : "transparent",
-    fontFamily: fontFamilyCss(object.fontFamily ?? "sans"),
+    fontFamily: pdfTextPreviewFontCss(object, text),
     fontSize: fontSizeCss,
     fontStyle: object.italic === true ? "italic" : "normal",
     fontWeight: object.fontWeight ?? 400,
@@ -73,16 +76,19 @@ const inkAscentRatio = (object: PdfTextObject, fontsReady: boolean): number => {
 
 const PdfTextCoverPlate = ({
   cover,
+  coverColor,
   runBox,
   zoom,
 }: {
   cover: Rect;
+  coverColor: string;
   runBox: Rect;
   zoom: number;
 }) => (
   <div
-    className="absolute bg-white"
+    className="absolute"
     style={{
+      backgroundColor: coverColor,
       height: pageToCss(cover.height, zoom),
       left: pageToCss(cover.x - runBox.x, zoom),
       top: pageToCss(cover.y - runBox.y, zoom),
@@ -111,9 +117,7 @@ const PdfTextEditor = ({
   const frame = overlayFrame(object, value);
   const fontSize = object.fontSize ?? object.height;
   const fontSizeCss = pageToCss(fontSize, zoom);
-  const appearance = pdfLinkTextAppearance(page, object);
-  const underline = appearance?.underline ?? object.captionUnderline;
-  const cover = dirtyPdfTextCoverBox(frame, fontSize, underline);
+  const covers = pdfTextCoverRects(object, page);
   const inkTop = pdfTextCssInkOffsetFromRunTop(
     object,
     frame,
@@ -133,9 +137,18 @@ const PdfTextEditor = ({
     input.setSelectionRange(length, length);
   }, []);
 
+  // Measure the original ink and font once, before the first keystroke lands.
+  // The result is keyed by ids and still applies if the editor closes first.
+  useEffect(() => {
+    void ensurePdfTextMeasured(page, object, zoom);
+  }, [object, page, zoom]);
+
   const commit = (next: string): void => {
     if (next !== object.text) {
-      editorStore.patchPdfText((current) => ({ ...current, text: next }));
+      editorStore.patchPdfTextById(page.id, object.id, (current) => ({
+        ...current,
+        text: next,
+      }));
     }
     onExit();
   };
@@ -145,7 +158,15 @@ const PdfTextEditor = ({
       className="absolute origin-center"
       style={objectWrapperStyle({ ...frame, rotation: object.rotation }, zoom)}
     >
-      <PdfTextCoverPlate cover={cover} runBox={frame} zoom={zoom} />
+      {covers.map((cover) => (
+        <PdfTextCoverPlate
+          cover={cover}
+          coverColor={pdfTextCoverColor(object)}
+          key={`${cover.x}:${cover.y}:${cover.width}:${cover.height}`}
+          runBox={frame}
+          zoom={zoom}
+        />
+      ))}
       <input
         aria-label="Edit PDF text"
         className="absolute left-0 min-w-0 border-0 bg-transparent p-0 outline-none select-text"
@@ -178,7 +199,7 @@ const PdfTextEditor = ({
         }}
         ref={inputRef}
         style={{
-          ...pdfTextInkStyle(object, fontSizeCss, zoom),
+          ...pdfTextInkStyle(object, value, fontSizeCss, zoom),
           height: fontSizeCss,
           top: pageToCss(inkTop, zoom),
           width: "100%",
@@ -253,7 +274,7 @@ export const PdfTextLayer = ({
         const underline = linkAppearance?.underline;
         const frame = overlayFrame(object);
         const fontSize = object.fontSize ?? object.height;
-        const cover = dirtyPdfTextCoverBox(frame, fontSize, underline);
+        const covers = pdfTextCoverRects(object, page);
         const inkTop = pdfTextCssInkOffsetFromRunTop(
           object,
           frame,
@@ -267,12 +288,21 @@ export const PdfTextLayer = ({
             key={`dirty-${object.id}`}
             style={objectWrapperStyle({ ...frame, rotation: 0 }, zoom)}
           >
-            <PdfTextCoverPlate cover={cover} runBox={frame} zoom={zoom} />
+            {covers.map((cover) => (
+              <PdfTextCoverPlate
+                cover={cover}
+                coverColor={pdfTextCoverColor(object)}
+                key={`${cover.x}:${cover.y}:${cover.width}:${cover.height}`}
+                runBox={frame}
+                zoom={zoom}
+              />
+            ))}
             <div
               className="absolute left-0 whitespace-nowrap"
               style={{
                 ...pdfTextInkStyle(
                   object,
+                  object.text,
                   pageToCss(fontSize, zoom),
                   zoom,
                   fillColor

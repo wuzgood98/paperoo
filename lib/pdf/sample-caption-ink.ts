@@ -1,18 +1,9 @@
-import type {
-  EditorPage,
-  PdfTextCaptionUnderline,
-  Rect,
-} from "@/lib/editor/types";
+import type { PdfTextCaptionUnderline, Rect } from "@/lib/editor/types";
+import { readPixel, rgbToHex } from "@/lib/pdf/canvas-pixels";
+import type { ImagePixelSource } from "@/lib/pdf/canvas-pixels";
 
 const NEAR_WHITE = 240;
 const COLOR_BUCKET = 16;
-
-export interface ImagePixelSource {
-  data: Uint8ClampedArray;
-  height: number;
-  width: number;
-}
-
 export interface SampledCaptionInk {
   fill: string;
   underline: PdfTextCaptionUnderline;
@@ -24,14 +15,6 @@ interface UnderlineStreak {
   startRow: number;
 }
 
-const channelToHex = (value: number): string => {
-  const clamped = Math.round(Math.min(255, Math.max(0, value)));
-  return clamped.toString(16).padStart(2, "0");
-};
-
-const rgbToHex = (r: number, g: number, b: number): string =>
-  `#${channelToHex(r)}${channelToHex(g)}${channelToHex(b)}`;
-
 const bucketChannel = (value: number): number =>
   Math.min(255, Math.round(value / COLOR_BUCKET) * COLOR_BUCKET);
 
@@ -40,21 +23,6 @@ const bucketKey = (r: number, g: number, b: number): string =>
 
 const isPaper = (r: number, g: number, b: number): boolean =>
   r >= NEAR_WHITE && g >= NEAR_WHITE && b >= NEAR_WHITE;
-
-const readPixel = (
-  source: ImagePixelSource,
-  x: number,
-  y: number
-): [number, number, number] | null => {
-  if (x < 0 || y < 0 || x >= source.width || y >= source.height) {
-    return null;
-  }
-  const index = (y * source.width + x) * 4;
-  const r = source.data[index] ?? 0;
-  const g = source.data[index + 1] ?? 0;
-  const b = source.data[index + 2] ?? 0;
-  return [r, g, b];
-};
 
 const dominantColorInBand = (
   source: ImagePixelSource,
@@ -239,21 +207,6 @@ export const sampleCaptionInk = (
       offsetFromRunTop: underline.offsetFromRunTop * localHeight,
       thickness: Math.max(0.5, underline.thickness * localHeight),
     },
-  };
-};
-
-export const displayedRectToCanvasPixels = (
-  rect: Rect,
-  page: Pick<EditorPage, "width">,
-  canvas: HTMLCanvasElement,
-  zoom: number
-): Rect => {
-  const ratio = canvas.width / Math.max(1, page.width * zoom);
-  return {
-    height: Math.max(1, Math.ceil(rect.height * zoom * ratio)),
-    width: Math.max(1, Math.ceil(rect.width * zoom * ratio)),
-    x: Math.floor(rect.x * zoom * ratio),
-    y: Math.floor(rect.y * zoom * ratio),
   };
 };
 

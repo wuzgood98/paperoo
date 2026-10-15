@@ -141,3 +141,53 @@ test("setting the same fontSize or fontFamily does not mark PDF text dirty", () 
     expect(isPdfTextDirty(after)).toBe(false);
   }
 });
+
+const twoRunPage = (): EditorPage => ({
+  ...page(),
+  pdfTextObjects: [
+    pdfText(),
+    { ...pdfText(), id: "pdf-2", originalText: "Bye", text: "Bye" },
+  ],
+});
+
+const runById = (id: string): PdfTextObject | undefined =>
+  editorStore
+    .getState()
+    .document.pages[0]?.pdfTextObjects.find((object) => object.id === id);
+
+test("patchPdfTextById edits its run even after the selection moves", () => {
+  editorStore.resetDocument([twoRunPage()], "demo.pdf");
+  editorStore.selectPdfText("pdf-1");
+  editorStore.selectPdfText("pdf-2");
+  editorStore.patchPdfTextById("page-1", "pdf-1", (object) => ({
+    ...object,
+    text: "Hello World",
+  }));
+  expect(runById("pdf-1")?.text).toBe("Hello World");
+  expect(runById("pdf-2")?.text).toBe("Bye");
+});
+
+test("applyPdfTextMeasurement fills unset fields and stays out of undo", () => {
+  editorStore.resetDocument([page()], "demo.pdf");
+  editorStore.patchPdfTextById("page-1", "pdf-1", (object) => ({
+    ...object,
+    coverColor: "#fafafa",
+    text: "Hello World",
+  }));
+  const coverRects = [{ height: 18, width: 44, x: 70, y: 76 }];
+  editorStore.applyPdfTextMeasurement("page-1", "pdf-1", {
+    coverColor: "#000000",
+    coverColorUncertain: true,
+    coverRects,
+    reusableFontGlyphs: "Hdelo",
+  });
+  expect(runById("pdf-1")?.coverColor).toBe("#fafafa");
+  expect(runById("pdf-1")?.coverColorUncertain).toBeUndefined();
+  expect(runById("pdf-1")?.coverRects).toEqual(coverRects);
+
+  editorStore.undo();
+  expect(runById("pdf-1")?.text).toBe("Hello");
+  expect(runById("pdf-1")?.coverRects).toEqual(coverRects);
+  expect(runById("pdf-1")?.reusableFontGlyphs).toBe("Hdelo");
+  expect(editorStore.canUndo()).toBe(false);
+});

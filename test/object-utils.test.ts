@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 
 import {
   resizeRotatedBox,
@@ -19,11 +19,15 @@ import {
   PDF_VECTOR_COVER_BLEED,
   captionUnderlineCssOffsetFromRunTop,
   dirtyPdfTextCoverBox,
+  PDF_TEXT_COVER_BLEED,
   pdfImageCoverBox,
   pdfImageOriginalBox,
   pdfImageWithGestureBox,
   pdfLinkTextAppearance,
   pdfTextCssInkOffsetFromRunTop,
+  pdfTextCoverRects,
+  measurePdfTextCoverRects,
+  pdfTextOriginalInkBox,
   pdfTextOverlayBox,
   pdfVectorCoverBox,
   pdfVectorCoverGeometry,
@@ -36,6 +40,7 @@ import {
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
+import { editorStore } from "@/lib/editor/store";
 import type {
   EditorDocument,
   EditorPage,
@@ -838,6 +843,67 @@ test("dirtyPdfTextCoverBox pads left of the run and through the rule", () => {
   expect(cover.x + cover.width).toBeGreaterThan(runBox.x);
 });
 
+test("measurePdfTextCoverRects stays off the next line and the original width", () => {
+  const fontSize = 40;
+  const page: EditorPage = {
+    cropBox: { height: 792, width: 612, x: 0, y: 0 },
+    height: 792,
+    id: "page-1",
+    objects: [],
+    pdfAnnotationObjects: [],
+    pdfImageObjects: [],
+    pdfTextObjects: [],
+    pdfVectorObjects: [],
+    rotation: 0,
+    skippedPdfAnnotationSubtypes: [],
+    sourceIndex: 0,
+    sourceRotate: 0,
+    width: 612,
+  };
+  const stacked = (
+    id: string,
+    userBaseline: number,
+    width: number
+  ): PdfTextObject => ({
+    ...linkCaptionRun(),
+    ascentRatio: 0.8,
+    descentRatio: 0.35,
+    fontSize,
+    height: fontSize,
+    id,
+    originalText: "Prompt",
+    text: "Prompts are longer than the original run",
+    transform: [fontSize, 0, 0, fontSize, 72, userBaseline],
+    width,
+  });
+  const upper = stacked("upper", 400, 100);
+  const lower = stacked("lower", 360, 180);
+  page.pdfTextObjects = [upper, lower];
+
+  const lowerInk = pdfTextOriginalInkBox(lower, page);
+  const covers = measurePdfTextCoverRects(upper, page, [lower]);
+  const overlaps = (subject: (typeof covers)[number], other: typeof lowerInk) =>
+    subject.x < other.x + other.width &&
+    other.x < subject.x + subject.width &&
+    subject.y < other.y + other.height &&
+    other.y < subject.y + subject.height;
+
+  expect(covers.length).toBeGreaterThan(0);
+  const [initialCover] = covers;
+  let widest = initialCover;
+  for (const cover of covers) {
+    expect(overlaps(cover, lowerInk)).toBe(false);
+    if (widest && cover.width > widest.width) {
+      widest = cover;
+    }
+  }
+  const leftPad = fontSize * PDF_TEXT_COVER_LEFT_EM;
+  expect(widest.width).toBeCloseTo(
+    upper.width + leftPad + PDF_TEXT_COVER_BLEED * 2
+  );
+  expect(widest.x).toBeCloseTo(upper.x - leftPad - PDF_TEXT_COVER_BLEED);
+});
+
 test("pdfTextCssInkOffsetFromRunTop aligns CSS ascent with the matrix baseline", () => {
   const em = 20;
   const ascentRatio = 0.9;
@@ -906,4 +972,64 @@ test("hitTestPdfFormField hits a widget and returns the field", () => {
   expect(
     hitTestPdfFormField(document, "page-1", { x: 10, y: 10 })
   ).toBeUndefined();
+});
+
+test("pdfTextCoverRects prefers the rects measured when editing began", () => {
+  const run: PdfTextObject = {
+    ...linkCaptionRun(),
+    coverRects: [{ height: 12, width: 30, x: 70, y: 80 }],
+  };
+  const page: EditorPage = {
+    cropBox: { height: 792, width: 612, x: 0, y: 0 },
+    height: 792,
+    id: "page-1",
+    objects: [],
+    pdfAnnotationObjects: [],
+    pdfImageObjects: [],
+    pdfTextObjects: [run],
+    pdfVectorObjects: [],
+    rotation: 0,
+    skippedPdfAnnotationSubtypes: [],
+    sourceIndex: 0,
+    sourceRotate: 0,
+    width: 612,
+  };
+  expect(pdfTextCoverRects(run, page)).toEqual(run.coverRects);
+  const { coverRects: _saved, ...unmeasured } = run;
+  expect(pdfTextCoverRects(unmeasured, page)).toEqual(
+    measurePdfTextCoverRects(unmeasured, page, page.pdfTextObjects)
+  );
+});
+
+afterEach(() => {
+  editorStore.clearDocument();
+});
+
+test("a longer link label keeps the cover measured from the original run", () => {
+  const run = linkCaptionRun({ text: "Old label" });
+  const page = linkCaptionPage(run, []);
+  const original = measurePdfTextCoverRects(run, page, page.pdfTextObjects);
+  editorStore.resetDocument([page], "demo.pdf");
+  editorStore.applyPdfTextMeasurement(page.id, run.id, {
+    coverRects: original,
+    reusableFontGlyphs: "",
+  });
+
+  editorStore.commitPdfLinkLabel("A much longer replacement label", null, {
+    linkId: "link-1",
+    pageId: page.id,
+  });
+
+  const [committedPage] = editorStore.getState().document.pages;
+  const committed = committedPage?.pdfTextObjects[0];
+  expect(committed?.text).toBe("A much longer replacement label");
+  expect(committed?.width).toBeGreaterThan(run.width);
+  expect(
+    committed && committedPage && pdfTextCoverRects(committed, committedPage)
+  ).toEqual(original);
+  for (const rect of original) {
+    expect(rect.x + rect.width).toBeLessThanOrEqual(
+      run.x + run.width + PDF_TEXT_COVER_BLEED
+    );
+  }
 });

@@ -1,12 +1,11 @@
-import { normalizeRotation } from "@/lib/editor/coordinates";
 import {
   measurePdfTextWidth,
   pdfTextOverlayBox,
 } from "@/lib/editor/object-utils";
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
-import { getPageContentCanvas } from "@/lib/pdf/pdf-annotation-content-cache";
+import { displayedRectToCanvasPixels } from "@/lib/pdf/canvas-pixels";
+import { getDisplayedPageContentCanvas } from "@/lib/pdf/pdf-annotation-content-cache";
 import {
-  displayedRectToCanvasPixels,
   sampleCaptionInk,
   scaleCaptionInkToDisplayedBox,
 } from "@/lib/pdf/sample-caption-ink";
@@ -18,8 +17,7 @@ export const sampleLinkCaptionFromPage = async (
   primary: PdfTextObject,
   zoom: number
 ): Promise<SampledCaptionInk | null> => {
-  const rotation = normalizeRotation(page.sourceRotate + page.rotation);
-  const canvas = await getPageContentCanvas(page.sourceIndex, zoom, rotation);
+  const canvas = await getDisplayedPageContentCanvas(page, zoom);
   if (!canvas) {
     return null;
   }

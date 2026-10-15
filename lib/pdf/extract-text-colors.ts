@@ -18,6 +18,8 @@ const TEXT_RENDERING_FILL_STROKE = 2;
 export interface PdfTextColorOps {
   nextLineSetSpacingShowText: number;
   nextLineShowText: number;
+  paintFormXObjectBegin: number;
+  paintFormXObjectEnd: number;
   restore: number;
   save: number;
   setFillCMYKColor: number;
@@ -286,13 +288,13 @@ export const extractPdfTextPaints = (
   for (const [sourceIndex, fn] of list.fnArray.entries()) {
     const args = list.argsArray[sourceIndex];
 
-    if (fn === ops.save) {
+    if (fn === ops.save || fn === ops.paintFormXObjectBegin) {
       stack.push(current);
       current = patchState(current, {});
       continue;
     }
 
-    if (fn === ops.restore) {
+    if (fn === ops.restore || fn === ops.paintFormXObjectEnd) {
       current = stack.pop() ?? defaultState();
       continue;
     }

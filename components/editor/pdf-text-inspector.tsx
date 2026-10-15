@@ -13,15 +13,34 @@ import {
 } from "@/components/ui/select";
 import { normalizeHex } from "@/lib/editor/color";
 import {
+  isPdfTextDirty,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
 } from "@/lib/editor/object-utils";
-import { editorStore } from "@/lib/editor/store";
-import type { PdfTextObject } from "@/lib/editor/types";
+import { editorStore, useEditorStore } from "@/lib/editor/store";
+import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
+import { embeddedFontCanDraw } from "@/lib/pdf/embedded-font";
+import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
 
-export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => {
+export const PdfTextInspector = ({
+  object,
+  page,
+}: {
+  object: PdfTextObject;
+  page: EditorPage;
+}) => {
+  const zoom = useEditorStore((state) => state.zoom);
   const showFill = pdfTextNeedsFill(object.textRenderingMode);
   const showStroke = pdfTextNeedsStroke(object.textRenderingMode);
+
+  const patchObject = (
+    updater: (current: PdfTextObject) => PdfTextObject
+  ): void => {
+    editorStore.patchPdfTextById(page.id, object.id, updater);
+    if (isPdfTextDirty(updater(object))) {
+      void ensurePdfTextMeasured(page, object, zoom);
+    }
+  };
 
   return (
     <div className={inspectorStripClassName}>
@@ -33,7 +52,7 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => {
             if (color === object.color) {
               return;
             }
-            editorStore.patchPdfText((current) => ({ ...current, color }));
+            patchObject((current) => ({ ...current, color }));
           }}
           value={object.color}
         />
@@ -46,7 +65,7 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => {
             if (strokeColor === object.strokeColor) {
               return;
             }
-            editorStore.patchPdfText((current) => ({
+            patchObject((current) => ({
               ...current,
               strokeColor,
             }));
@@ -68,7 +87,7 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => {
             ) {
               return;
             }
-            editorStore.patchPdfText((current) => ({
+            patchObject((current) => ({
               ...current,
               strokeWidth,
             }));
@@ -85,7 +104,7 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => {
             if (fontFamily === object.fontFamily) {
               return;
             }
-            editorStore.patchPdfText((current) => ({
+            patchObject((current) => ({
               ...current,
               fontFamily,
             }));
@@ -114,12 +133,24 @@ export const PdfTextInspector = ({ object }: { object: PdfTextObject }) => {
             if (!Number.isFinite(fontSize) || fontSize === object.fontSize) {
               return;
             }
-            editorStore.patchPdfText((current) => ({ ...current, fontSize }));
+            patchObject((current) => ({ ...current, fontSize }));
           }}
           type="number"
           value={object.fontSize}
         />
       )}
+      {isPdfTextDirty(object) &&
+      object.reusableFontGlyphs !== undefined &&
+      !embeddedFontCanDraw(object, object.text) ? (
+        <p className="text-muted-foreground text-xs">
+          Original font can&apos;t draw these characters; using a substitute.
+        </p>
+      ) : null}
+      {object.coverColorUncertain ? (
+        <p className="text-muted-foreground text-xs">
+          The page behind this text is not one color, so the patch may show.
+        </p>
+      ) : null}
     </div>
   );
 };
