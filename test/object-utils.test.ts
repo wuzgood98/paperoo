@@ -904,7 +904,7 @@ test("measurePdfTextCoverRects stays off the next line and the original width", 
   expect(widest.x).toBeCloseTo(upper.x - leftPad - PDF_TEXT_COVER_BLEED);
 });
 
-test("pdfTextCssInkOffsetFromRunTop aligns CSS ascent with the matrix baseline", () => {
+test("pdfTextCssInkOffsetFromRunTop puts the CSS baseline on the matrix baseline", () => {
   const em = 20;
   const ascentRatio = 0.9;
   const transform = [em, 0, 0, em, 72, 200] as const;
