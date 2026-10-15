@@ -55,12 +55,15 @@ const MarkupInspector = ({ object }: { object: PdfMarkupAnnotation }) => (
             if (next === undefined) {
               return;
             }
-            editorStore.patchPdfAnnotation((current) =>
-              current.id === object.id && current.type === "pdf-highlight"
-                ? { ...current, opacity: next }
-                : current
+            editorStore.previewEdit(() =>
+              editorStore.patchPdfAnnotation((current) =>
+                current.id === object.id && current.type === "pdf-highlight"
+                  ? { ...current, opacity: next }
+                  : current
+              )
             );
           }}
+          onValueCommitted={() => editorStore.commitPreview()}
           step={0.05}
           value={[object.opacity ?? 1]}
         />

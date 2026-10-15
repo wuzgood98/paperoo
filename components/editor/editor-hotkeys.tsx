@@ -49,7 +49,12 @@ export const EditorHotkeys = () => {
   useEffect(
     () =>
       bindHotkeys([
-        { handler: () => editorStore.undo(), key: "z", meta: true },
+        {
+          handler: () => editorStore.undo(),
+          key: "z",
+          meta: true,
+          shift: false,
+        },
         {
           handler: () => editorStore.redo(),
           key: "z",

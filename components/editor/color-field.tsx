@@ -9,6 +9,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { hexToHsl, hslToHex, normalizeHex } from "@/lib/editor/color";
 import type { Hsl } from "@/lib/editor/color";
+import { editorStore } from "@/lib/editor/store";
 
 const SWATCHES = [
   "#111827",
@@ -96,8 +97,12 @@ export const ColorField = ({
                 if (lightness === undefined) {
                   return;
                 }
-                emitHsl({ ...hsl, l: lightness });
+                // Preview while dragging; onValueCommitted records one undo step.
+                editorStore.previewEdit(() =>
+                  emitHsl({ ...hsl, l: lightness })
+                );
               }}
+              onValueCommitted={() => editorStore.commitPreview()}
               step={1}
               value={[hsl.l]}
             />

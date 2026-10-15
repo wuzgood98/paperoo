@@ -248,11 +248,14 @@ export const InspectorBar = () => {
             if (next === undefined) {
               return;
             }
-            editorStore.patchSelected((object) => ({
-              ...object,
-              opacity: next,
-            }));
+            editorStore.previewEdit(() =>
+              editorStore.patchSelected((object) => ({
+                ...object,
+                opacity: next,
+              }))
+            );
           }}
+          onValueCommitted={() => editorStore.commitPreview()}
           step={0.05}
           value={[selected.opacity]}
         />

@@ -11,6 +11,7 @@ import {
   emptyHistory,
   pushHistory,
   redoHistory,
+  snapshotsEqual,
   undoHistory,
 } from "@/lib/editor/history";
 import type { HistoryState } from "@/lib/editor/history";
@@ -105,6 +106,10 @@ interface StoreInternal {
   assets: Map<string, ImageAsset>;
   history: HistoryState;
   listeners: Set<() => void>;
+  /** Snapshot from before the first uncommitted preview edit, if any. */
+  previewBase: HistorySnapshot | null;
+  /** True while a previewEdit callback runs, so its commits skip history. */
+  previewing: boolean;
   state: EditorStoreState;
 }
 
@@ -137,6 +142,8 @@ const internal: StoreInternal = {
   assets: new Map(),
   history: emptyHistory(),
   listeners: new Set(),
+  previewBase: null,
+  previewing: false,
   state: initialState(),
 };
 
@@ -161,8 +168,26 @@ const applySnapshot = (snapshot: HistorySnapshot): void => {
   };
 };
 
+/** Record pending preview edits as one undo step; returns true if one was pushed. */
+const flushPreview = (): boolean => {
+  const base = internal.previewBase;
+  if (!base) {
+    return false;
+  }
+  internal.previewBase = null;
+  if (snapshotsEqual(base, getSnapshot())) {
+    return false;
+  }
+  internal.history = pushHistory(internal.history, base);
+  return true;
+};
+
 const commit = (mutate: () => void, recordHistory: boolean): void => {
-  const before = recordHistory ? cloneSnapshot(getSnapshot()) : null;
+  const shouldRecord = recordHistory && !internal.previewing;
+  if (shouldRecord) {
+    flushPreview();
+  }
+  const before = shouldRecord ? cloneSnapshot(getSnapshot()) : null;
   mutate();
   if (before) {
     internal.history = pushHistory(internal.history, before);
@@ -239,6 +264,9 @@ const patchHistoryDocuments = (
     future: internal.history.future.map(patchSnapshot),
     past: internal.history.past.map(patchSnapshot),
   };
+  if (internal.previewBase) {
+    internal.previewBase = patchSnapshot(internal.previewBase);
+  }
 };
 
 const mapPdfTextObject = (
@@ -376,6 +404,7 @@ export const editorStore = {
   clearDocument: (): void => {
     editorStore.revokeAssets();
     internal.history = emptyHistory();
+    internal.previewBase = null;
     setState(initialState());
   },
 
@@ -577,6 +606,13 @@ export const editorStore = {
         ),
       };
     }, recordHistory);
+  },
+
+  /** Record the pending previewEdit changes as a single undo step. */
+  commitPreview: (): void => {
+    if (flushPreview()) {
+      emit();
+    }
   },
 
   deleteSelected: (): void => {
@@ -815,6 +851,21 @@ export const editorStore = {
     }, true);
   },
 
+  /**
+   * Apply a live edit (e.g. a slider mid-drag) without recording history.
+   * Successive previews collapse into one undo step, recorded by
+   * commitPreview(), the next recorded edit, or undo/redo.
+   */
+  previewEdit: (edit: () => void): void => {
+    internal.previewBase ??= cloneSnapshot(getSnapshot());
+    internal.previewing = true;
+    try {
+      edit();
+    } finally {
+      internal.previewing = false;
+    }
+  },
+
   recomputeFitZoom: (): void => {
     const page = currentPage();
     if (!page) {
@@ -831,6 +882,7 @@ export const editorStore = {
   },
 
   redo: (): void => {
+    flushPreview();
     const result = redoHistory(internal.history, getSnapshot());
     if (!result) {
       return;
@@ -889,6 +941,7 @@ export const editorStore = {
   ): void => {
     editorStore.revokeAssets();
     internal.history = emptyHistory();
+    internal.previewBase = null;
     setState({
       currentPageId: pages[0]?.id ?? null,
       document: { form, pages: mergeEmbeddedFontGlyphs(pages) },
@@ -1247,6 +1300,7 @@ export const editorStore = {
   },
 
   undo: (): void => {
+    flushPreview();
     const result = undoHistory(internal.history, getSnapshot());
     if (!result) {
       return;
