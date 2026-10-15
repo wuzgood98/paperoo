@@ -12,6 +12,9 @@ export const FONT_FILES = {
 /** Liberation Sans Regular hhea.ascent / unitsPerEm (1854 / 2048). */
 export const LIBERATION_SANS_ASCENT_RATIO = 1854 / 2048;
 
+/** Liberation Sans Regular hhea.descent / unitsPerEm (434 / 2048). */
+export const LIBERATION_SANS_DESCENT_RATIO = 434 / 2048;
+
 export const fontFamilyCss = (family: FontFamily): string => {
   switch (family) {
     case "serif": {
@@ -181,26 +184,76 @@ export const canvasTextWidth = (
   return context.measureText(text).width;
 };
 
-export const cssFontAscentRatio = (
-  family: FontFamily,
-  weight: FontWeight,
-  italic: boolean
-): number => {
-  if (typeof document === "undefined") {
-    return LIBERATION_SANS_ASCENT_RATIO;
+/**
+ * Baseline from the top of a `line-height: 1` box in Liberation Sans, as a
+ * fraction of the font size. CSS half-leading `(1 - (A + D)) / 2` is negative
+ * here, so the baseline sits above the bare ascent.
+ */
+export const LIBERATION_SANS_LINE_BOX_BASELINE_RATIO =
+  (1 + LIBERATION_SANS_ASCENT_RATIO - LIBERATION_SANS_DESCENT_RATIO) / 2;
+
+/** Pinch zoom produces many sizes; drop the cache rather than let it grow. */
+const MAX_BASELINE_CACHE_ENTRIES = 500;
+
+const baselineRatioCache = new Map<string, number>();
+let baselineCacheWatchingFonts = false;
+
+const watchFontsForBaselineCache = (): void => {
+  if (baselineCacheWatchingFonts || !document.fonts) {
+    return;
   }
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-  if (!context) {
-    return LIBERATION_SANS_ASCENT_RATIO;
+  baselineCacheWatchingFonts = true;
+  // A face that finishes loading changes the metrics of every key using it.
+  document.fonts.addEventListener("loadingdone", () => {
+    baselineRatioCache.clear();
+  });
+};
+
+const measureLineBoxBaseline = (font: string, fontSize: number): number => {
+  const box = document.createElement("div");
+  box.style.cssText =
+    "position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;white-space:nowrap";
+  box.style.font = font;
+  // After `font`: the shorthand resets line-height to normal.
+  box.style.lineHeight = "1";
+  box.textContent = "H";
+  const probe = document.createElement("span");
+  probe.style.cssText =
+    "display:inline-block;width:0;height:0;vertical-align:baseline";
+  box.append(probe);
+  document.body.append(box);
+  const baseline =
+    probe.getBoundingClientRect().bottom - box.getBoundingClientRect().top;
+  box.remove();
+  return baseline / fontSize;
+};
+
+/**
+ * Where the browser paints the baseline inside a `line-height: 1` box, as a
+ * fraction of the font size. Measured in the DOM because the browser snaps
+ * ascent and descent to pixels, so the ratio changes with size and face.
+ */
+export const cssLineBoxBaselineRatio = (options: CanvasFontOptions): number => {
+  const hasLayout =
+    typeof document !== "undefined" &&
+    document.body !== null &&
+    options.fontSize > 0;
+  if (!hasLayout) {
+    return LIBERATION_SANS_LINE_BOX_BASELINE_RATIO;
   }
-  const fontSize = 100;
-  context.font = `${italic ? "italic " : ""}${weight} ${fontSize}px ${fontFamilyCss(family)}`;
-  const metrics = context.measureText("");
-  const ascent = metrics.emHeightAscent || metrics.fontBoundingBoxAscent;
-  const hasAscent = Number.isFinite(ascent) && ascent > 0;
-  if (!hasAscent) {
-    return LIBERATION_SANS_ASCENT_RATIO;
+  const font = canvasFont(options);
+  const cached = baselineRatioCache.get(font);
+  if (cached !== undefined) {
+    return cached;
   }
-  return ascent / fontSize;
+  watchFontsForBaselineCache();
+  const ratio = measureLineBoxBaseline(font, options.fontSize);
+  if (!(Number.isFinite(ratio) && ratio > 0)) {
+    return LIBERATION_SANS_LINE_BOX_BASELINE_RATIO;
+  }
+  if (baselineRatioCache.size >= MAX_BASELINE_CACHE_ENTRIES) {
+    baselineRatioCache.clear();
+  }
+  baselineRatioCache.set(font, ratio);
+  return ratio;
 };

@@ -777,12 +777,17 @@ export const dirtyPdfTextCoverBox = (
   };
 };
 
+/**
+ * Top of a `line-height: 1` text box so its baseline lands on the PDF's.
+ * `cssBaselineRatio` is where that box paints the baseline (font-size
+ * fractions), not the font ascent: CSS half-leading moves it up.
+ */
 export const pdfTextCssInkOffsetFromRunTop = (
   object: Pick<PdfTextObject, "fontSize" | "height" | "transform">,
   runBox: Rect,
   crop: CropBox,
   sourceRotate: PageRotation,
-  cssAscentRatio: number
+  cssBaselineRatio: number
 ): number => {
   const baseline = pdfTextBaselineDisplayed(
     object.transform,
@@ -790,7 +795,7 @@ export const pdfTextCssInkOffsetFromRunTop = (
     sourceRotate
   );
   const fontSize = object.fontSize ?? object.height;
-  return baseline.y - runBox.y - fontSize * cssAscentRatio;
+  return baseline.y - runBox.y - fontSize * cssBaselineRatio;
 };
 
 const horizontalOverlapWidth = (left: Rect, right: Rect): number =>

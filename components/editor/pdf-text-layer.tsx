@@ -10,6 +10,7 @@ import {
   isPdfTextDirty,
   measurePdfTextWidth,
   pdfLinkTextAppearance,
+  pdfTextCanvasFont,
   pdfTextCssInkOffsetFromRunTop,
   pdfTextCoverColor,
   pdfTextCoverRects,
@@ -20,9 +21,9 @@ import {
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject, Rect } from "@/lib/editor/types";
 import {
-  cssFontAscentRatio,
+  cssLineBoxBaselineRatio,
   ensureEditorFonts,
-  LIBERATION_SANS_ASCENT_RATIO,
+  LIBERATION_SANS_LINE_BOX_BASELINE_RATIO,
 } from "@/lib/fonts/measure-text";
 import { pdfTextPreviewFontCss } from "@/lib/pdf/embedded-font";
 import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
@@ -63,15 +64,20 @@ const overlayFrame = (
   return pdfTextOverlayBox(object, measured);
 };
 
-const inkAscentRatio = (object: PdfTextObject, fontsReady: boolean): number => {
+/** Baseline ratio for the exact face and CSS size `pdfTextInkStyle` paints. */
+const inkBaselineRatio = (
+  object: PdfTextObject,
+  text: string,
+  fontSizeCss: number,
+  fontsReady: boolean
+): number => {
   if (!fontsReady) {
-    return LIBERATION_SANS_ASCENT_RATIO;
+    return LIBERATION_SANS_LINE_BOX_BASELINE_RATIO;
   }
-  return cssFontAscentRatio(
-    object.fontFamily ?? "sans",
-    object.fontWeight ?? 400,
-    object.italic === true
-  );
+  return cssLineBoxBaselineRatio({
+    ...pdfTextCanvasFont(object, text),
+    fontSize: fontSizeCss,
+  });
 };
 
 const PdfTextCoverPlate = ({
@@ -123,7 +129,7 @@ const PdfTextEditor = ({
     frame,
     page.cropBox,
     page.sourceRotate,
-    inkAscentRatio(object, fontsReady)
+    inkBaselineRatio(object, value, fontSizeCss, fontsReady)
   );
 
   useEffect(() => {
@@ -273,14 +279,14 @@ export const PdfTextLayer = ({
         const fillColor = linkAppearance?.fillColor ?? object.color;
         const underline = linkAppearance?.underline;
         const frame = overlayFrame(object);
-        const fontSize = object.fontSize ?? object.height;
+        const fontSizeCss = pageToCss(object.fontSize ?? object.height, zoom);
         const covers = pdfTextCoverRects(object, page);
         const inkTop = pdfTextCssInkOffsetFromRunTop(
           object,
           frame,
           page.cropBox,
           page.sourceRotate,
-          inkAscentRatio(object, fontsReady)
+          inkBaselineRatio(object, object.text, fontSizeCss, fontsReady)
         );
         return (
           <div
@@ -303,7 +309,7 @@ export const PdfTextLayer = ({
                 ...pdfTextInkStyle(
                   object,
                   object.text,
-                  pageToCss(fontSize, zoom),
+                  fontSizeCss,
                   zoom,
                   fillColor
                 ),
