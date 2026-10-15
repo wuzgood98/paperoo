@@ -84,12 +84,23 @@ interface GraphicsState {
   lineCap: number;
   lineJoin: number;
   lineWidth: number;
+  miterLimit: number;
   stroke: PdfVectorFillStyle | null;
   strokeOk: boolean;
   unsafe: boolean;
 }
 
 const VECTOR_MIN_AXIS = 1e-4;
+/** PDF default miter limit; export never sets one, so redraws use this. */
+const DEFAULT_MITER_LIMIT = 10;
+const LINE_JOIN_MITER = 0;
+/** Miter ratio of a 90° corner: any limit at or above it keeps rect corners sharp. */
+const RIGHT_ANGLE_MITER_RATIO = Math.SQRT2;
+const OPAQUE = 1;
+/** PDF.js normalizes BM /Normal and /Compatible to the canvas name. */
+const NORMAL_BLEND_MODES = new Set(["source-over", "Normal", "Compatible"]);
+/** ExtGState keys that do not change how a path paints. */
+const IGNORED_GSTATE_KEYS = new Set(["FL", "RI", "Type"]);
 const RECT_EPSILON = 1e-3;
 
 const finiteNumber = (value: OperatorArg): number | null =>
@@ -496,6 +507,7 @@ const defaultState = (): GraphicsState => ({
   lineCap: 0,
   lineJoin: 0,
   lineWidth: 1,
+  miterLimit: DEFAULT_MITER_LIMIT,
   stroke: { color: "#000000" },
   strokeOk: true,
   unsafe: false,
@@ -505,6 +517,116 @@ const patchState = (
   current: GraphicsState,
   patch: Partial<GraphicsState>
 ): GraphicsState => ({ ...current, ...patch });
+
+const isOpaqueAlpha = (value: OperatorArg): boolean => {
+  const alpha = finiteNumber(value);
+  return alpha !== null && alpha >= OPAQUE;
+};
+
+const isNormalBlendMode = (value: OperatorArg): boolean =>
+  isStringArg(value) && NORMAL_BLEND_MODES.has(value);
+
+/** D is [dashArray, phase]; an empty dash array is a solid line. */
+const isSolidDash = (value: OperatorArg): boolean => {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  const [dashArray] = value;
+  return Array.isArray(dashArray) && dashArray.length === 0;
+};
+
+type GStateEntry = readonly [string, OperatorArg];
+
+const isGStateEntry = (value: OperatorArg): value is GStateEntry =>
+  Array.isArray(value) && value.length >= 2 && isStringArg(value[0]);
+
+const readGStateEntries = (args: OperatorArg): GStateEntry[] | null => {
+  // PDF.js emits setGState as [[[key, value], ...]].
+  const entries = Array.isArray(args) ? args[0] : null;
+  if (!Array.isArray(entries)) {
+    return null;
+  }
+  const parsed: GStateEntry[] = [];
+  for (const entry of entries) {
+    if (!isGStateEntry(entry)) {
+      return null;
+    }
+    parsed.push(entry);
+  }
+  return parsed;
+};
+
+const readNonNegative = (value: OperatorArg): number | null => {
+  const number = finiteNumber(value);
+  return number !== null && number >= 0 ? number : null;
+};
+
+/**
+ * Applies an ExtGState to the graphics state. Keys the vector export can
+ * reproduce (line width, cap, join, miter limit) are tracked; anything that
+ * changes paint in ways the redraw cannot match (soft masks, transparency,
+ * blend modes, dashes, transfer functions, fonts, unknown keys) marks the
+ * state unsafe so later paths stay in the page content.
+ */
+// oxlint-disable-next-line eslint/complexity -- one branch per ExtGState key
+const applyGState = (
+  current: GraphicsState,
+  args: OperatorArg
+): GraphicsState => {
+  const entries = readGStateEntries(args);
+  if (!entries) {
+    return patchState(current, { unsafe: true });
+  }
+  const patch: Partial<GraphicsState> = {};
+  for (const [key, value] of entries) {
+    if (IGNORED_GSTATE_KEYS.has(key)) {
+      continue;
+    }
+    if (key === "LW" || key === "LC" || key === "LJ" || key === "ML") {
+      const number = readNonNegative(value);
+      if (number === null) {
+        return patchState(current, { unsafe: true });
+      }
+      if (key === "LW") {
+        patch.lineWidth = number;
+      } else if (key === "LC") {
+        patch.lineCap = number;
+      } else if (key === "LJ") {
+        patch.lineJoin = number;
+      } else {
+        patch.miterLimit = number;
+      }
+      continue;
+    }
+    const reproducible =
+      ((key === "CA" || key === "ca") && isOpaqueAlpha(value)) ||
+      (key === "BM" && isNormalBlendMode(value)) ||
+      (key === "SMask" && value === false) ||
+      (key === "D" && isSolidDash(value));
+    if (!reproducible) {
+      return patchState(current, { unsafe: true });
+    }
+  }
+  return patchState(current, patch);
+};
+
+/** Export redraws with the default miter limit; skip strokes where that changes corners. */
+const miterLimitChangesCorners = (
+  state: GraphicsState,
+  kind: PdfVectorKind
+): boolean => {
+  if (state.lineJoin !== LINE_JOIN_MITER || kind === "line") {
+    return false;
+  }
+  if (kind === "rect") {
+    return state.miterLimit < RIGHT_ANGLE_MITER_RATIO;
+  }
+  return state.miterLimit !== DEFAULT_MITER_LIMIT;
+};
+
+/** Line width is in user space at paint time; vectors are stored in page space. */
+const ctmLineScale = (ctm: Ctm): number =>
+  Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
 
 // oxlint-disable-next-line eslint/complexity -- operator-list walk branches once per OPS id, same shape as image extraction
 export const extractPdfVectorObjects = (
@@ -558,7 +680,12 @@ export const extractPdfVectorObjects = (
       continue;
     }
 
-    if (fn === ops.setGState || fn === ops.shadingFill) {
+    if (fn === ops.setGState) {
+      current = applyGState(current, args);
+      continue;
+    }
+
+    if (fn === ops.shadingFill) {
       current = patchState(current, { unsafe: true });
       continue;
     }
@@ -699,6 +826,11 @@ export const extractPdfVectorObjects = (
       continue;
     }
 
+    const kind = classifyVectorKind(commands);
+    if (usesStroke(paint) && miterLimitChangesCorners(current, kind)) {
+      continue;
+    }
+
     const fill: PdfVectorFillStyle | null = usesFill(paint)
       ? current.fill
       : null;
@@ -707,11 +839,10 @@ export const extractPdfVectorObjects = (
           color: current.stroke?.color ?? "#000000",
           lineCap: current.lineCap,
           lineJoin: current.lineJoin,
-          width: current.lineWidth,
+          width: current.lineWidth * ctmLineScale(current.ctm),
         }
       : null;
 
-    const kind = classifyVectorKind(commands);
     objects.push({
       commands,
       deleted: false,

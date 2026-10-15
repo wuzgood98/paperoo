@@ -3,6 +3,7 @@ import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
 import { IDENTITY_CTM } from "@/lib/editor/coordinates";
+import type { OperatorArg } from "@/lib/pdf/extract-images";
 import {
   classifyVectorKind,
   decodeDrawOps,
@@ -216,4 +217,136 @@ test("extractPdfVectorObjects reads vectors from a real PDF fixture", async () =
   expect(objects.length).toBeGreaterThanOrEqual(2);
   expect(objects.some((object) => object.kind === "line")).toBe(true);
   expect(objects.some((object) => object.kind === "rect")).toBe(true);
+});
+
+const GOOGLE_DOCS_LINE_WIDTH = 4 / 3;
+const GOOGLE_DOCS_SCALE = 0.75;
+
+const strokedLine = (): readonly [number, Float32Array[], Float32Array] => [
+  FAKE_OPS.stroke,
+  [new Float32Array([DrawOPS.moveTo, 96, 100, DrawOPS.lineTo, 720, 100])],
+  new Float32Array([96, 100, 720, 100]),
+];
+
+const extractWithGState = (gState: readonly OperatorArg[]) =>
+  extractPdfVectorObjects(
+    {
+      argsArray: [
+        undefined,
+        [GOOGLE_DOCS_SCALE, 0, 0, GOOGLE_DOCS_SCALE, 0, 0],
+        [gState],
+        strokedLine(),
+        undefined,
+      ],
+      fnArray: [
+        FAKE_OPS.save,
+        FAKE_OPS.transform,
+        FAKE_OPS.setGState,
+        FAKE_OPS.constructPath,
+        FAKE_OPS.restore,
+      ],
+    },
+    pageMeta,
+    FAKE_OPS
+  );
+
+test("extractPdfVectorObjects keeps paths after a Google Docs-style ExtGState", () => {
+  const objects = extractWithGState([
+    ["LW", GOOGLE_DOCS_LINE_WIDTH],
+    ["LC", 1],
+    ["LJ", 2],
+    ["ML", 10],
+    ["CA", 1],
+    ["ca", 1],
+    ["BM", "source-over"],
+    ["SMask", false],
+    ["D", [[], 0]],
+  ]);
+
+  expect(objects).toHaveLength(1);
+  expect(objects[0]?.kind).toBe("line");
+  expect(objects[0]?.stroke?.lineCap).toBe(1);
+  expect(objects[0]?.stroke?.lineJoin).toBe(2);
+  expect(objects[0]?.stroke?.width).toBeCloseTo(
+    GOOGLE_DOCS_LINE_WIDTH * GOOGLE_DOCS_SCALE,
+    5
+  );
+  expect(objects[0]?.width).toBeCloseTo(468, 5);
+});
+
+test.each([
+  ["a soft mask", ["SMask", true]],
+  ["stroke alpha", ["CA", 0.5]],
+  ["fill alpha", ["ca", 0.5]],
+  ["a non-normal blend mode", ["BM", "multiply"]],
+  ["a font", ["Font", ["g_font_1", 12]]],
+  ["a dash pattern", ["D", [[3, 2], 0]]],
+  ["a transfer function", ["TR", [null, null, null, null]]],
+  ["an unknown key", ["XX", 1]],
+] as const)(
+  "extractPdfVectorObjects skips paths after an ExtGState with %s",
+  (_label, entry) => {
+    expect(extractWithGState([["LW", 1], [...entry]])).toHaveLength(0);
+  }
+);
+
+test("extractPdfVectorObjects drops an unsafe ExtGState at restore", () => {
+  const objects = extractPdfVectorObjects(
+    {
+      argsArray: [
+        undefined,
+        [[["CA", 0.5]]],
+        strokedLine(),
+        undefined,
+        strokedLine(),
+      ],
+      fnArray: [
+        FAKE_OPS.save,
+        FAKE_OPS.setGState,
+        FAKE_OPS.constructPath,
+        FAKE_OPS.restore,
+        FAKE_OPS.constructPath,
+      ],
+    },
+    pageMeta,
+    FAKE_OPS
+  );
+
+  expect(objects).toHaveLength(1);
+  expect(objects[0]?.sourceIndex).toBe(4);
+});
+
+test("extractPdfVectorObjects keeps lines but skips curved miter strokes under a non-default miter limit", () => {
+  const curve = [
+    FAKE_OPS.stroke,
+    [
+      new Float32Array([
+        DrawOPS.moveTo,
+        0,
+        0,
+        DrawOPS.curveTo,
+        10,
+        40,
+        30,
+        40,
+        40,
+        0,
+      ]),
+    ],
+    new Float32Array([0, 0, 40, 40]),
+  ];
+  const objects = extractPdfVectorObjects(
+    {
+      argsArray: [[[["ML", 4]]], strokedLine(), curve],
+      fnArray: [
+        FAKE_OPS.setGState,
+        FAKE_OPS.constructPath,
+        FAKE_OPS.constructPath,
+      ],
+    },
+    pageMeta,
+    FAKE_OPS
+  );
+
+  expect(objects.map((object) => object.kind)).toEqual(["line"]);
 });
