@@ -1786,7 +1786,8 @@ export const createTextObject = (
   point: Point,
   overrides: Partial<TextObject> = {}
 ): TextObject => ({
-  content: "Text",
+  // Starts empty; the view shows a placeholder and an untouched box is discarded.
+  content: "",
   height: 28,
   id: createId(),
   opacity: DEFAULT_OBJECT_OPACITY,

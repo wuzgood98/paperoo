@@ -56,6 +56,26 @@ import { cn } from "@/lib/utils";
 
 const NO_OCR_WORDS: readonly OcrTextObject[] = [];
 
+/** Id of the topmost overlay text box under a client point, if any. */
+const overlayTextIdAt = (
+  root: HTMLElement,
+  clientX: number,
+  clientY: number,
+  objects: EditorPage["objects"]
+): string | null => {
+  for (const element of document.elementsFromPoint(clientX, clientY)) {
+    const node = element.closest<HTMLElement>("[data-editor-object-id]");
+    if (!(node && root.contains(node))) {
+      continue;
+    }
+    const id = node.dataset.editorObjectId;
+    return objects.some((object) => object.id === id && object.type === "text")
+      ? (id ?? null)
+      : null;
+  }
+  return null;
+};
+
 // oxlint-disable-next-line react-doctor/no-giant-component -- single overlay coordinates PDF layers, gestures, and tools.
 export const EditorOverlay = ({
   page,
@@ -229,6 +249,19 @@ export const EditorOverlay = ({
         if (tool !== "select" || event.button !== 0) {
           return;
         }
+        // A drag's pointer capture retargets the double-click to this root,
+        // so find the overlay text box under the pointer here.
+        const textId = overlayTextIdAt(
+          event.currentTarget,
+          event.clientX,
+          event.clientY,
+          page.objects
+        );
+        if (textId) {
+          setEditingPdfTextId(null);
+          setEditingId(textId);
+          return;
+        }
         setEditingId(null);
         const point = toPage(event);
         if (beginOcrEditAtPoint(page, point, ocrWords, setEditingId)) {
@@ -256,6 +289,8 @@ export const EditorOverlay = ({
         const point = toPage(event);
 
         if (tool === "text") {
+          // Keep the follow-up mousedown from moving focus off the new box.
+          event.preventDefault();
           const object = createTextObject(
             point,
             editorStore.getState().textStyle
@@ -298,6 +333,15 @@ export const EditorOverlay = ({
         }
 
         if (event.target === event.currentTarget) {
+          // Let an open inline editor commit through its own blur before the
+          // selection below closes it.
+          const focused = document.activeElement;
+          if (
+            focused instanceof HTMLElement &&
+            event.currentTarget.contains(focused)
+          ) {
+            focused.blur();
+          }
           if (tool === "select") {
             selectPdfObjectAtPoint(page, point, {
               ocrWords,

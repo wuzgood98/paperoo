@@ -12,3 +12,9 @@ export const fontFamilyFromSelect = (value: string): FontFamily => {
   }
   return "sans";
 };
+
+const FONT_SIZE_STEPS_PER_POINT = 100;
+
+/** Font size as the inspector shows it: two decimals, full precision kept in the store. */
+export const roundFontSize = (size: number): number =>
+  Math.round(size * FONT_SIZE_STEPS_PER_POINT) / FONT_SIZE_STEPS_PER_POINT;

@@ -902,6 +902,11 @@ const drawObject = async (
 
   switch (object.type) {
     case "text": {
+      // A blank box placed by the text tool draws nothing. OCR edits still
+      // export so their white field keeps hiding the scanned word.
+      if (!(object.ocrWordId || object.content.trim())) {
+        return;
+      }
       await drawTextObject(
         page,
         object,

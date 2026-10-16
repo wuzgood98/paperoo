@@ -56,8 +56,10 @@ const OverlayObjectView = ({
       <div
         className="absolute origin-center"
         data-editor-object-id={object.id}
-        onDoubleClick={() => {
+        onDoubleClick={(event) => {
           if (object.type === "text") {
+            // The overlay root's double-click clears inline editing; stop here.
+            event.stopPropagation();
             setEditingId(object.id);
           }
         }}
@@ -94,6 +96,13 @@ const OverlayObjectView = ({
             onTextCommit={(content) => {
               setEditingId(null);
               if (object.type !== "text") {
+                return;
+              }
+              if (!(object.ocrWordId || content.trim())) {
+                editorStore.discardEmptyText(object.id);
+                return;
+              }
+              if (content === object.content) {
                 return;
               }
               editorStore.commitObject(object.id, { ...object, content }, true);

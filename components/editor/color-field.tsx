@@ -74,6 +74,7 @@ export const ColorField = ({
         className="flex items-center gap-2 text-xs"
         render={
           <button
+            aria-label={label}
             className="editor-pressable flex items-center gap-2"
             type="button"
           >
