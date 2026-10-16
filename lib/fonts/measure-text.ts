@@ -167,6 +167,29 @@ export const measurePdfTextGlyphInk = (
   return glyphs;
 };
 
+/** Hover hit-tests and overlay renders re-measure the same runs constantly. */
+const MAX_WIDTH_CACHE_ENTRIES = 5000;
+
+const widthCache = new Map<string, number>();
+
+/** Pinch zoom produces many sizes; drop the cache rather than let it grow. */
+const MAX_BASELINE_CACHE_ENTRIES = 500;
+
+const baselineRatioCache = new Map<string, number>();
+let watchingFontLoads = false;
+
+const watchFontLoads = (): void => {
+  if (watchingFontLoads || !document.fonts) {
+    return;
+  }
+  watchingFontLoads = true;
+  // A face that finishes loading changes the metrics of every key using it.
+  document.fonts.addEventListener("loadingdone", () => {
+    baselineRatioCache.clear();
+    widthCache.clear();
+  });
+};
+
 export const canvasTextWidth = (
   text: string,
   options: CanvasFontOptions
@@ -180,8 +203,20 @@ export const canvasTextWidth = (
     return text.length * options.fontSize * 0.5;
   }
 
-  context.font = canvasFont(options);
-  return context.measureText(text).width;
+  const font = canvasFont(options);
+  const key = `${font}\0${text}`;
+  const cached = widthCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  watchFontLoads();
+  context.font = font;
+  const { width } = context.measureText(text);
+  if (widthCache.size >= MAX_WIDTH_CACHE_ENTRIES) {
+    widthCache.clear();
+  }
+  widthCache.set(key, width);
+  return width;
 };
 
 /**
@@ -191,23 +226,6 @@ export const canvasTextWidth = (
  */
 export const LIBERATION_SANS_LINE_BOX_BASELINE_RATIO =
   (1 + LIBERATION_SANS_ASCENT_RATIO - LIBERATION_SANS_DESCENT_RATIO) / 2;
-
-/** Pinch zoom produces many sizes; drop the cache rather than let it grow. */
-const MAX_BASELINE_CACHE_ENTRIES = 500;
-
-const baselineRatioCache = new Map<string, number>();
-let baselineCacheWatchingFonts = false;
-
-const watchFontsForBaselineCache = (): void => {
-  if (baselineCacheWatchingFonts || !document.fonts) {
-    return;
-  }
-  baselineCacheWatchingFonts = true;
-  // A face that finishes loading changes the metrics of every key using it.
-  document.fonts.addEventListener("loadingdone", () => {
-    baselineRatioCache.clear();
-  });
-};
 
 const measureLineBoxBaseline = (font: string, fontSize: number): number => {
   const box = document.createElement("div");
@@ -246,7 +264,7 @@ export const cssLineBoxBaselineRatio = (options: CanvasFontOptions): number => {
   if (cached !== undefined) {
     return cached;
   }
-  watchFontsForBaselineCache();
+  watchFontLoads();
   const ratio = measureLineBoxBaseline(font, options.fontSize);
   if (!(Number.isFinite(ratio) && ratio > 0)) {
     return LIBERATION_SANS_LINE_BOX_BASELINE_RATIO;

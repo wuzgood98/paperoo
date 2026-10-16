@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
@@ -123,7 +123,9 @@ const PdfTextEditor = ({
   const frame = overlayFrame(object, value);
   const fontSize = object.fontSize ?? object.height;
   const fontSizeCss = pageToCss(fontSize, zoom);
-  const covers = pdfTextCoverRects(object, page);
+  // Keystrokes only change `draft`; until measurement lands this walks the
+  // whole page, so compute it once per run and page version.
+  const covers = useMemo(() => pdfTextCoverRects(object, page), [object, page]);
   const inkTop = pdfTextCssInkOffsetFromRunTop(
     object,
     frame,
