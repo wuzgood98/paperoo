@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { memo } from "react";
 import type { RefObject } from "react";
 
 import {
@@ -59,7 +60,7 @@ const PdfImagePreview = ({
   );
 };
 
-export const PdfImageLayer = ({
+const PdfImageLayerView = ({
   boundsRef,
   gestureRef,
   hoveredId,
@@ -210,3 +211,6 @@ export const PdfImageLayer = ({
     })}
   </>
 );
+
+/** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
+export const PdfImageLayer = memo(PdfImageLayerView);

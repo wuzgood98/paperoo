@@ -7,7 +7,7 @@ import {
   SquareStackIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { PageThumbnail } from "@/components/editor/page-thumbnail";
 import { ToolbarTip } from "@/components/editor/toolbar-tip";
@@ -113,11 +113,89 @@ const PageActions = () => {
   );
 };
 
+/** Reorder from the store's current pages, so rows need not hold the list. */
+const movePage = (from: number, to: number): void => {
+  const next = [...editorStore.getState().document.pages];
+  const [moved] = next.splice(from, 1);
+  if (!moved) {
+    return;
+  }
+  next.splice(to, 0, moved);
+  editorStore.setPages(next);
+};
+
+const PageThumbnailItemView = ({
+  index,
+  onDragStartAt,
+  onDropAt,
+  onPageSelect,
+  page,
+  registerItem,
+  selected,
+}: {
+  index: number;
+  onDragStartAt: (index: number) => void;
+  onDropAt: (index: number) => void;
+  onPageSelect?: () => void;
+  page: EditorPage;
+  registerItem: (pageId: string, node: HTMLButtonElement | null) => void;
+  selected: boolean;
+}) => (
+  <li className="flex flex-col gap-1">
+    <button
+      className="editor-pressable focus-visible:ring-ring rounded-md text-left outline-none focus-visible:ring-2"
+      draggable
+      onClick={() => {
+        editorStore.setCurrentPage(page.id);
+        onPageSelect?.();
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+      }}
+      onDragStart={() => onDragStartAt(index)}
+      onDrop={() => onDropAt(index)}
+      ref={(node) => registerItem(page.id, node)}
+      type="button"
+    >
+      <PageThumbnail page={page} selected={selected} />
+    </button>
+    <span className="text-muted-foreground text-center text-xs">
+      {index + 1}
+    </span>
+  </li>
+);
+
+/** Memoized: an edit on one page re-renders only that page's row. */
+const PageThumbnailItem = memo(PageThumbnailItemView);
+
 const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
   const pages = useEditorStore((state) => state.document.pages);
   const currentPageId = useEditorStore((state) => state.currentPageId);
   const dragIndex = useRef<number | null>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  const onDragStartAt = useCallback((index: number) => {
+    dragIndex.current = index;
+  }, []);
+  const onDropAt = useCallback((index: number) => {
+    const from = dragIndex.current;
+    dragIndex.current = null;
+    if (from === null || from === index) {
+      return;
+    }
+    movePage(from, index);
+  }, []);
+
+  const registerItem = useCallback(
+    (pageId: string, node: HTMLButtonElement | null) => {
+      if (node) {
+        itemRefs.current.set(pageId, node);
+        return;
+      }
+      itemRefs.current.delete(pageId);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!currentPageId) {
@@ -130,49 +208,16 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
   return (
     <ol className="flex flex-col gap-3 pb-3">
       {pages.map((page, index) => (
-        <li className="flex flex-col gap-1" key={page.id}>
-          <button
-            className="editor-pressable focus-visible:ring-ring rounded-md text-left outline-none focus-visible:ring-2"
-            draggable
-            onClick={() => {
-              editorStore.setCurrentPage(page.id);
-              onPageSelect?.();
-            }}
-            onDragOver={(event) => {
-              event.preventDefault();
-            }}
-            onDragStart={() => {
-              dragIndex.current = index;
-            }}
-            onDrop={() => {
-              const from = dragIndex.current;
-              dragIndex.current = null;
-              if (from === null || from === index) {
-                return;
-              }
-              const next = [...pages];
-              const [moved] = next.splice(from, 1);
-              if (!moved) {
-                return;
-              }
-              next.splice(index, 0, moved);
-              editorStore.setPages(next);
-            }}
-            ref={(node) => {
-              if (node) {
-                itemRefs.current.set(page.id, node);
-                return;
-              }
-              itemRefs.current.delete(page.id);
-            }}
-            type="button"
-          >
-            <PageThumbnail page={page} selected={page.id === currentPageId} />
-          </button>
-          <span className="text-muted-foreground text-center text-xs">
-            {index + 1}
-          </span>
-        </li>
+        <PageThumbnailItem
+          index={index}
+          key={page.id}
+          onDragStartAt={onDragStartAt}
+          onDropAt={onDropAt}
+          onPageSelect={onPageSelect}
+          page={page}
+          registerItem={registerItem}
+          selected={page.id === currentPageId}
+        />
       ))}
     </ol>
   );
@@ -181,6 +226,7 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
 export const PageSheetButton = () => {
   const pages = useEditorStore((state) => state.document.pages);
   const [open, setOpen] = useState(false);
+  const closeSheet = useCallback(() => setOpen(false), []);
 
   return (
     <>
@@ -204,7 +250,7 @@ export const PageSheetButton = () => {
             </div>
           </DialogHeader>
           <DialogPanel>
-            <PageThumbnails onPageSelect={() => setOpen(false)} />
+            <PageThumbnails onPageSelect={closeSheet} />
           </DialogPanel>
         </DialogPopup>
       </Dialog>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { memo, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
@@ -399,7 +399,7 @@ const FormWidgetChrome = ({
   );
 };
 
-export const PdfFormLayer = ({
+const PdfFormLayerView = ({
   editingId,
   hoveredId,
   onBeginEdit,
@@ -416,8 +416,9 @@ export const PdfFormLayer = ({
   selectedId: string | null;
   zoom: number;
 }) => {
-  const document = useEditorStore((state) => state.document);
-  const items = pdfFormWidgetsOnPage(document, pageId);
+  // Only the form: edits to page content must not re-render form widgets.
+  const form = useEditorStore((state) => state.document.form);
+  const items = pdfFormWidgetsOnPage({ form }, pageId);
 
   return (
     <>
@@ -438,3 +439,6 @@ export const PdfFormLayer = ({
     </>
   );
 };
+
+/** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
+export const PdfFormLayer = memo(PdfFormLayerView);

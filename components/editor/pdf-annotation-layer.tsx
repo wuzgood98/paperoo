@@ -1,7 +1,7 @@
 "use client";
 
 import type { RefObject } from "react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   requireOverlayRoot,
@@ -100,9 +100,13 @@ const PdfAnnotationDirtyBackdrop = ({
   zoom: number;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const dirty = page.pdfAnnotationObjects.filter(
-    shouldPaintPdfAnnotationPreview
+  // Memoized so the canvas copy below reruns only when annotations change.
+  const dirty = useMemo(
+    () => page.pdfAnnotationObjects.filter(shouldPaintPdfAnnotationPreview),
+    [page.pdfAnnotationObjects]
   );
+
+  const { sourceIndex, sourceRotate, width: pageWidth } = page;
 
   useEffect(() => {
     if (dirty.length === 0) {
@@ -112,7 +116,10 @@ const PdfAnnotationDirtyBackdrop = ({
     const draw = async () => {
       // Displayed space: this canvas sits in the overlay, which the page
       // frame rotates with CSS, and regions are displayed rects.
-      const source = await getDisplayedPageContentCanvas(page, zoom);
+      const source = await getDisplayedPageContentCanvas(
+        { sourceIndex, sourceRotate },
+        zoom
+      );
       const canvas = canvasRef.current;
       if (!source || !canvas || cancelled) {
         return;
@@ -126,7 +133,7 @@ const PdfAnnotationDirtyBackdrop = ({
         return;
       }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const ratio = source.width / Math.max(1, page.width * zoom);
+      const ratio = source.width / Math.max(1, pageWidth * zoom);
       for (const object of dirty) {
         const regions =
           "quads" in object && object.quads.length > 0
@@ -145,7 +152,7 @@ const PdfAnnotationDirtyBackdrop = ({
     return () => {
       cancelled = true;
     };
-  }, [dirty, page, zoom]);
+  }, [dirty, pageWidth, sourceIndex, sourceRotate, zoom]);
 
   if (dirty.length === 0) {
     return null;
@@ -189,7 +196,7 @@ const AnnotationPreviewContent = ({
   return null;
 };
 
-export const PdfAnnotationLayer = ({
+const PdfAnnotationLayerView = ({
   boundsRef,
   gestureRef,
   hoveredId,
@@ -354,3 +361,6 @@ export const PdfAnnotationLayer = ({
     </>
   );
 };
+
+/** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
+export const PdfAnnotationLayer = memo(PdfAnnotationLayerView);

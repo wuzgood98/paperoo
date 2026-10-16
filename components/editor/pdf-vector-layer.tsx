@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { RefObject } from "react";
 
 import {
@@ -48,6 +49,12 @@ type PathBox = Pick<
   | "y"
 >;
 
+/** 0.001pt is far below a device pixel and keeps long `d` strings short. */
+const PATH_PRECISION = 1000;
+
+const roundPathCoordinate = (value: number): number =>
+  Math.round(value * PATH_PRECISION) / PATH_PRECISION;
+
 const mapCommandPoint = (
   point: Point,
   box: PathBox,
@@ -59,8 +66,8 @@ const mapCommandPoint = (
   const sx = box.originalWidth > 1e-6 ? box.width / box.originalWidth : 1;
   const sy = box.originalHeight > 1e-6 ? box.height / box.originalHeight : 1;
   return {
-    x: (displayed.x - box.originalX) * sx + pad,
-    y: (displayed.y - box.originalY) * sy + pad,
+    x: roundPathCoordinate((displayed.x - box.originalX) * sx + pad),
+    y: roundPathCoordinate((displayed.y - box.originalY) * sy + pad),
   };
 };
 
@@ -131,6 +138,55 @@ const commandsToSvgPath = (
   return parts.join(" ");
 };
 
+/** Covers and previews share one command list with different boxes. */
+const MAX_PATHS_PER_COMMANDS = 8;
+
+const svgPathCache = new WeakMap<
+  readonly PdfPathCommand[],
+  Map<string, string>
+>();
+
+/** Command lists are immutable, so a path string is reused until geometry changes. */
+const cachedSvgPath = (
+  commands: readonly PdfPathCommand[],
+  box: PathBox,
+  crop: CropBox,
+  sourceRotate: PageRotation,
+  pad: number
+): string => {
+  const key = [
+    box.x,
+    box.y,
+    box.width,
+    box.height,
+    box.originalX,
+    box.originalY,
+    box.originalWidth,
+    box.originalHeight,
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
+    sourceRotate,
+    pad,
+  ].join(",");
+  let paths = svgPathCache.get(commands);
+  if (!paths) {
+    paths = new Map();
+    svgPathCache.set(commands, paths);
+  }
+  const cached = paths.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  if (paths.size >= MAX_PATHS_PER_COMMANDS) {
+    paths.clear();
+  }
+  const d = commandsToSvgPath(commands, box, crop, sourceRotate, pad);
+  paths.set(key, d);
+  return d;
+};
+
 const strokeLinecap = (
   lineCap: number | undefined
 ): "butt" | "round" | "square" => {
@@ -181,7 +237,7 @@ const PdfVectorPathSvg = ({
   const pad = pdfVectorStrokePad(strokeWidth > 0 ? strokeWidth : undefined);
   const paddedWidth = box.width + pad * 2;
   const paddedHeight = box.height + pad * 2;
-  const d = commandsToSvgPath(commands, box, crop, sourceRotate, pad);
+  const d = cachedSvgPath(commands, box, crop, sourceRotate, pad);
   return (
     <svg
       aria-hidden
@@ -295,7 +351,7 @@ const PdfVectorCover = ({
   );
 };
 
-export const PdfVectorLayer = ({
+const PdfVectorLayerView = ({
   boundsRef,
   crop,
   gestureRef,
@@ -455,3 +511,6 @@ export const PdfVectorLayer = ({
     })}
   </>
 );
+
+/** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
+export const PdfVectorLayer = memo(PdfVectorLayerView);
