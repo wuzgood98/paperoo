@@ -24,6 +24,22 @@ const SWATCHES = [
 
 const LIGHTNESS_MAX = 100;
 
+const commitPreview = (): void => editorStore.commitPreview();
+
+/**
+ * The native picker fires `input` on every drag step but `change` only once
+ * it closes; React's onChange is the former, so listen for the latter here.
+ */
+const commitOnNativeChange = (
+  input: HTMLInputElement | null
+): (() => void) | undefined => {
+  if (!input) {
+    return;
+  }
+  input.addEventListener("change", commitPreview);
+  return () => input.removeEventListener("change", commitPreview);
+};
+
 export const ColorField = ({
   label,
   onChange,
@@ -102,7 +118,7 @@ export const ColorField = ({
                   emitHsl({ ...hsl, l: lightness })
                 );
               }}
-              onValueCommitted={() => editorStore.commitPreview()}
+              onValueCommitted={commitPreview}
               step={1}
               value={[hsl.l]}
             />
@@ -113,7 +129,12 @@ export const ColorField = ({
               className="w-full cursor-pointer"
               style={{ padding: 0 }}
               id={`${label}-color`}
-              onValueChange={(next) => onChange(next ?? "")}
+              onBlur={commitPreview}
+              // Preview while the picker drags; its change event records one undo step.
+              onValueChange={(next) =>
+                editorStore.previewEdit(() => onChange(next ?? ""))
+              }
+              ref={commitOnNativeChange}
               type="color"
               value={value}
             />
