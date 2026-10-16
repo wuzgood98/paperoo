@@ -52,6 +52,7 @@ import {
   attachRemovalTargets,
   indexPageRemovals,
 } from "@/lib/pdf/removal-targets";
+import { sliceType3Glyphs } from "@/lib/pdf/type3-glyphs";
 
 export const PDF_HEADER = "%PDF";
 
@@ -500,6 +501,7 @@ class PdfSession {
       skippedPdfAnnotationSubtypes: skippedSubtypes,
       sourceIndex,
       sourceRotate,
+      type3Glyphs: sliceType3Glyphs(operatorList, OPS, fontFaces),
       width: viewport.width,
     } satisfies EditorPage;
     page.cleanup();

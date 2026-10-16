@@ -25,6 +25,11 @@ import {
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
 import { embeddedFontCanDraw } from "@/lib/pdf/embedded-font";
+import {
+  glyphSourceMessage,
+  rebuiltGlyphLayout,
+  resolveGlyphFace,
+} from "@/lib/pdf/glyph-face";
 import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
 
 export const PdfTextInspector = ({
@@ -35,6 +40,16 @@ export const PdfTextInspector = ({
   page: EditorPage;
 }) => {
   const zoom = useEditorStore((state) => state.zoom);
+  const pages = useEditorStore((state) => state.document.pages);
+  const figmaRun = object.invisibleGlyphs === true;
+  const glyphMessage =
+    figmaRun && isPdfTextDirty(object)
+      ? glyphSourceMessage(
+          resolveGlyphFace(pages, page.id, object),
+          rebuiltGlyphLayout(pages, page, object),
+          object.text
+        )
+      : null;
   const showFill = pdfTextNeedsFill(object.textRenderingMode);
   const showStroke = pdfTextNeedsStroke(object.textRenderingMode);
 
@@ -146,7 +161,11 @@ export const PdfTextInspector = ({
           value={roundFontSize(object.fontSize)}
         />
       )}
-      {isPdfTextDirty(object) &&
+      {glyphMessage ? (
+        <p className="text-muted-foreground text-xs">{glyphMessage}</p>
+      ) : null}
+      {!figmaRun &&
+      isPdfTextDirty(object) &&
       object.reusableFontGlyphs !== undefined &&
       !embeddedFontCanDraw(object, object.text) ? (
         <p className="text-muted-foreground text-xs">

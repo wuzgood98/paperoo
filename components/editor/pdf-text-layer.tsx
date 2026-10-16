@@ -4,6 +4,11 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { PdfVectorCover } from "@/components/editor/pdf-vector-layer";
+import {
+  RebuiltGlyphSvg,
+  RebuiltGlyphText,
+  useRebuiltGlyphLayout,
+} from "@/components/editor/rebuilt-glyph-text";
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
   captionUnderlineCssOffsetFromRunTop,
@@ -142,6 +147,7 @@ const PdfTextEditor = ({
     };
   }, [object.id, object.text, page.id, value]);
   const frame = overlayFrame(object, value);
+  const rebuilt = useRebuiltGlyphLayout(object, page, value);
   const fontSize = object.fontSize ?? object.height;
   const fontSizeCss = pageToCss(fontSize, zoom);
   // Keystrokes only change `draft`; until measurement lands this walks the
@@ -220,6 +226,16 @@ const PdfTextEditor = ({
           zoom={zoom}
         />
       ))}
+      {rebuilt ? (
+        <RebuiltGlyphSvg
+          fill={object.color}
+          frame={frame}
+          layout={rebuilt}
+          object={object}
+          page={page}
+          zoom={zoom}
+        />
+      ) : null}
       <input
         aria-label="Edit PDF text"
         className="absolute left-0 min-w-0 border-0 bg-transparent p-0 outline-none select-text"
@@ -254,6 +270,10 @@ const PdfTextEditor = ({
         ref={inputRef}
         style={{
           ...pdfTextInkStyle(object, value, fontSizeCss, zoom),
+          // The rebuilt glyphs above are the visible text; keep the caret.
+          ...(rebuilt
+            ? { caretColor: object.color, color: "transparent" }
+            : undefined),
           height: fontSizeCss,
           top: pageToCss(inkTop, zoom),
           width: "100%",
@@ -387,26 +407,34 @@ const PdfTextLayerView = ({
             key={`dirty-${object.id}`}
             style={objectWrapperStyle({ ...frame, rotation: 0 }, zoom)}
           >
-            <div
-              className="absolute left-0 whitespace-nowrap"
-              style={{
-                ...pdfTextInkStyle(
-                  object,
-                  object.text,
-                  fontSizeCss,
-                  zoom,
-                  fillColor
-                ),
-                top: pageToCss(inkTop, zoom),
-                transform:
-                  object.rotation === 0
-                    ? undefined
-                    : `rotate(${object.rotation}deg)`,
-                transformOrigin: "left top",
-              }}
+            <RebuiltGlyphText
+              fill={fillColor}
+              frame={frame}
+              object={object}
+              page={page}
+              zoom={zoom}
             >
-              {object.text}
-            </div>
+              <div
+                className="absolute left-0 whitespace-nowrap"
+                style={{
+                  ...pdfTextInkStyle(
+                    object,
+                    object.text,
+                    fontSizeCss,
+                    zoom,
+                    fillColor
+                  ),
+                  top: pageToCss(inkTop, zoom),
+                  transform:
+                    object.rotation === 0
+                      ? undefined
+                      : `rotate(${object.rotation}deg)`,
+                  transformOrigin: "left top",
+                }}
+              >
+                {object.text}
+              </div>
+            </RebuiltGlyphText>
             {underline ? (
               <div
                 className="absolute left-0"

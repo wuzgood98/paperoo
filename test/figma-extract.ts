@@ -20,6 +20,7 @@ import {
   attachRemovalTargets,
   indexPageRemovals,
 } from "@/lib/pdf/removal-targets";
+import { sliceType3Glyphs } from "@/lib/pdf/type3-glyphs";
 
 import { loadPdfJsDocument } from "./pdfjs-node";
 
@@ -86,6 +87,7 @@ export const extractFigmaPage = async (
     skippedPdfAnnotationSubtypes: [],
     sourceIndex: 0,
     sourceRotate: 0,
+    type3Glyphs: sliceType3Glyphs(operatorList, OPS, fontFaces),
     width: cropBox.width,
   };
   return { page, runs, vectors };

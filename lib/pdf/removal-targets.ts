@@ -353,8 +353,9 @@ export const attachRemovalTargets = (
             glyphCount: show.glyphCount,
             showOrdinal: show.ordinal,
           },
+          showOrdinal: show.ordinal,
         }
-      : run;
+      : { ...run, showOrdinal: show.ordinal };
   });
 
   const targetedVectors = vectors.map((vector) => {
