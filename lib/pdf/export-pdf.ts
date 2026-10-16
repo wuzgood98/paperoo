@@ -87,6 +87,8 @@ import {
   copyPagesWithAcroForm,
 } from "@/lib/pdf/export-forms";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
+import { rebuiltGlyphLayout } from "@/lib/pdf/glyph-face";
+import { pushRebuiltType3Text } from "@/lib/pdf/rebuilt-type3-font";
 import { removeOriginalInk } from "@/lib/pdf/remove-original-ink";
 import { reusedFontHex, reuseEmbeddedPdfFont } from "@/lib/pdf/reuse-pdf-font";
 import type { ReusedPdfFontText } from "@/lib/pdf/reuse-pdf-font";
@@ -345,10 +347,27 @@ const drawDirtyPdfText = async (
   editorPage: EditorPage,
   fonts: Map<string, PDFFont>,
   doc: PDFDocument,
-  fontBytes: Record<string, Uint8Array>
+  fontBytes: Record<string, Uint8Array>,
+  pages: readonly EditorPage[]
 ): Promise<void> => {
   const family = object.fontFamily ?? resolvePdfFont();
   const size = object.fontSize ?? object.height;
+  const rebuilt = rebuiltGlyphLayout(pages, editorPage, object);
+  if (
+    rebuilt &&
+    pushRebuiltType3Text(doc, page, {
+      fill: color(object.color),
+      layout: rebuilt,
+      origin: pdfTextBaselineUserSpace(
+        object.transform,
+        editorPage.cropBox,
+        editorPage.sourceRotate
+      ),
+      size,
+    })
+  ) {
+    return;
+  }
   const weight = object.fontWeight ?? 400;
   const italic = object.italic === true;
   const reused = embeddedFontCanDraw(object, object.text)
@@ -1137,7 +1156,8 @@ export const exportDocumentWithReport = async (
         editorPage,
         fonts,
         output,
-        input.fontBytes
+        input.fontBytes,
+        input.document.pages
       );
     }
     for (const object of editorPage.pdfImageObjects) {

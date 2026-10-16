@@ -57,8 +57,13 @@ export interface PdfJsTextContent {
   styles: Record<string, ExtractableTextStyle | undefined>;
 }
 
+/** A Type3 glyph's `d1` bounds in glyph space: [llx, lly, urx, ury]. */
+export type Type3GlyphBox = readonly [number, number, number, number];
+
 export interface PdfFontFaceMeta {
   bold?: boolean;
+  /** Paint-nothing Type3 only: each glyph's `d1` box, keyed by glyph name. */
+  charBoxes?: ReadonlyMap<string, Type3GlyphBox>;
   isType3?: boolean;
   /**
    * Type3 face whose glyph procedures only declare metrics (`d0`/`d1`), so its
@@ -75,7 +80,14 @@ export interface PdfJsFontFaceData {
   black?: boolean;
   bold?: boolean;
   /** Type3 only: each glyph procedure's operator list, keyed by glyph name. */
-  charProcOperatorList?: ReadonlyMap<string, { fnArray: readonly number[] }>;
+  charProcOperatorList?: ReadonlyMap<
+    string,
+    {
+      /** First entry of a `d1` procedure: [wx, wy, llx, lly, urx, ury]. */
+      argsArray?: readonly (readonly number[] | null | undefined)[];
+      fnArray: readonly number[];
+    }
+  >;
   isType3Font?: boolean;
   italic?: boolean;
   missingFile?: boolean;
@@ -111,6 +123,34 @@ const type3PaintsNothing = (
   return true;
 };
 
+const D1_BOX_START = 2;
+const D1_ARG_COUNT = 6;
+
+/** `d1` args are [wx, wy, llx, lly, urx, ury]; pdf.js drops a zero-area d1. */
+const readGlyphBox = (
+  args: readonly number[] | null | undefined
+): Type3GlyphBox => {
+  if (!args || args.length < D1_ARG_COUNT) {
+    return [0, 0, 0, 0];
+  }
+  const [llx, lly, urx, ury] = args
+    .slice(D1_BOX_START, D1_ARG_COUNT)
+    .map(Number);
+  return [llx ?? 0, lly ?? 0, urx ?? 0, ury ?? 0].every(Number.isFinite)
+    ? [llx ?? 0, lly ?? 0, urx ?? 0, ury ?? 0]
+    : [0, 0, 0, 0];
+};
+
+const type3CharBoxes = (
+  value: PdfJsFontFaceData
+): Map<string, Type3GlyphBox> => {
+  const boxes = new Map<string, Type3GlyphBox>();
+  for (const [name, proc] of value.charProcOperatorList ?? []) {
+    boxes.set(name, readGlyphBox(proc.argsArray?.[0]));
+  }
+  return boxes;
+};
+
 const parseFontFace = (
   value: PdfJsFontFaceData | undefined,
   metricOps?: Type3MetricOps
@@ -118,13 +158,15 @@ const parseFontFace = (
   if (!value) {
     return null;
   }
+  const paintsNothing = type3PaintsNothing(value, metricOps);
   return {
     bold: value.bold === true || value.black === true,
+    charBoxes: paintsNothing ? type3CharBoxes(value) : undefined,
     isType3: value.isType3Font === true,
     italic: value.italic === true,
     missingFile: value.missingFile === true,
     name: value.name,
-    paintsNothing: type3PaintsNothing(value, metricOps),
+    paintsNothing,
   };
 };
 

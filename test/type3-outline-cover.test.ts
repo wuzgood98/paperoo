@@ -19,7 +19,7 @@ import {
   buildFigmaType3Fixture,
   FIGMA_BODY,
   FIGMA_HEADING,
-  GLYPH_WIDTH,
+  figmaAdvanceEm,
 } from "./figma-type3-fixture";
 import { loadPdfJsDocument } from "./pdfjs-node";
 
@@ -32,8 +32,7 @@ const PAGE = { height: 612, width: 792 };
 const RULE_EM_ABOVE_BASELINE = 0.78;
 const ruleY = FIGMA_HEADING.y + FIGMA_HEADING.size * RULE_EM_ABOVE_BASELINE;
 const ruleRight =
-  FIGMA_HEADING.x +
-  FIGMA_HEADING.text.length * GLYPH_WIDTH * FIGMA_HEADING.size;
+  FIGMA_HEADING.x + figmaAdvanceEm(FIGMA_HEADING) * FIGMA_HEADING.size;
 const RULE = `q 0 0 0 RG 0.5 w ${FIGMA_HEADING.x} ${ruleY} m ${ruleRight} ${ruleY} l S Q`;
 
 const editorPage = (

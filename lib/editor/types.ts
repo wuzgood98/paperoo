@@ -155,6 +155,8 @@ export interface PdfTextObject {
    * moving other text. Unset means Removal is impossible: export covers it.
    */
   removalTarget?: PdfTextRemovalTarget;
+  /** The one text-showing operator that draws exactly this run, if known. */
+  showOrdinal?: number;
   /** The run's glyphs paint nothing (Type3 `d0`/`d1`-only procedures). */
   invisibleGlyphs?: boolean;
   dir: PdfTextDir;
@@ -515,6 +517,38 @@ export interface PdfPathRemovalTarget {
   pathOrdinal: number;
 }
 
+/**
+ * One glyph cut from a Figma text outline. Figma registers the same glyph
+ * under a new code for every occurrence, so glyphs are keyed by shape.
+ */
+export interface PdfGlyphShape {
+  /** `d1` box in em: [llx, lly, urx, ury]. */
+  box: readonly [number, number, number, number];
+  /** Outline in em, origin at the glyph's pen position, y up. Empty for spaces. */
+  commands: PdfPathCommand[];
+  /** Unicode, width and box, which identify one glyph of one face. */
+  key: string;
+  unicode: string;
+  /** Advance in em. */
+  width: number;
+}
+
+/** The glyphs one Figma text-showing operator drew, in order. */
+export interface PdfGlyphShow {
+  /** Shape keys of the drawn glyphs. */
+  glyphs: string[];
+  /** TJ adjustment (thousandths of an em, positive tightens) before each glyph. */
+  kerning: number[];
+  /** Same numbering as `PdfTextRemovalTarget.showOrdinal`. */
+  showOrdinal: number;
+}
+
+/** Glyphs sliced from a page's Figma outlines. */
+export interface PdfType3Glyphs {
+  shapes: Record<string, PdfGlyphShape>;
+  shows: PdfGlyphShow[];
+}
+
 export interface EditorPage {
   /** Set at load; missing means export never edits this page's content. */
   contentOpCounts?: PdfContentOpCounts;
@@ -532,6 +566,8 @@ export interface EditorPage {
   pdfVectorObjects: PdfVectorObject[];
   skippedPdfAnnotationSubtypes: string[];
   suppressedOcrWordIds?: readonly string[];
+  /** Figma pages only: glyphs cut from text outlines, for rebuilding the face. */
+  type3Glyphs?: PdfType3Glyphs;
 }
 
 export interface EditorDocument {
