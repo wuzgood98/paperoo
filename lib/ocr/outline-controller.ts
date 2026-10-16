@@ -10,7 +10,7 @@ import {
 import type { OutlineRasterFrame } from "@/lib/ocr/outline-ocr";
 import { outlineTextRuns } from "@/lib/ocr/outline-runs";
 import {
-  isOutlineTextCandidate,
+  isOutlineTextCandidateOn,
   recognizeOutlineLines,
 } from "@/lib/ocr/outline-text";
 import type { OcrEngine } from "@/lib/ocr/service";
@@ -57,7 +57,7 @@ export const createOutlineTextController = (
     const vector = page?.pdfVectorObjects.find(
       (item) => item.id === job.vectorId
     );
-    return page && vector && isOutlineTextCandidate(vector)
+    return page && vector && isOutlineTextCandidateOn(page, vector)
       ? { page, vector }
       : null;
   };
@@ -125,7 +125,7 @@ export const createOutlineTextController = (
 
   const enqueue = (page: EditorPage): void => {
     for (const vector of page.pdfVectorObjects) {
-      if (seen.has(vector.id) || !isOutlineTextCandidate(vector)) {
+      if (seen.has(vector.id) || !isOutlineTextCandidateOn(page, vector)) {
         continue;
       }
       seen.add(vector.id);

@@ -194,3 +194,25 @@ export const anchorOutlineRun = (
   );
   return { ...run, transform, x: box.x, y: box.y };
 };
+
+/**
+ * The run as the inline editor shows it while `text` is typed: same run,
+ * moved so its anchor stays put. Other runs are returned unchanged.
+ */
+export const placeOutlineDraft = (
+  run: PdfTextObject,
+  page: Pick<EditorPage, "cropBox" | "sourceRotate">,
+  text: string,
+  width: number
+): PdfTextObject => {
+  if (!run.outlineText) {
+    return run;
+  }
+  const anchored = anchorOutlineRun({ ...run, text }, page, width);
+  return {
+    ...run,
+    transform: anchored.transform,
+    x: anchored.x,
+    y: anchored.y,
+  };
+};
