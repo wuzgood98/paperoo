@@ -2,6 +2,7 @@ import {
   DEFAULT_ASCENT_RATIO,
   textItemToDisplayedBox,
 } from "@/lib/editor/coordinates";
+import type { TextItemTransform } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
 import {
   DEFAULT_PDF_TEXT_COLOR,
@@ -286,6 +287,25 @@ const embeddedRunFields = (
   };
 };
 
+/**
+ * Em size of a text item. For Type3 faces pdf.js multiplies the item's height
+ * by the glyph-box height when the font matrix is not 1/1000 (Figma exports:
+ * FontMatrix [1 0 0 1 0 0], Tf 1), so `height` can be ~1.3× the real size.
+ * The matrix's x column is not inflated, so use its length. That is exact
+ * unless the run also sets horizontal scaling (Tz), which Figma never does.
+ */
+export const textItemEmSize = (
+  transform: TextItemTransform,
+  height: number,
+  isType3: boolean
+): number => {
+  if (!isType3) {
+    return height;
+  }
+  const advanceScale = Math.hypot(transform[0], transform[1]);
+  return advanceScale > 0 ? advanceScale : height;
+};
+
 export const extractPdfTextObjects = (
   content: ExtractableTextContent,
   page: {
@@ -315,7 +335,7 @@ export const extractPdfTextObjects = (
     const box = textItemToDisplayedBox(
       transform,
       item.width ?? 0,
-      item.height ?? 0,
+      textItemEmSize(transform, item.height ?? 0, face?.isType3 === true),
       style?.ascent ?? DEFAULT_ASCENT_RATIO,
       page.cropBox,
       page.sourceRotate,
