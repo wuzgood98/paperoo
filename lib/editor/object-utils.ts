@@ -1439,6 +1439,30 @@ export const pdfTextInkOutline = (
   );
 };
 
+/** Text rendering modes that paint no glyph ink (3 invisible, 7 clip only). */
+const INVISIBLE_TEXT_RENDER_MODES = new Set([3, 7]);
+
+/**
+ * Whether export can take this run's original ink out of the page (Removal)
+ * rather than only cover it. Export re-verifies against the raw content and
+ * can still fall back to a cover; this is the load-time answer.
+ */
+export const pdfTextRemovable = (
+  object: PdfTextObject,
+  page: Pick<EditorPage, "contentOpCounts" | "pdfVectorObjects">
+): boolean => {
+  if (!(object.removalTarget && page.contentOpCounts)) {
+    return false;
+  }
+  const paintsOwnInk =
+    object.invisibleGlyphs !== true &&
+    !INVISIBLE_TEXT_RENDER_MODES.has(object.originalTextRenderingMode);
+  if (paintsOwnInk) {
+    return true;
+  }
+  return pdfTextInkOutline(object, page)?.removalTarget !== undefined;
+};
+
 /** PDF line join and cap value for round ends. */
 const ROUND_PATH_END = 1;
 

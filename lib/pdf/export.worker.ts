@@ -1,6 +1,6 @@
 import type { EditorDocument } from "@/lib/editor/types";
 import type { OcrTextObject } from "@/lib/ocr/types";
-import { exportDocument } from "@/lib/pdf/export-pdf";
+import { exportDocumentWithReport } from "@/lib/pdf/export-pdf";
 import type { ExportAsset, ExportInput } from "@/lib/pdf/export-pdf";
 
 interface WorkerRequest {
@@ -13,7 +13,7 @@ interface WorkerRequest {
 
 type WorkerResponse =
   | { error: string; ok: false }
-  | { bytes: ArrayBuffer; ok: true };
+  | { bytes: ArrayBuffer; coverOnlyRunIds: string[]; ok: true };
 
 const toUint8 = (buffer: ArrayBuffer): Uint8Array => new Uint8Array(buffer);
 
@@ -39,10 +39,11 @@ self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
       fontBytes,
       ocrWordsByPage: event.data.ocrWordsByPage,
     };
-    const result = await exportDocument(input);
+    const { bytes: result, coverOnlyRunIds } =
+      await exportDocumentWithReport(input);
     const copy = new ArrayBuffer(result.byteLength);
     new Uint8Array(copy).set(result);
-    const response: WorkerResponse = { bytes: copy, ok: true };
+    const response: WorkerResponse = { bytes: copy, coverOnlyRunIds, ok: true };
     self.postMessage(response, { transfer: [copy] });
   } catch (error) {
     const response: WorkerResponse = {

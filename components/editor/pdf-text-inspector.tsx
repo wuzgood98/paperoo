@@ -20,6 +20,7 @@ import {
   isPdfTextDirty,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
+  pdfTextRemovable,
 } from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
@@ -150,6 +151,12 @@ export const PdfTextInspector = ({
       !embeddedFontCanDraw(object, object.text) ? (
         <p className="text-muted-foreground text-xs">
           Original font can&apos;t draw these characters; using a substitute.
+        </p>
+      ) : null}
+      {isPdfTextDirty(object) && !pdfTextRemovable(object, page) ? (
+        <p className="text-muted-foreground text-xs">
+          Old text can only be covered here, so it stays in the file and other
+          PDF tools can still find it.
         </p>
       ) : null}
       {object.coverColorUncertain ? (
