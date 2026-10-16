@@ -34,7 +34,7 @@ import {
   ensureEditorFonts,
   LIBERATION_SANS_LINE_BOX_BASELINE_RATIO,
 } from "@/lib/fonts/measure-text";
-import { anchorOutlineRun } from "@/lib/ocr/outline-runs";
+import { anchorOutlineRun, placeOutlineDraft } from "@/lib/ocr/outline-runs";
 import { pdfTextPreviewFontCss } from "@/lib/pdf/embedded-font";
 import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
 import { cn } from "@/lib/utils";
@@ -132,11 +132,10 @@ const PdfTextEditor = ({
   const value = draft ?? object.text;
   // Latest draft for the unmount commit: a click elsewhere on the page can
   // close the editor before the input ever sees a blur.
-  const frame = overlayFrame(object, value);
   const rebuilt = useRebuiltGlyphLayout(object, page, value);
   const fallbackCss = useFigmaFallbackCss(object, page, value);
   const fontSize = object.fontSize ?? object.height;
-  // Advance of the draft, so a centered label line stays centered on commit.
+  // Advance of the draft, so a centered label line stays centered as it grows.
   const valueWidth = rebuilt
     ? rebuilt.width * fontSize
     : measurePdfTextWidth(object, value);
@@ -158,6 +157,9 @@ const PdfTextEditor = ({
       valueWidth,
     };
   }, [object.id, object.text, page, value, valueWidth]);
+  // A recognized centered line stays centered while the draft grows.
+  const placed = placeOutlineDraft(object, page, value, valueWidth);
+  const frame = overlayFrame(placed, value);
   const fontSizeCss = pageToCss(fontSize, zoom);
   // Keystrokes only change `draft`; until measurement lands this walks the
   // whole page, so compute it once per run and page version.
@@ -169,7 +171,7 @@ const PdfTextEditor = ({
     [object, page]
   );
   const inkTop = pdfTextCssInkOffsetFromRunTop(
-    object,
+    placed,
     frame,
     page.cropBox,
     page.sourceRotate,
@@ -251,7 +253,7 @@ const PdfTextEditor = ({
           fill={object.color}
           frame={frame}
           layout={rebuilt}
-          object={object}
+          object={placed}
           page={page}
           zoom={zoom}
         />

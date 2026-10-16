@@ -1,4 +1,9 @@
-import type { PdfPathCommand, PdfVectorObject } from "@/lib/editor/types";
+import type {
+  EditorPage,
+  PdfPathCommand,
+  PdfVectorObject,
+  Rect,
+} from "@/lib/editor/types";
 
 /** A closed piece of an outline path, in user space (y up). */
 export interface OutlineSubpath {
@@ -205,6 +210,41 @@ export const isOutlineTextCandidate = (vector: PdfVectorObject): boolean => {
       subpath.maxY - subpath.minY <= MAX_GLYPH_HEIGHT
   );
 };
+
+/** Share of the smaller box a text run must overlap to already be this path's text. */
+const TEXT_LAYER_OVERLAP = 0.5;
+
+const overlapArea = (left: Rect, right: Rect): number => {
+  const width =
+    Math.min(left.x + left.width, right.x + right.width) -
+    Math.max(left.x, right.x);
+  const height =
+    Math.min(left.y + left.height, right.y + right.height) -
+    Math.max(left.y, right.y);
+  return width > 0 && height > 0 ? width * height : 0;
+};
+
+/**
+ * A candidate on its page: not already under text the PDF carries (an
+ * export of recognized labels adds invisible text over their outlines).
+ */
+export const isOutlineTextCandidateOn = (
+  page: Pick<EditorPage, "pdfTextObjects">,
+  vector: PdfVectorObject
+): boolean =>
+  isOutlineTextCandidate(vector) &&
+  !page.pdfTextObjects.some((run) => {
+    if (run.outlineText || run.text.trim() === "") {
+      return false;
+    }
+    const smaller = Math.min(
+      run.width * run.height,
+      vector.width * vector.height
+    );
+    return (
+      smaller > 0 && overlapArea(run, vector) >= smaller * TEXT_LAYER_OVERLAP
+    );
+  });
 
 const centerY = (box: UserBox): number => (box.minY + box.maxY) / 2;
 

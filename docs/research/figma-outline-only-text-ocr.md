@@ -165,7 +165,9 @@ Things the QA file taught during implementation, beyond §3:
 - **Clustering by stacking and winding.** Horizontal overlap alone merged `f` and `i` in "Launched first". A subpath now joins a glyph only when it sits above or below it (dots, accents) or lies inside it and winds the other way (a counter, under nonzero fill; even-odd paths fall back to containment). Clusters are searched newest first, so a counter joins its own glyph, not a kerned neighbour.
 - **Result on the QA file:** all 23 outline-only labels are recognized and matched to the document's Inter Regular face (seeded from page 1), including the page 1 JSON block inside a form XObject. Icons and arrows are rejected. Page 2 callouts come out at 13.04 pt, which agrees with their 13 pt baseline step.
 - **Export, page 2, one line of a two-line callout edited:** the label's `f` became `n`, the untouched line was redrawn from its own subpaths at `ca` 0.8, the edited line is real (rebuilt Type3) text, and the untouched line is searchable through invisible text. No Cover was needed.
-- **Centering** is applied when an edit commits; while typing, the draft is still left-anchored.
+- **Centering** holds while typing too: the inline editor places the draft with the same anchor the commit uses (`placeOutlineDraft`).
+- **Reopening an export.** Unedited labels get invisible text on export, so a reopened export used to show each one twice (that text plus a fresh OCR run on the same outline). A path that text the PDF carries already covers is no longer a candidate (`isOutlineTextCandidateOn`).
+- **App export checked:** exported from Paperoo itself after editing one callout line. The file's page 2 has 18 text-showing operators (4 original + 13 invisible label lines + 1 edited line) and 38 paths (37 + the redrawn untouched line). Reopened, it shows the edited line centered in the document's own glyphs with no old ink.
 
 ---
 

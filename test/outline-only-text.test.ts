@@ -15,9 +15,14 @@ import type { EngineOcrPage } from "@/lib/ocr/from-engine";
 import { createOutlineTextController } from "@/lib/ocr/outline-controller";
 import { outlineRasterFrame } from "@/lib/ocr/outline-ocr";
 import type { OutlineRasterFrame } from "@/lib/ocr/outline-ocr";
-import { anchorOutlineRun, outlineTextRuns } from "@/lib/ocr/outline-runs";
+import {
+  anchorOutlineRun,
+  outlineTextRuns,
+  placeOutlineDraft,
+} from "@/lib/ocr/outline-runs";
 import {
   isOutlineTextCandidate,
+  isOutlineTextCandidateOn,
   outlineSubpaths,
   recognizeOutlineLines,
 } from "@/lib/ocr/outline-text";
@@ -259,6 +264,26 @@ test("a centered line keeps its middle when its text changes", async () => {
   expect(back.x).toBeCloseTo(first.x, 6);
 });
 
+test("the inline draft of a centered line stays centered as it grows", async () => {
+  const { page, vector } = await loadLabelPage();
+  const [first] = recognize(page, vector, ocrLines(CALLOUT));
+  if (!first?.outlineText) {
+    throw new Error("missing line");
+  }
+  const grown = first.outlineText.lineWidth + 20;
+
+  const draft = placeOutlineDraft(first, page, `${first.text} more`, grown);
+
+  // Same run and text (nothing committed); only its place moved.
+  expect(draft.text).toBe(first.text);
+  expect(draft.transform[4] + grown / 2).toBeCloseTo(CALLOUT.center, 3);
+  expect(draft.x).toBeCloseTo(first.x - 10, 3);
+  expect(draft.y).toBeCloseTo(first.y, 6);
+  // Runs the PDF carries as text keep their place.
+  const native = { ...first, outlineText: undefined };
+  expect(placeOutlineDraft(native, page, "longer text", grown)).toBe(native);
+});
+
 test("editing one line removes the label path and redraws the other line", async () => {
   const { bytes, page, vector } = await loadLabelPage();
   const runs = recognize(page, vector, ocrLines(CALLOUT));
@@ -301,6 +326,29 @@ test("editing one line removes the label path and redraws the other line", async
   expect(labelFills[0]?.height).toBeCloseTo(
     figmaGlyph("regular", "a").box[3] * CALLOUT.size,
     3
+  );
+});
+
+test("an exported label is not read again when the export is reopened", async () => {
+  const { bytes, page, vector } = await loadLabelPage();
+  const runs = recognize(page, vector, ocrLines(CALLOUT));
+  const report = await exportDocumentWithReport({
+    assets: {},
+    bytes,
+    document: { pages: [withRuns(page, vector, runs)] },
+    fontBytes: {},
+  });
+
+  const reopened = await extractFigmaPage(report.bytes);
+  const label = reopened.page.pdfVectorObjects.find(
+    (item) => item.fill?.color === LABEL_COLOR
+  );
+
+  // The outline is still there, but the export's invisible text now covers it.
+  expect(label && isOutlineTextCandidate(label)).toBe(true);
+  expect(label && isOutlineTextCandidateOn(reopened.page, label)).toBe(false);
+  expect(reopened.runs.map((run) => run.text)).toEqual(
+    expect.arrayContaining([...CALLOUT.lines])
   );
 });
 
