@@ -48,6 +48,24 @@ export const collectEmbeddedFontGlyphs = (
   return encodeSets(sets);
 };
 
+/** Runs in one font share a glyph string; build its lookup set once. */
+const MAX_GLYPH_SET_ENTRIES = 256;
+
+const glyphSetCache = new Map<string, ReadonlySet<string>>();
+
+const glyphSet = (glyphs: string): ReadonlySet<string> => {
+  const cached = glyphSetCache.get(glyphs);
+  if (cached) {
+    return cached;
+  }
+  if (glyphSetCache.size >= MAX_GLYPH_SET_ENTRIES) {
+    glyphSetCache.clear();
+  }
+  const set = new Set(glyphs);
+  glyphSetCache.set(glyphs, set);
+  return set;
+};
+
 /** True when the run's embedded face has already shown every character of `text`. */
 export const embeddedFontHasShown = (
   object: Pick<
@@ -63,7 +81,7 @@ export const embeddedFontHasShown = (
   ) {
     return false;
   }
-  const have = new Set(object.embeddedFontGlyphs);
+  const have = glyphSet(object.embeddedFontGlyphs);
   for (const char of text) {
     if (!have.has(char)) {
       return false;
@@ -90,7 +108,7 @@ export const embeddedFontCanDraw = (
   if (!(object.reusableFontGlyphs && embeddedFontHasShown(object, text))) {
     return false;
   }
-  const encodable = new Set(object.reusableFontGlyphs);
+  const encodable = glyphSet(object.reusableFontGlyphs);
   for (const char of text) {
     if (!encodable.has(char)) {
       return false;

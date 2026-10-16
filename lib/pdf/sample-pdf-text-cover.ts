@@ -1,6 +1,8 @@
 import {
   measurePdfTextCoverRects,
+  neighbourReachBox,
   pdfTextOriginalInkBox,
+  rectsIntersect,
   unionRects,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
@@ -37,6 +39,24 @@ const clampCanvasRect = (
   }
   return { height: bottom - y, width: right - x, x, y };
 };
+
+/** Neighbours whose metric reach misses the sampled ring skip per-glyph ink measuring. */
+const mayReachRect = (
+  run: PdfTextObject,
+  page: EditorPage,
+  canvas: HTMLCanvasElement,
+  zoom: number,
+  target: Rect
+): boolean =>
+  rectsIntersect(
+    displayedRectToCanvasPixels(
+      neighbourReachBox(run, page),
+      page,
+      canvas,
+      zoom
+    ),
+    target
+  );
 
 const toLocalRect = (rect: Rect, origin: Rect): Rect => ({
   height: rect.height,
@@ -113,7 +133,10 @@ const samplePdfTextCoverFromPage = async (
     )
   );
   for (const neighbour of page.pdfTextObjects) {
-    if (neighbour.id === object.id) {
+    if (
+      neighbour.id === object.id ||
+      !mayReachRect(neighbour, page, canvas, zoom, imageRect)
+    ) {
       continue;
     }
     const box = pdfTextOriginalInkBox(neighbour, page);

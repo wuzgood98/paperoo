@@ -36,6 +36,7 @@ import type {
   PdfLinkAnnotation,
   PageRotation,
   PdfMarkupAnnotation,
+  PdfPathCommand,
   PdfTextCaptionUnderline,
   PdfTextObject,
   PdfVectorObject,
@@ -337,10 +338,12 @@ const compareRunsInReadingOrder = (
 
 const isBlankRun = (run: PdfTextObject): boolean => run.text.trim() === "";
 
-export const pdfLinkOverlappingTextRuns = (
+const NO_TEXT_RUNS: readonly PdfTextObject[] = [];
+
+const computeLinkOverlappingTextRuns = (
   link: PdfLinkAnnotation,
   textRuns: readonly PdfTextObject[]
-): PdfTextObject[] => {
+): readonly PdfTextObject[] => {
   const runs = textRuns
     .filter((run) => {
       const runBox: Rect = {
@@ -355,16 +358,38 @@ export const pdfLinkOverlappingTextRuns = (
   // Spaces at either end are padding from the link rect, not label text.
   const first = runs.findIndex((run) => !isBlankRun(run));
   if (first === -1) {
-    return [];
+    return NO_TEXT_RUNS;
   }
   const last = runs.findLastIndex((run) => !isBlankRun(run));
   return runs.slice(first, last + 1);
 };
 
+/** Links and run lists are immutable; one cached answer per link and run list. */
+const overlappingRunsCache = new WeakMap<
+  PdfLinkAnnotation,
+  {
+    result: readonly PdfTextObject[];
+    textRuns: readonly PdfTextObject[];
+  }
+>();
+
+export const pdfLinkOverlappingTextRuns = (
+  link: PdfLinkAnnotation,
+  textRuns: readonly PdfTextObject[]
+): readonly PdfTextObject[] => {
+  const cached = overlappingRunsCache.get(link);
+  if (cached?.textRuns === textRuns) {
+    return cached.result;
+  }
+  const result = computeLinkOverlappingTextRuns(link, textRuns);
+  overlappingRunsCache.set(link, { result, textRuns });
+  return result;
+};
+
 export interface PdfLinkEditableLabel {
   editable: boolean;
   label: string;
-  runs: PdfTextObject[];
+  runs: readonly PdfTextObject[];
 }
 
 export const pdfLinkEditableLabel = (
@@ -1253,7 +1278,7 @@ export const pdfTextOriginalInkBox = (
 /** Glyph ink can pass the font descriptor box (accents, swashes). */
 const NEIGHBOUR_REACH_EM = 0.5;
 
-const rectsIntersect = (left: Rect, right: Rect): boolean =>
+export const rectsIntersect = (left: Rect, right: Rect): boolean =>
   left.x < right.x + right.width &&
   right.x < left.x + left.width &&
   left.y < right.y + right.height &&
@@ -1263,7 +1288,7 @@ const rectsIntersect = (left: Rect, right: Rect): boolean =>
  * Cheap outer bound for a neighbour's ink, from font metrics only. Neighbours
  * outside it skip the per-glyph canvas measuring.
  */
-const neighbourReachBox = (
+export const neighbourReachBox = (
   object: PdfTextObject,
   page: Pick<EditorPage, "cropBox" | "sourceRotate">
 ): Rect => {
@@ -1403,25 +1428,27 @@ export const pdfTextCoverRects = (
   object.coverRects ??
   measurePdfTextCoverRects(object, page, page.pdfTextObjects);
 
+/**
+ * Topmost run under `point`. Fitting a dirty run only widens it, so the
+ * vertical check rejects most runs first, and only dirty runs are measured.
+ */
 export const hitTestPdfText = (
   objects: readonly PdfTextObject[],
   point: Point
-): PdfTextObject | undefined => {
-  for (const object of objects.toReversed()) {
-    const box = pdfTextOverlayBox(object, measurePdfTextWidth(object));
+): PdfTextObject | undefined =>
+  objects.findLast((object) => {
     if (
-      box.width > 0 &&
-      box.height > 0 &&
-      point.x >= box.x &&
-      point.x <= box.x + box.width &&
-      point.y >= box.y &&
-      point.y <= box.y + box.height
+      object.height <= 0 ||
+      point.y < object.y ||
+      point.y > object.y + object.height
     ) {
-      return object;
+      return false;
     }
-  }
-  return undefined;
-};
+    const box = isPdfTextDirty(object)
+      ? fittedPdfTextBox(object, measurePdfTextWidth(object))
+      : object;
+    return box.width > 0 && point.x >= box.x && point.x <= box.x + box.width;
+  });
 
 export const hitTestPdfImage = (
   objects: readonly PdfImageObject[],
@@ -1478,6 +1505,77 @@ const mapUserPointToObjectDisplayed = (
 const vectorStrokeHitThreshold = (object: PdfVectorObject): number =>
   Math.max(4, (object.stroke?.width ?? 1) + 2);
 
+interface VectorPathBounds {
+  crop: EditorPage["cropBox"];
+  rect: Rect;
+  sourceRotate: EditorPage["sourceRotate"];
+}
+
+/** Vectors are immutable, so mapped path bounds are computed once per object. */
+const vectorPathBoundsCache = new WeakMap<PdfVectorObject, VectorPathBounds>();
+
+const commandPoints = (command: PdfPathCommand): Point[] => {
+  if (command.type === "moveTo" || command.type === "lineTo") {
+    return [command];
+  }
+  if (command.type === "curveTo") {
+    return [
+      { x: command.x1, y: command.y1 },
+      { x: command.x2, y: command.y2 },
+      { x: command.x3, y: command.y3 },
+    ];
+  }
+  if (command.type === "quadraticCurveTo") {
+    return [
+      { x: command.x1, y: command.y1 },
+      { x: command.x, y: command.y },
+    ];
+  }
+  return [];
+};
+
+/** Displayed bounds of every path point, control points included. */
+const vectorPathBounds = (
+  object: PdfVectorObject,
+  crop: EditorPage["cropBox"],
+  sourceRotate: EditorPage["sourceRotate"]
+): Rect | null => {
+  const cached = vectorPathBoundsCache.get(object);
+  if (cached && cached.crop === crop && cached.sourceRotate === sourceRotate) {
+    return cached.rect;
+  }
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const command of object.commands) {
+    for (const point of commandPoints(command)) {
+      const mapped = mapUserPointToObjectDisplayed(
+        point,
+        object,
+        crop,
+        sourceRotate
+      );
+      minX = Math.min(minX, mapped.x);
+      minY = Math.min(minY, mapped.y);
+      maxX = Math.max(maxX, mapped.x);
+      maxY = Math.max(maxY, mapped.y);
+    }
+  }
+  if (!Number.isFinite(minX)) {
+    return null;
+  }
+  const rect = { height: maxY - minY, width: maxX - minX, x: minX, y: minY };
+  vectorPathBoundsCache.set(object, { crop, rect, sourceRotate });
+  return rect;
+};
+
+const pointNearRect = (point: Point, rect: Rect, margin: number): boolean =>
+  point.x >= rect.x - margin &&
+  point.x <= rect.x + rect.width + margin &&
+  point.y >= rect.y - margin &&
+  point.y <= rect.y + rect.height + margin;
+
 // oxlint-disable-next-line eslint/complexity -- path hit-test branches per command type
 const hitTestVectorCommands = (
   object: PdfVectorObject,
@@ -1492,6 +1590,12 @@ const hitTestVectorCommands = (
   }
 
   const threshold = vectorStrokeHitThreshold(object);
+  // Every stroke segment lies inside the path bounds, so a point beyond them
+  // plus the threshold can only hit the box fallback below.
+  const bounds = vectorPathBounds(object, crop, sourceRotate);
+  if (!(bounds && pointNearRect(point, bounds, threshold))) {
+    return object.kind !== "line" && pointInRotatedRect(point, object);
+  }
   let cursor: Point | null = null;
   let start: Point | null = null;
   for (const command of object.commands) {
@@ -1588,17 +1692,12 @@ export const hitTestPdfVector = (
   point: Point,
   crop: EditorPage["cropBox"],
   sourceRotate: EditorPage["sourceRotate"]
-): PdfVectorObject | undefined => {
-  for (const object of objects.toReversed()) {
-    if (object.deleted) {
-      continue;
-    }
-    if (hitTestVectorCommands(object, point, crop, sourceRotate)) {
-      return object;
-    }
-  }
-  return undefined;
-};
+): PdfVectorObject | undefined =>
+  objects.findLast(
+    (object) =>
+      !object.deleted &&
+      hitTestVectorCommands(object, point, crop, sourceRotate)
+  );
 
 export const mapPagePdfImages = (
   pages: readonly EditorPage[],

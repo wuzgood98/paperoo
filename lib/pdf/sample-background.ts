@@ -27,11 +27,35 @@ const backgroundBucketChannel = (value: number): number =>
 const backgroundBucketKey = (r: number, g: number, b: number): string =>
   `${backgroundBucketChannel(r)},${backgroundBucketChannel(g)},${backgroundBucketChannel(b)}`;
 
-const pixelInsideRect = (x: number, y: number, rect: Rect): boolean =>
-  x >= rect.x &&
-  y >= rect.y &&
-  x < rect.x + rect.width &&
-  y < rect.y + rect.height;
+/** One flag per sampled pixel, so exclusion costs rect area, not pixels × rects. */
+const exclusionMask = (
+  x0: number,
+  y0: number,
+  width: number,
+  height: number,
+  rects: readonly Rect[]
+): Uint8Array => {
+  const mask = new Uint8Array(width * height);
+  for (const rect of rects) {
+    // Same pixel-inclusion rule as before: x >= rect.x && x < rect.x + width.
+    const left = Math.max(x0, Math.ceil(rect.x));
+    const top = Math.max(y0, Math.ceil(rect.y));
+    const right = Math.min(x0 + width, Math.ceil(rect.x + rect.width));
+    const bottom = Math.min(y0 + height, Math.ceil(rect.y + rect.height));
+    // An empty span would hand `fill` a negative end, which counts from the end.
+    if (right <= left) {
+      continue;
+    }
+    for (let y = top; y < bottom; y += 1) {
+      mask.fill(
+        1,
+        (y - y0) * width + (left - x0),
+        (y - y0) * width + (right - x0)
+      );
+    }
+  }
+  return mask;
+};
 
 interface BackgroundBucket {
   b: number;
@@ -57,11 +81,13 @@ export const sampleBackground = (
     return null;
   }
 
+  const width = x1 - x0;
+  const excluded = exclusionMask(x0, y0, width, y1 - y0, excludeRects);
   const buckets = new Map<string, BackgroundBucket>();
   let total = 0;
   for (let y = y0; y < y1; y += 1) {
     for (let x = x0; x < x1; x += 1) {
-      if (excludeRects.some((rect) => pixelInsideRect(x, y, rect))) {
+      if (excluded[(y - y0) * width + (x - x0)] === 1) {
         continue;
       }
       const rgb = readPixel(source, x, y);
