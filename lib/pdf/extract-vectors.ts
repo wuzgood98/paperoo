@@ -636,6 +636,14 @@ const ctmLineScale = (ctm: Ctm): number =>
   Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
 
 const CTM_EPSILON = 1e-6;
+/** A fill covering at least this share of the page is the page background. */
+const PAGE_BACKGROUND_SHARE = 0.95;
+
+const coversPage = (
+  box: { height: number; width: number },
+  pageArea: number
+): boolean =>
+  pageArea > 0 && box.width * box.height >= pageArea * PAGE_BACKGROUND_SHARE;
 
 const sameCtm = (left: Ctm, right: Ctm): boolean =>
   left.every((value, index) => {
@@ -708,10 +716,16 @@ export const extractPdfVectorObjects = (
   const stack: GraphicsState[] = [];
   let current = defaultState();
   const textInk: TextInkTracker = { font: null, lastFill: null, textCtm: null };
+  const pageArea = page.cropBox.width * page.cropBox.height;
+  /** Backgrounds are painted before any text; later full-page fills are art. */
+  let textStarted = false;
 
   for (const [sourceIndex, fn] of list.fnArray.entries()) {
     const args = list.argsArray[sourceIndex];
 
+    if (fn === ops.beginText) {
+      textStarted = true;
+    }
     if (
       paintlessFonts.size > 0 &&
       trackTextInk(textInk, fn, args, current.ctm, ops, paintlessFonts)
@@ -946,6 +960,9 @@ export const extractPdfVectorObjects = (
       x: box.x,
       y: box.y,
     };
+    if (fill && !textStarted && coversPage(box, pageArea)) {
+      object.pageBackground = true;
+    }
     objects.push(object);
     if (fill) {
       textInk.lastFill = { ctm: current.ctm, object };

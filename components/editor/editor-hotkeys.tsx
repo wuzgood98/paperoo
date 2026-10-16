@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 
+import { requestDeleteSelection } from "@/components/editor/large-delete";
 import { toastManager } from "@/components/ui/toast-manager";
 import { editorStore } from "@/lib/editor/store";
 import {
@@ -63,11 +64,11 @@ export const EditorHotkeys = () => {
         },
         { handler: () => editorStore.redo(), key: "y", meta: true },
         {
-          handler: () => editorStore.deleteSelected(),
+          handler: requestDeleteSelection,
           key: "Delete",
         },
         {
-          handler: () => editorStore.deleteSelected(),
+          handler: requestDeleteSelection,
           key: "Backspace",
         },
         {

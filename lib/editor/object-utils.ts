@@ -1762,6 +1762,17 @@ const hitTestVectorCommands = (
   return pointInRotatedRect(point, object);
 };
 
+/** Deleting a vector covering more than this share of the page asks first. */
+const LARGE_VECTOR_SHARE = 0.5;
+
+/** Whether a vector covers more than half of its page. */
+export const pdfVectorIsLarge = (
+  object: Pick<PdfVectorObject, "height" | "width">,
+  page: Pick<EditorPage, "cropBox">
+): boolean =>
+  object.width * object.height >
+  page.cropBox.width * page.cropBox.height * LARGE_VECTOR_SHARE;
+
 export const hitTestPdfVector = (
   objects: readonly PdfVectorObject[],
   point: Point,
@@ -1773,6 +1784,8 @@ export const hitTestPdfVector = (
       !object.deleted &&
       // A text run owns its glyph outline; it changes only through text edits.
       object.textInk !== true &&
+      // The page background is never picked: it sits under every click.
+      object.pageBackground !== true &&
       hitTestVectorCommands(object, point, crop, sourceRotate)
   );
 
