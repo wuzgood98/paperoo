@@ -50,12 +50,34 @@ export const PDF_HEADER = "%PDF";
 /** Matches mozilla/pdf.js PDFPageViewBuffer DEFAULT_CACHE_SIZE. */
 export const DEFAULT_PAGE_IDLE_CACHE = 10;
 
-/** Yield to the event loop so first paint commits between hydration chunks. */
-const yieldToUI = (): Promise<void> =>
+declare global {
+  /** Prioritized Task Scheduling API; not in TypeScript's DOM lib yet. */
+  // oxlint-disable-next-line no-var -- global declarations must use var
+  var scheduler:
+    | {
+        postTask: (
+          callback: () => void,
+          options: { priority: "background" }
+        ) => Promise<void>;
+      }
+    | undefined;
+}
+
+/**
+ * Yield between hydration chunks. Background priority lets input, rendering
+ * and visible-page work run first; `scheduler.yield()` would do the opposite
+ * and resume this continuation ahead of them.
+ */
+const yieldToUI = async (): Promise<void> => {
+  if (globalThis.scheduler) {
+    await globalThis.scheduler.postTask(() => null, { priority: "background" });
+    return;
+  }
   // oxlint-disable-next-line promise/avoid-new -- setTimeout has no promise API
-  new Promise((resolve) => {
+  await new Promise((resolve) => {
     setTimeout(resolve, 0);
   });
+};
 
 interface FormProbes {
   calculationOrderIds: Awaited<

@@ -117,11 +117,10 @@ export const embeddedFontCanDraw = (
   return true;
 };
 
-/** Union per-font glyphs across loaded pages so later pages widen coverage. */
-export const mergeEmbeddedFontGlyphs = (
+const addPageCodePoints = (
+  sets: CodePointSets,
   pages: readonly EditorPage[]
-): EditorPage[] => {
-  const sets: CodePointSets = new Map();
+): void => {
   for (const page of pages) {
     for (const run of page.pdfTextObjects) {
       if (!run.fontName) {
@@ -134,11 +133,21 @@ export const mergeEmbeddedFontGlyphs = (
       addCodePoints(sets, run.fontName, source);
     }
   }
-  const encoded = encodeSets(sets);
-  return pages.map((page) => {
+};
+
+/** Give every run of a font in `fonts` that font's glyph string. */
+const applyFontGlyphs = (
+  pages: readonly EditorPage[],
+  glyphsByFont: ReadonlyMap<string, string>,
+  fonts: ReadonlySet<string> | null
+): EditorPage[] =>
+  pages.map((page) => {
     let changed = false;
     const pdfTextObjects = page.pdfTextObjects.map((object) => {
-      const glyphs = encoded.get(object.fontName);
+      if (fonts && !fonts.has(object.fontName)) {
+        return object;
+      }
+      const glyphs = glyphsByFont.get(object.fontName);
       if (glyphs === undefined || glyphs === object.embeddedFontGlyphs) {
         return object;
       }
@@ -147,6 +156,59 @@ export const mergeEmbeddedFontGlyphs = (
     });
     return changed ? { ...page, pdfTextObjects } : page;
   });
+
+/** Code point sets behind a merged page list, so appends skip rescanning it. */
+const mergedFontSets = new WeakMap<readonly EditorPage[], CodePointSets>();
+
+const cloneSets = (sets: CodePointSets): CodePointSets =>
+  new Map([...sets].map(([fontName, codes]) => [fontName, new Set(codes)]));
+
+/** Union per-font glyphs across loaded pages so later pages widen coverage. */
+export const mergeEmbeddedFontGlyphs = (
+  pages: readonly EditorPage[]
+): EditorPage[] => {
+  const sets: CodePointSets = new Map();
+  addPageCodePoints(sets, pages);
+  const merged = applyFontGlyphs(pages, encodeSets(sets), null);
+  mergedFontSets.set(merged, sets);
+  return merged;
+};
+
+/**
+ * Same result as merging `combine(existing, incoming)` from scratch, but
+ * hydration appends scan only the new pages, and rewrite existing runs only
+ * for fonts whose glyphs actually grew.
+ */
+export const appendEmbeddedFontGlyphs = (
+  existing: readonly EditorPage[],
+  incoming: readonly EditorPage[],
+  combine: (
+    existing: readonly EditorPage[],
+    incoming: readonly EditorPage[]
+  ) => EditorPage[]
+): EditorPage[] => {
+  const known = mergedFontSets.get(existing);
+  if (!known) {
+    return mergeEmbeddedFontGlyphs(combine(existing, incoming));
+  }
+  const sets = cloneSets(known);
+  addPageCodePoints(sets, incoming);
+  const grown = new Set<string>();
+  const glyphsByFont = new Map<string, string>();
+  for (const [fontName, codes] of sets) {
+    if (codes.size !== known.get(fontName)?.size) {
+      grown.add(fontName);
+    }
+    glyphsByFont.set(fontName, encodeCodePoints(codes));
+  }
+  const merged = combine(
+    grown.size === 0
+      ? existing
+      : applyFontGlyphs(existing, glyphsByFont, grown),
+    applyFontGlyphs(incoming, glyphsByFont, null)
+  );
+  mergedFontSets.set(merged, sets);
+  return merged;
 };
 
 /** CSS font-family for a run: the embedded face when it can draw `text`. */

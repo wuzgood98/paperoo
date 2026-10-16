@@ -4,7 +4,24 @@ import { AnnotationMode } from "@/lib/pdf/pdfjs";
 import { renderPdfPage } from "@/lib/pdf/render-page";
 import { pdfSession } from "@/lib/pdf/session";
 
-const cache = new Map<string, HTMLCanvasElement>();
+/** Full-page canvases are large; keep a few pages and zoom levels, oldest out. */
+export const MAX_CACHED_PAGE_CANVASES = 6;
+
+export interface PageCanvasCacheDeps<TCanvas> {
+  /** Identity of the open PDF; a change drops every cached canvas. */
+  currentDocument: () => object | null;
+  render: (
+    sourceIndex: number,
+    scale: number,
+    rotation: number | undefined
+  ) => Promise<TCanvas | null>;
+}
+
+export type PageCanvasCache<TCanvas> = (
+  sourceIndex: number,
+  scale: number,
+  rotation?: number
+) => Promise<TCanvas | null>;
 
 const cacheKey = (
   sourceIndex: number,
@@ -12,16 +29,62 @@ const cacheKey = (
   rotation: number | undefined
 ): string => `${sourceIndex}:${scale}:${rotation ?? 0}`;
 
-export const getPageContentCanvas = async (
+/**
+ * LRU of rendered page canvases, keyed by page, scale and rotation. In-flight
+ * renders are shared. Keys are page indexes, which repeat across files, so
+ * the cache empties when the open document changes; otherwise a new PDF
+ * could sample the previous file's page as its cover background.
+ */
+export const createPageCanvasCache = <TCanvas>({
+  currentDocument,
+  render,
+}: PageCanvasCacheDeps<TCanvas>): PageCanvasCache<TCanvas> => {
+  const cache = new Map<string, Promise<TCanvas | null>>();
+  let cacheDocument: object | null = null;
+
+  return async (sourceIndex, scale, rotation) => {
+    const current = currentDocument();
+    if (current !== cacheDocument) {
+      cache.clear();
+      cacheDocument = current;
+    }
+    const key = cacheKey(sourceIndex, scale, rotation);
+    const existing = cache.get(key);
+    if (existing) {
+      // Re-insert so the Map's order stays least-recently-used first.
+      cache.delete(key);
+      cache.set(key, existing);
+      return await existing;
+    }
+    const rendering = render(sourceIndex, scale, rotation);
+    cache.set(key, rendering);
+    for (const oldKey of cache.keys()) {
+      if (cache.size <= MAX_CACHED_PAGE_CANVASES) {
+        break;
+      }
+      // Dropped, not zeroed: a caller may still be drawing from it.
+      cache.delete(oldKey);
+    }
+    try {
+      const canvas = await rendering;
+      if (!canvas && cache.get(key) === rendering) {
+        cache.delete(key);
+      }
+      return canvas;
+    } catch (error) {
+      if (cache.get(key) === rendering) {
+        cache.delete(key);
+      }
+      throw error;
+    }
+  };
+};
+
+const renderContentCanvas = async (
   sourceIndex: number,
   scale: number,
-  rotation?: number
+  rotation: number | undefined
 ): Promise<HTMLCanvasElement | null> => {
-  const key = cacheKey(sourceIndex, scale, rotation);
-  const existing = cache.get(key);
-  if (existing) {
-    return existing;
-  }
   const page = await pdfSession.retainPage(sourceIndex);
   if (!page) {
     return null;
@@ -32,12 +95,16 @@ export const getPageContentCanvas = async (
       annotationMode: AnnotationMode.DISABLE,
       rotation,
     });
-    cache.set(key, canvas);
     return canvas;
   } finally {
     pdfSession.releasePageRef(sourceIndex);
   }
 };
+
+export const getPageContentCanvas = createPageCanvasCache({
+  currentDocument: () => pdfSession.document,
+  render: renderContentCanvas,
+});
 
 /** Page content canvas in displayed space, so displayed rects map by scale only. */
 export const getDisplayedPageContentCanvas = (
@@ -45,15 +112,3 @@ export const getDisplayedPageContentCanvas = (
   scale: number
 ): Promise<HTMLCanvasElement | null> =>
   getPageContentCanvas(page.sourceIndex, scale, displayedCanvasRotation(page));
-
-export const invalidatePageContentCanvas = (
-  sourceIndex: number,
-  scale: number,
-  rotation?: number
-): void => {
-  cache.delete(cacheKey(sourceIndex, scale, rotation));
-};
-
-export const clearAnnotationContentCache = (): void => {
-  cache.clear();
-};

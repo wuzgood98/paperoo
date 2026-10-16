@@ -68,7 +68,10 @@ import type {
   TextStyleDefaults,
   ZoomMode,
 } from "@/lib/editor/types";
-import { mergeEmbeddedFontGlyphs } from "@/lib/pdf/embedded-font";
+import {
+  appendEmbeddedFontGlyphs,
+  mergeEmbeddedFontGlyphs,
+} from "@/lib/pdf/embedded-font";
 import type { SampledCaptionInk } from "@/lib/pdf/sample-caption-ink";
 import type { PdfTextMeasurement } from "@/lib/pdf/sample-pdf-text-cover";
 
@@ -230,7 +233,17 @@ const mergeHydratedPages = (
   if (fresh.length === 0) {
     return [...existing];
   }
-  if (isSourceOrder(existing)) {
+  const inSourceOrder = isSourceOrder(existing);
+  const lastSourceIndex = existing.at(-1)?.sourceIndex ?? -1;
+  // Hydration chunks normally arrive in order after everything loaded so far.
+  if (
+    inSourceOrder &&
+    isSourceOrder(fresh) &&
+    (fresh[0]?.sourceIndex ?? 0) >= lastSourceIndex
+  ) {
+    return [...existing, ...fresh];
+  }
+  if (inSourceOrder) {
     return [...existing, ...fresh].toSorted(
       (left, right) => left.sourceIndex - right.sourceIndex
     );
@@ -350,12 +363,17 @@ export const editorStore = {
     if (pages.length === 0) {
       return;
     }
-    const merged = mergeEmbeddedFontGlyphs(
-      mergeHydratedPages(internal.state.document.pages, pages)
-    );
-    if (merged.length === internal.state.document.pages.length) {
+    const existing = internal.state.document.pages;
+    const known = new Set(existing.map((page) => page.id));
+    const fresh = pages.filter((page) => !known.has(page.id));
+    if (fresh.length === 0) {
       return;
     }
+    const merged = appendEmbeddedFontGlyphs(
+      existing,
+      fresh,
+      mergeHydratedPages
+    );
     internal.state = {
       ...internal.state,
       currentPageId: internal.state.currentPageId ?? merged[0]?.id ?? null,
@@ -363,7 +381,13 @@ export const editorStore = {
     };
     patchHistoryDocuments((document) => ({
       ...document,
-      pages: mergeEmbeddedFontGlyphs(mergeHydratedPages(document.pages, pages)),
+      pages: appendEmbeddedFontGlyphs(
+        document.pages,
+        pages.filter(
+          (page) => !document.pages.some((entry) => entry.id === page.id)
+        ),
+        mergeHydratedPages
+      ),
     }));
     emit();
   },

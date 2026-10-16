@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
 import {
+  appendEmbeddedFontGlyphs,
   collectEmbeddedFontGlyphs,
   mergeEmbeddedFontGlyphs,
 } from "@/lib/pdf/embedded-font";
@@ -80,4 +81,68 @@ test("mergeEmbeddedFontGlyphs widens a font's glyphs across pages", () => {
   const again = mergeEmbeddedFontGlyphs(merged);
   expect(again[0]).toBe(merged[0]);
   expect(again[1]).toBe(merged[1]);
+});
+
+const concat = (
+  existing: readonly EditorPage[],
+  incoming: readonly EditorPage[]
+): EditorPage[] => [...existing, ...incoming];
+
+test("appending chunks gives the same glyphs as merging everything at once", () => {
+  let seed = 7;
+  const random = (): number => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+    return seed / 2_147_483_648;
+  };
+  const alphabet = "abcdefghijklmnopqrstuvwxyzÀÉ0123 ";
+  const randomText = (): string =>
+    Array.from(
+      { length: 1 + Math.floor(random() * 6) },
+      () => alphabet[Math.floor(random() * alphabet.length)]
+    ).join("");
+  const pages = Array.from({ length: 24 }, (_, pageIndex) =>
+    page(
+      `p${pageIndex}`,
+      Array.from({ length: 5 }, (_run, runIndex) =>
+        run(
+          `r${pageIndex}-${runIndex}`,
+          `f${Math.floor(random() * 4)}`,
+          randomText()
+        )
+      )
+    )
+  );
+
+  let loaded = mergeEmbeddedFontGlyphs(pages.slice(0, 3));
+  for (let start = 3; start < pages.length; start += 4) {
+    loaded = appendEmbeddedFontGlyphs(
+      loaded,
+      pages.slice(start, start + 4),
+      concat
+    );
+  }
+  expect(loaded).toEqual(mergeEmbeddedFontGlyphs(pages));
+});
+
+test("an append that adds no new glyphs keeps existing pages", () => {
+  const loaded = mergeEmbeddedFontGlyphs([page("p1", [run("a", "f1", "ab")])]);
+  const next = appendEmbeddedFontGlyphs(
+    loaded,
+    [page("p2", [run("b", "f1", "ba")])],
+    concat
+  );
+  expect(next[0]).toBe(loaded[0]);
+  expect(next[1]?.pdfTextObjects[0]?.embeddedFontGlyphs).toBe("ab");
+});
+
+test("an append onto an unknown page list falls back to a full merge", () => {
+  const unmerged = [page("p1", [run("a", "f1", "ab")])];
+  const next = appendEmbeddedFontGlyphs(
+    unmerged,
+    [page("p2", [run("b", "f1", "c")])],
+    concat
+  );
+  expect(
+    next.map((item) => item.pdfTextObjects[0]?.embeddedFontGlyphs)
+  ).toEqual(["abc", "abc"]);
 });
