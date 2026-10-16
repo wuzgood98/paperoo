@@ -181,6 +181,19 @@ const formFromBuilt = (
   });
 };
 
+/** Destroy `loadingTask` once `previous` settles; never rejects. */
+const destroyAfter = async (
+  previous: Promise<void>,
+  loadingTask: PDFDocumentLoadingTask | null
+): Promise<void> => {
+  await previous;
+  try {
+    await loadingTask?.destroy();
+  } catch {
+    // The document is already detached; nothing is left to recover.
+  }
+};
+
 class PdfSession {
   bytes: Uint8Array | null = null;
   #doc: PDFDocumentProxy | null = null;
@@ -194,6 +207,10 @@ class PdfSession {
    * Hydration would otherwise evict them before the viewport chunk loads.
    */
   #pinned = new Set<number>();
+  /** Settles once every closed document has finished tearing down. */
+  #teardown: Promise<void> = Promise.resolve();
+  /** Bumped per open so a superseded open stops before loading. */
+  #openGeneration = 0;
 
   get document(): PDFDocumentProxy | null {
     return this.#doc;
@@ -278,13 +295,18 @@ class PdfSession {
   }
 
   async #openDocument(bytes: Uint8Array): Promise<PDFDocumentProxy> {
+    this.#openGeneration += 1;
+    const generation = this.#openGeneration;
     await this.close();
+    if (generation !== this.#openGeneration) {
+      throw new Error("This PDF is no longer open.");
+    }
     if (bytes.byteLength > MAX_PDF_BYTES) {
       throw new Error("This PDF is larger than the 80 MB limit.");
     }
     ensurePdfjsWorker();
     this.bytes = clonePdfBytes(bytes);
-    this.#loadingTask = getDocument({
+    const loadingTask = getDocument({
       cMapPacked: true,
       cMapUrl: PDFJS_CMAP_URL,
       data: bytes,
@@ -292,18 +314,25 @@ class PdfSession {
       standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
       wasmUrl: PDFJS_WASM_URL,
     });
+    this.#loadingTask = loadingTask;
 
     let doc: PDFDocumentProxy;
     try {
-      doc = await this.#loadingTask.promise;
+      doc = await loadingTask.promise;
     } catch (error) {
-      await this.close();
+      // A newer open may already own the session; only tear down our own task.
+      if (this.#loadingTask === loadingTask) {
+        await this.close();
+      }
       if (error instanceof PasswordException) {
         throw new TypeError("This PDF is encrypted and cannot be opened.", {
           cause: error,
         });
       }
       throw error;
+    }
+    if (this.#loadingTask !== loadingTask) {
+      throw new Error("This PDF is no longer open.");
     }
 
     this.#doc = doc;
@@ -588,7 +617,12 @@ class PdfSession {
     return [...this.#pages.keys()];
   }
 
-  async close(): Promise<void> {
+  /**
+   * Detach the open document synchronously, then destroy it. Every close
+   * joins one teardown chain, so a concurrent open waits for the previous
+   * document to finish tearing down before it touches the shared worker.
+   */
+  close(): Promise<void> {
     const cachedIndexes = [...this.#pages.keys()];
     for (const sourceIndex of cachedIndexes) {
       this.releasePage(sourceIndex);
@@ -596,11 +630,15 @@ class PdfSession {
     this.#idleOrder = [];
     this.#idleBudget = DEFAULT_PAGE_IDLE_CACHE;
     this.#pinned.clear();
-    await this.#doc?.cleanup();
-    await this.#loadingTask?.destroy();
+    const loadingTask = this.#loadingTask;
     this.#doc = null;
     this.#loadingTask = null;
     this.bytes = null;
+    // destroy() cancels renders still in flight; doc.cleanup() would throw
+    // "Page N is currently rendering" on them instead. A failed teardown of
+    // the old document must never fail the open that replaces it.
+    this.#teardown = destroyAfter(this.#teardown, loadingTask);
+    return this.#teardown;
   }
 
   #touchIdle(sourceIndex: number): void {
