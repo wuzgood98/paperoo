@@ -7,7 +7,7 @@ import {
   normalizeRotation,
 } from "@/lib/editor/coordinates";
 import {
-  cloneSnapshot,
+  deepFreeze,
   emptyHistory,
   pushHistory,
   redoHistory,
@@ -147,7 +147,13 @@ const internal: StoreInternal = {
   state: initialState(),
 };
 
+/** Dev/test guard: history shares documents by reference, so mutation must throw. */
+const FREEZE_DOCUMENTS = process.env.NODE_ENV !== "production";
+
 const emit = (): void => {
+  if (FREEZE_DOCUMENTS) {
+    deepFreeze(internal.state.document);
+  }
   for (const listener of internal.listeners) {
     listener();
   }
@@ -187,7 +193,7 @@ const commit = (mutate: () => void, recordHistory: boolean): void => {
   if (shouldRecord) {
     flushPreview();
   }
-  const before = shouldRecord ? cloneSnapshot(getSnapshot()) : null;
+  const before = shouldRecord ? getSnapshot() : null;
   mutate();
   if (before) {
     internal.history = pushHistory(internal.history, before);
@@ -357,9 +363,7 @@ export const editorStore = {
     };
     patchHistoryDocuments((document) => ({
       ...document,
-      pages: mergeEmbeddedFontGlyphs(
-        mergeHydratedPages(document.pages, structuredClone(pages))
-      ),
+      pages: mergeEmbeddedFontGlyphs(mergeHydratedPages(document.pages, pages)),
     }));
     emit();
   },
@@ -857,7 +861,7 @@ export const editorStore = {
    * commitPreview(), the next recorded edit, or undo/redo.
    */
   previewEdit: (edit: () => void): void => {
-    internal.previewBase ??= cloneSnapshot(getSnapshot());
+    internal.previewBase ??= getSnapshot();
     internal.previewing = true;
     try {
       edit();
@@ -1137,9 +1141,7 @@ export const editorStore = {
       document: { ...internal.state.document, form },
     };
     patchHistoryDocuments((document) =>
-      isPlaceholderForm(document.form)
-        ? { ...document, form: structuredClone(form) }
-        : document
+      isPlaceholderForm(document.form) ? { ...document, form } : document
     );
     emit();
   },
