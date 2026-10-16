@@ -49,6 +49,8 @@ self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
       error: error instanceof Error ? error.message : "Export failed.",
       ok: false,
     };
-    self.postMessage(response, self.location.origin);
+    // Workers take no targetOrigin: an origin string throws "Overload
+    // resolution failed", the reply never arrives, and the export hangs.
+    self.postMessage(response, { transfer: [] });
   }
 });
