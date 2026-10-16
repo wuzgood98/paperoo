@@ -2,7 +2,11 @@
 
 import { ColorField } from "@/components/editor/color-field";
 import { inspectorStripClassName } from "@/components/editor/inspector-strip";
-import { FONT_FAMILIES, fontFamilyFromSelect } from "@/components/editor/utils";
+import {
+  FONT_FAMILIES,
+  fontFamilyFromSelect,
+  roundFontSize,
+} from "@/components/editor/utils";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -112,7 +116,7 @@ export const PdfTextInspector = ({
           value={object.fontFamily}
           items={FONT_FAMILIES}
         >
-          <SelectTrigger className="w-32">
+          <SelectTrigger aria-label="Font family" className="w-32">
             <SelectValue placeholder="Select a font family" />
           </SelectTrigger>
           <SelectContent>
@@ -126,6 +130,7 @@ export const PdfTextInspector = ({
       ) : null}
       {object.fontSize === undefined ? null : (
         <Input
+          aria-label="Font size"
           className="w-18"
           min={4}
           onValueChange={(value) => {
@@ -136,7 +141,8 @@ export const PdfTextInspector = ({
             patchObject((current) => ({ ...current, fontSize }));
           }}
           type="number"
-          value={object.fontSize}
+          // The store keeps full precision; the field shows two decimals.
+          value={roundFontSize(object.fontSize)}
         />
       )}
       {isPdfTextDirty(object) &&

@@ -1,10 +1,81 @@
 "use client";
 
 import Image from "next/image";
+import { useEffect, useRef } from "react";
 
 import { editorStore } from "@/lib/editor/store";
-import type { EditorObject } from "@/lib/editor/types";
+import type { EditorObject, TextObject } from "@/lib/editor/types";
 import { fontFamilyCss } from "@/lib/fonts/measure-text";
+
+const placeCaretAtEnd = (node: HTMLElement): void => {
+  const selection = window.getSelection();
+  if (!selection) {
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+};
+
+const TextObjectView = ({
+  editing,
+  object,
+  onTextCommit,
+  zoom,
+}: {
+  editing: boolean;
+  object: TextObject;
+  onTextCommit?: (content: string) => void;
+  zoom: number;
+}) => {
+  const textRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const node = textRef.current;
+    if (editing && node) {
+      node.focus({ preventScroll: true });
+      placeCaretAtEnd(node);
+    }
+  }, [editing]);
+
+  return (
+    <div className="relative h-full w-full">
+      {object.ocrWordId ? (
+        <div aria-hidden className="absolute inset-0 bg-white" />
+      ) : null}
+      <div
+        className="relative h-full w-full overflow-hidden break-words whitespace-pre-wrap outline-none empty:before:opacity-40 empty:before:content-['Text']"
+        contentEditable={editing}
+        onBlur={(event) => {
+          if (!editing) {
+            return;
+          }
+          onTextCommit?.(event.currentTarget.textContent);
+        }}
+        onPointerDown={(event) => {
+          if (editing) {
+            event.stopPropagation();
+          }
+        }}
+        ref={textRef}
+        style={{
+          color: object.color,
+          fontFamily: fontFamilyCss(object.fontFamily),
+          fontSize: object.fontSize * zoom,
+          fontStyle: object.italic ? "italic" : "normal",
+          fontWeight: object.fontWeight,
+          lineHeight: 1.2,
+          textAlign: object.align,
+        }}
+        suppressContentEditableWarning
+      >
+        {object.content}
+      </div>
+    </div>
+  );
+};
 
 export const ObjectView = ({
   editing,
@@ -20,33 +91,12 @@ export const ObjectView = ({
   switch (object.type) {
     case "text": {
       return (
-        <div className="relative h-full w-full">
-          {object.ocrWordId ? (
-            <div aria-hidden className="absolute inset-0 bg-white" />
-          ) : null}
-          <div
-            className="relative h-full w-full overflow-hidden break-words whitespace-pre-wrap outline-none"
-            contentEditable={editing}
-            onBlur={(event) => onTextCommit?.(event.currentTarget.textContent)}
-            onPointerDown={(event) => {
-              if (editing) {
-                event.stopPropagation();
-              }
-            }}
-            style={{
-              color: object.color,
-              fontFamily: fontFamilyCss(object.fontFamily),
-              fontSize: object.fontSize * zoom,
-              fontStyle: object.italic ? "italic" : "normal",
-              fontWeight: object.fontWeight,
-              lineHeight: 1.2,
-              textAlign: object.align,
-            }}
-            suppressContentEditableWarning
-          >
-            {object.content}
-          </div>
-        </div>
+        <TextObjectView
+          editing={editing}
+          object={object}
+          onTextCommit={onTextCommit}
+          zoom={zoom}
+        />
       );
     }
     case "image": {

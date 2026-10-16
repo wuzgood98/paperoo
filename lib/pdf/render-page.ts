@@ -67,7 +67,7 @@ export const releaseCanvas = (canvas: HTMLCanvasElement): void => {
 };
 
 const settleTask = async (
-  task: RenderTask | null | undefined
+  task: PdfPaintTask | null | undefined
 ): Promise<void> => {
   if (!task) {
     return;
@@ -85,17 +85,32 @@ const holdQueue = (): void => {
   // Replaced with the resolver for the canvas paint queue.
 };
 
+/** What callers keep of a paint: they only cancel it or wait for it. */
+export type PdfPaintTask = Pick<RenderTask, "cancel" | "promise">;
+
+/** The page methods a paint uses; a full `PDFPageProxy` satisfies it. */
+export interface RenderablePdfPage {
+  getViewport: PDFPageProxy["getViewport"];
+  render: (params: Parameters<PDFPageProxy["render"]>[0]) => PdfPaintTask;
+}
+
 export const renderPdfPage = async (
-  page: PDFPageProxy,
+  page: RenderablePdfPage,
   canvas: HTMLCanvasElement,
   scale: number,
   options: {
     annotationMode?: number;
     pixelRatio?: number;
-    previous?: RenderTask | null;
+    previous?: PdfPaintTask | null;
     rotation?: number;
+    /**
+     * Aborting cancels the paint in flight. Callers abort before shrinking or
+     * reusing the canvas, so pdf.js never draws into a 0×0 backing store.
+     */
+    signal?: AbortSignal;
   } = {}
-): Promise<RenderTask | null> => {
+): Promise<PdfPaintTask | null> => {
+  const { signal } = options;
   const previousWork = canvasQueue.get(canvas) ?? Promise.resolve();
   let release = holdQueue;
   // oxlint-disable-next-line promise/avoid-new -- the canvas queue is a manually settled lock
@@ -108,6 +123,9 @@ export const renderPdfPage = async (
     await previousWork;
     options.previous?.cancel();
     await settleTask(options.previous);
+    if (signal?.aborted) {
+      return null;
+    }
     const viewport = page.getViewport({
       rotation: options.rotation,
       scale,
@@ -124,15 +142,19 @@ export const renderPdfPage = async (
       transform: transform ?? undefined,
       viewport,
     });
+    const cancelTask = () => task.cancel();
+    signal?.addEventListener("abort", cancelTask, { once: true });
 
     try {
       await task.promise;
       return task;
     } catch (error) {
-      if (error instanceof RenderingCancelledException) {
+      if (error instanceof RenderingCancelledException || signal?.aborted) {
         return null;
       }
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", cancelTask);
     }
   } finally {
     release();

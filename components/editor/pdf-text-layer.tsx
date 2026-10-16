@@ -120,6 +120,24 @@ const PdfTextEditor = ({
   const discardRef = useRef(false);
   const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? object.text;
+  // Latest draft for the unmount commit: a click elsewhere on the page can
+  // close the editor before the input ever sees a blur.
+  const pendingRef = useRef({
+    objectId: object.id,
+    pageId: page.id,
+    text: object.text,
+    value,
+  });
+  const settledRef = useRef(false);
+
+  useEffect(() => {
+    pendingRef.current = {
+      objectId: object.id,
+      pageId: page.id,
+      text: object.text,
+      value,
+    };
+  }, [object.id, object.text, page.id, value]);
   const frame = overlayFrame(object, value);
   const fontSize = object.fontSize ?? object.height;
   const fontSizeCss = pageToCss(fontSize, zoom);
@@ -151,7 +169,25 @@ const PdfTextEditor = ({
     void ensurePdfTextMeasured(page, object, zoom);
   }, [object, page, zoom]);
 
+  useEffect(
+    () => () => {
+      if (settledRef.current || discardRef.current) {
+        return;
+      }
+      const { objectId, pageId, text, value: pending } = pendingRef.current;
+      if (pending === text) {
+        return;
+      }
+      editorStore.patchPdfTextById(pageId, objectId, (current) => ({
+        ...current,
+        text: pending,
+      }));
+    },
+    []
+  );
+
   const commit = (next: string): void => {
+    settledRef.current = true;
     if (next !== object.text) {
       editorStore.patchPdfTextById(page.id, object.id, (current) => ({
         ...current,
@@ -182,6 +218,7 @@ const PdfTextEditor = ({
         onBlur={() => {
           if (discardRef.current) {
             discardRef.current = false;
+            settledRef.current = true;
             onExit();
             return;
           }

@@ -116,7 +116,10 @@ export const InspectorBar = () => {
               value={selected.fontFamily}
               items={FONT_FAMILIES}
             >
-              <SelectTrigger className="w-32 max-md:max-w-full">
+              <SelectTrigger
+                aria-label="Font family"
+                className="w-32 max-md:max-w-full"
+              >
                 <SelectValue placeholder="Select a font family" />
               </SelectTrigger>
               <SelectContent>
@@ -128,6 +131,7 @@ export const InspectorBar = () => {
               </SelectContent>
             </Select>
             <Input
+              aria-label="Font size"
               min={8}
               onValueChange={(value) =>
                 editorStore.patchSelected((object) =>
@@ -236,7 +240,7 @@ export const InspectorBar = () => {
           }
         />
       ) : null}
-      <p className="text-muted-foreground flex items-center gap-2 text-xs">
+      <div className="text-muted-foreground flex items-center gap-2 text-xs">
         Opacity
         <Slider
           aria-label="Opacity"
@@ -259,7 +263,7 @@ export const InspectorBar = () => {
           step={0.05}
           value={[selected.opacity]}
         />
-      </p>
+      </div>
     </div>
   );
 };

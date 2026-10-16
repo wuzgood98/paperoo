@@ -143,6 +143,8 @@ const PageThumbnailItemView = ({
 }) => (
   <li className="flex flex-col gap-1">
     <button
+      aria-current={selected ? "page" : undefined}
+      aria-label={`Page ${index + 1}`}
       className="editor-pressable focus-visible:ring-ring rounded-md text-left outline-none focus-visible:ring-2"
       draggable
       onClick={() => {

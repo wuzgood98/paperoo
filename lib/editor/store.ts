@@ -725,6 +725,42 @@ export const editorStore = {
     }, true);
   },
 
+  /**
+   * Remove a text object the user left empty. When adding it was the last undo
+   * step, that step is dropped too, so an abandoned click leaves no history.
+   */
+  discardEmptyText: (objectId: string): void => {
+    const pageId = internal.state.currentPageId;
+    if (!pageId) {
+      return;
+    }
+    flushPreview();
+    const previous = internal.history.past.at(-1);
+    const addedLast =
+      previous !== undefined &&
+      !findPage(previous.document.pages, pageId)?.objects.some(
+        (object) => object.id === objectId
+      );
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: withPages(
+          removeObjects(internal.state.document.pages, pageId, [objectId])
+        ),
+        selectedObjectIds: internal.state.selectedObjectIds.filter(
+          (id) => id !== objectId
+        ),
+      };
+    }, !addedLast);
+    if (addedLast) {
+      internal.history = {
+        future: [],
+        past: internal.history.past.slice(0, -1),
+      };
+      emit();
+    }
+  },
+
   fitPage: (): void => {
     setState({ zoomMode: "fit-page" });
     editorStore.recomputeFitZoom();

@@ -45,7 +45,7 @@ export const PageThumbnail = ({
     if (!canvas || !visible) {
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
 
     let task: Awaited<ReturnType<typeof renderPdfPage>> = null;
 
@@ -56,7 +56,7 @@ export const PageThumbnail = ({
       if (!pdfPage) {
         return;
       }
-      if (cancelled) {
+      if (controller.signal.aborted) {
         pdfSession.releasePageRef(page.sourceIndex);
         return;
       }
@@ -64,6 +64,7 @@ export const PageThumbnail = ({
       task = await renderPdfPage(pdfPage, canvas, thumbnailScale(page.width), {
         annotationMode: AnnotationMode.DISABLE,
         previous: task,
+        signal: controller.signal,
       });
       taskRef.current = task;
     };
@@ -71,7 +72,8 @@ export const PageThumbnail = ({
     void draw();
 
     return () => {
-      cancelled = true;
+      // Cancel the paint still in flight before the canvas is shrunk under it.
+      controller.abort();
       task?.cancel();
       releaseCanvas(canvas);
       if (retained) {

@@ -3,8 +3,8 @@
 import { useEffect, useRef } from "react";
 
 import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
-import type { RenderTask } from "@/lib/pdf/pdfjs";
 import { releaseCanvas, renderPdfPage } from "@/lib/pdf/render-page";
+import type { PdfPaintTask } from "@/lib/pdf/render-page";
 import { pdfSession } from "@/lib/pdf/session";
 
 export const PdfCanvas = ({
@@ -17,7 +17,7 @@ export const PdfCanvas = ({
   sourceIndex: number;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const taskRef = useRef<RenderTask | null>(null);
+  const taskRef = useRef<PdfPaintTask | null>(null);
   const pixelRatio = useDevicePixelRatio();
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export const PdfCanvas = ({
     if (!canvas) {
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     let retained = false;
 
     const draw = async () => {
@@ -33,7 +33,7 @@ export const PdfCanvas = ({
       if (!page) {
         return;
       }
-      if (cancelled) {
+      if (controller.signal.aborted) {
         pdfSession.releasePageRef(sourceIndex);
         return;
       }
@@ -45,8 +45,9 @@ export const PdfCanvas = ({
         pixelRatio,
         previous: taskRef.current,
         rotation,
+        signal: controller.signal,
       });
-      if (!cancelled) {
+      if (!controller.signal.aborted) {
         taskRef.current = task;
       }
     };
@@ -54,7 +55,8 @@ export const PdfCanvas = ({
     void draw();
 
     return () => {
-      cancelled = true;
+      // Cancel the paint still in flight before the canvas is shrunk under it.
+      controller.abort();
       taskRef.current?.cancel();
       releaseCanvas(canvas);
       if (retained) {
@@ -63,5 +65,7 @@ export const PdfCanvas = ({
     };
   }, [pixelRatio, rotation, scale, sourceIndex]);
 
-  return <canvas className="block" ref={canvasRef} />;
+  // White under the backing store: a resized canvas is transparent black until
+  // pdf.js paints its first chunk.
+  return <canvas className="block bg-white" ref={canvasRef} />;
 };
