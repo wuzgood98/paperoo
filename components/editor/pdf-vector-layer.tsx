@@ -217,10 +217,12 @@ const PdfVectorPathSvg = ({
   commands,
   crop,
   fill,
+  fillOpacity,
   lineCap,
   lineJoin,
   sourceRotate,
   stroke,
+  strokeOpacity,
   strokeWidth,
   zoom,
 }: {
@@ -228,10 +230,12 @@ const PdfVectorPathSvg = ({
   commands: readonly PdfPathCommand[];
   crop: CropBox;
   fill: string | null;
+  fillOpacity?: number;
   lineCap: number;
   lineJoin: number;
   sourceRotate: PageRotation;
   stroke: string | null;
+  strokeOpacity?: number;
   strokeWidth: number;
   zoom: number;
 }) => {
@@ -250,7 +254,9 @@ const PdfVectorPathSvg = ({
       <path
         d={d}
         fill={fill ?? "none"}
+        fillOpacity={fillOpacity}
         stroke={stroke ?? "none"}
+        strokeOpacity={strokeOpacity}
         strokeLinecap={strokeLinecap(lineCap)}
         strokeLinejoin={strokeLinejoin(lineJoin)}
         strokeWidth={strokeWidth}
@@ -279,10 +285,12 @@ const PdfVectorPreview = ({
       commands={object.commands}
       crop={crop}
       fill={object.fill?.color ?? null}
+      fillOpacity={object.fill?.opacity}
       lineCap={object.stroke?.lineCap ?? 0}
       lineJoin={object.stroke?.lineJoin ?? 0}
       sourceRotate={sourceRotate}
       stroke={object.stroke?.color ?? null}
+      strokeOpacity={object.stroke?.opacity}
       strokeWidth={object.stroke?.width ?? 0}
       zoom={zoom}
     />

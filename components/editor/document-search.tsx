@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/combobox";
 import { createComboboxItems } from "@/components/ui/combobox-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
+import { outlineTextSession } from "@/lib/ocr/outline-session";
 import type { DocumentSearchHit } from "@/lib/ocr/search";
 import { searchDocumentText } from "@/lib/ocr/search";
 import { useOcrSession } from "@/lib/ocr/session";
@@ -67,6 +68,10 @@ export const DocumentSearch = ({
         onInputValueChange={(value) => {
           setQuery(value);
           setOpen(true);
+          // Text drawn only as outlines is found once recognized.
+          if (value.trim() !== "") {
+            outlineTextSession.enqueueAll(pages);
+          }
         }}
         onOpenChange={setOpen}
         onValueChange={(value) => {

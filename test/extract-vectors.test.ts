@@ -3,6 +3,7 @@ import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
 import { IDENTITY_CTM } from "@/lib/editor/coordinates";
+import { hitTestPdfVector } from "@/lib/editor/object-utils";
 import type { OperatorArg } from "@/lib/pdf/extract-images";
 import {
   classifyVectorKind,
@@ -276,8 +277,8 @@ test("extractPdfVectorObjects keeps paths after a Google Docs-style ExtGState", 
 
 test.each([
   ["a soft mask", ["SMask", true]],
-  ["stroke alpha", ["CA", 0.5]],
-  ["fill alpha", ["ca", 0.5]],
+  ["zero stroke alpha", ["CA", 0]],
+  ["zero fill alpha", ["ca", 0]],
   ["a non-normal blend mode", ["BM", "multiply"]],
   ["a font", ["Font", ["g_font_1", 12]]],
   ["a dash pattern", ["D", [[3, 2], 0]]],
@@ -290,12 +291,67 @@ test.each([
   }
 );
 
+test("extractPdfVectorObjects keeps a stroke under constant stroke alpha", () => {
+  const [line] = extractWithGState([["CA", 0.5]]);
+
+  expect(line?.stroke?.opacity).toBe(0.5);
+  expect(line?.originalStroke?.opacity).toBe(0.5);
+});
+
+test("extractPdfVectorObjects keeps a translucent fill with its alpha until restore", () => {
+  const square = (): readonly [number, Float32Array[], Float32Array] => [
+    FAKE_OPS.fill,
+    [
+      new Float32Array([
+        DrawOPS.moveTo,
+        10,
+        10,
+        DrawOPS.lineTo,
+        30,
+        10,
+        DrawOPS.lineTo,
+        30,
+        30,
+        DrawOPS.closePath,
+      ]),
+    ],
+    new Float32Array([10, 10, 30, 30]),
+  ];
+  const objects = extractPdfVectorObjects(
+    {
+      argsArray: [
+        undefined,
+        [[["ca", 0.8]]],
+        ["#1a1a1a"],
+        square(),
+        undefined,
+        square(),
+      ],
+      fnArray: [
+        FAKE_OPS.save,
+        FAKE_OPS.setGState,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.constructPath,
+        FAKE_OPS.restore,
+        FAKE_OPS.constructPath,
+      ],
+    },
+    pageMeta,
+    FAKE_OPS
+  );
+
+  expect(objects.map((object) => object.fill)).toEqual([
+    { color: "#1a1a1a", opacity: 0.8 },
+    { color: "#000000" },
+  ]);
+});
+
 test("extractPdfVectorObjects drops an unsafe ExtGState at restore", () => {
   const objects = extractPdfVectorObjects(
     {
       argsArray: [
         undefined,
-        [[["CA", 0.5]]],
+        [[["BM", "multiply"]]],
         strokedLine(),
         undefined,
         strokedLine(),
@@ -349,4 +405,62 @@ test("extractPdfVectorObjects keeps lines but skips curved miter strokes under a
   );
 
   expect(objects.map((object) => object.kind)).toEqual(["line"]);
+});
+
+test("extractPdfVectorObjects keeps form fills only as unselectable form content", () => {
+  const filledSquare = (): readonly [number, Float32Array[], Float32Array] => [
+    FAKE_OPS.fill,
+    [
+      new Float32Array([
+        DrawOPS.moveTo,
+        10,
+        10,
+        DrawOPS.lineTo,
+        30,
+        10,
+        DrawOPS.lineTo,
+        30,
+        30,
+        DrawOPS.closePath,
+      ]),
+    ],
+    new Float32Array([10, 10, 30, 30]),
+  ];
+  const objects = extractPdfVectorObjects(
+    {
+      argsArray: [
+        [
+          [1, 0, 0, 1, 0, 0],
+          [0, 0, 100, 100],
+        ],
+        filledSquare(),
+        strokedLine(),
+        undefined,
+      ],
+      fnArray: [
+        FAKE_OPS.paintFormXObjectBegin,
+        FAKE_OPS.constructPath,
+        FAKE_OPS.constructPath,
+        FAKE_OPS.paintFormXObjectEnd,
+      ],
+    },
+    pageMeta,
+    FAKE_OPS
+  );
+
+  // The stroke stays in the form; the fill is kept for text recognition.
+  expect(objects).toHaveLength(1);
+  expect(objects[0]?.formNested).toBe(true);
+  const inside = { x: 20, y: 772 };
+  expect(
+    hitTestPdfVector(objects, inside, pageMeta.cropBox, 0)
+  ).toBeUndefined();
+  expect(
+    hitTestPdfVector(
+      objects.map((object) => ({ ...object, formNested: false })),
+      inside,
+      pageMeta.cropBox,
+      0
+    )
+  ).toBeDefined();
 });

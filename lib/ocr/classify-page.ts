@@ -5,11 +5,16 @@ export type OcrPageKind = "native" | "scanned" | "plain";
 const MIN_NATIVE_TEXT_CHARS = 40;
 const MIN_SCAN_IMAGE_COVERAGE = 0.45;
 
-const pageTextLength = (page: EditorPage): number =>
-  page.pdfTextObjects
-    .map((object) => object.text)
-    .join("")
-    .trim().length;
+/** Text the PDF itself carries; recognized outline text does not count. */
+const pageTextLength = (page: EditorPage): number => {
+  let text = "";
+  for (const object of page.pdfTextObjects) {
+    if (!object.outlineText) {
+      text += object.text;
+    }
+  }
+  return text.trim().length;
+};
 
 const pageArea = (page: EditorPage): number =>
   Math.max(page.width, 1) * Math.max(page.height, 1);

@@ -151,6 +151,20 @@ export interface PdfTextObject {
   /** True when that outline also paints other runs, so it cannot be covered alone. */
   inkShared?: boolean;
   /**
+   * Outline-only text: the subpaths of the `inkVectorId` path that draw this
+   * run's glyphs. That path also draws the label's other lines.
+   */
+  inkSubpaths?: readonly number[];
+  /** Constant alpha of the original ink (fill `ca`), below 1; unset is opaque. */
+  fillOpacity?: number;
+  /**
+   * A text block of the document face this run was matched to, when its own
+   * text block has no glyphs to rebuild from (outline-only text).
+   */
+  glyphFace?: PdfGlyphFaceRef;
+  /** Set when the run was recognized from outline-only text by OCR. */
+  outlineText?: PdfOutlineTextSource;
+  /**
    * The run's own text-showing operator, when it can be emptied without
    * moving other text. Unset means Removal is impossible: export covers it.
    */
@@ -192,6 +206,28 @@ export interface PdfTextObject {
   width: number;
   x: number;
   y: number;
+}
+
+/** A Figma text block whose glyphs make up a face (see `resolveGlyphFace`). */
+export interface PdfGlyphFaceRef {
+  pageId: string;
+  showOrdinal: number;
+}
+
+/** Which edge or middle of a recognized line stays put when its text changes. */
+export type PdfTextAnchor = "start" | "center" | "end";
+
+/** How a run of outline-only text was recognized. */
+export interface PdfOutlineTextSource {
+  anchor: PdfTextAnchor;
+  /** User-space x of the anchor (line start, middle or end) as recognized. */
+  anchorX: number;
+  /** OCR confidence for the line, 0–100. */
+  confidence: number;
+  /** User-space advance width of the line as recognized. */
+  lineWidth: number;
+  /** User-space pen origin x as recognized. */
+  originX: number;
 }
 
 export interface PdfImageObject {
@@ -250,12 +286,16 @@ export type PdfVectorPaint =
 
 export interface PdfVectorFillStyle {
   color: string;
+  /** Constant fill alpha (`ca`) below 1; unset means opaque. */
+  opacity?: number;
 }
 
 export interface PdfVectorStrokeStyle {
   color: string;
   lineCap: number;
   lineJoin: number;
+  /** Constant stroke alpha (`CA`) below 1; unset means opaque. */
+  opacity?: number;
   width: number;
 }
 
@@ -384,10 +424,16 @@ export interface PdfVectorObject {
    */
   pageBackground?: boolean;
   /**
-   * Glyph outline of invisible Type3 text (Figma export). The text run owns
-   * it: it is the run's original ink and is not selectable on its own.
+   * Glyph outline of invisible Type3 text (Figma export), or outline-only
+   * text recognized by OCR. Its text runs own it: it is their original ink
+   * and is not selectable on its own.
    */
   textInk?: boolean;
+  /**
+   * Painted inside a form XObject. Kept only so outline-only text there can be
+   * recognized; never selectable, and its ink can only be covered.
+   */
+  formNested?: boolean;
   type: "pdf-vector";
   width: number;
   x: number;

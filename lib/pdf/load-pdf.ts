@@ -1,5 +1,6 @@
 import { editorStore } from "@/lib/editor/store";
 import { EMPTY_PDF_FORM } from "@/lib/editor/types";
+import { outlineTextSession } from "@/lib/ocr/outline-session";
 import { ocrSession } from "@/lib/ocr/session";
 import { isPdfBytes, pdfSession, readFileBytes } from "@/lib/pdf/session";
 
@@ -27,7 +28,7 @@ export const loadPdfFile = async (file: File): Promise<void> => {
       throw new Error("This file does not look like a valid PDF.");
     }
 
-    await ocrSession.reset();
+    await Promise.all([ocrSession.reset(), outlineTextSession.reset()]);
     if (isStale()) {
       return;
     }
@@ -71,7 +72,7 @@ export const loadPdfFile = async (file: File): Promise<void> => {
       return;
     }
     await pdfSession.close();
-    await ocrSession.reset();
+    await Promise.all([ocrSession.reset(), outlineTextSession.reset()]);
     const message =
       error instanceof Error ? error.message : "Could not open this PDF.";
     editorStore.clearDocument();
