@@ -145,10 +145,19 @@ export const EMPTY_PDF_HOVER: PdfHoverIds = {
   vectorId: null,
 };
 
+/** Same hover target, so a pointer move can keep the previous state object. */
+export const samePdfHover = (left: PdfHoverIds, right: PdfHoverIds): boolean =>
+  left.annotationId === right.annotationId &&
+  left.formFieldId === right.formFieldId &&
+  left.imageId === right.imageId &&
+  left.ocrWordId === right.ocrWordId &&
+  left.textId === right.textId &&
+  left.vectorId === right.vectorId;
+
 export const pdfHoverIdsAtPoint = (
   page: EditorPage,
   point: Point,
-  document: EditorDocument,
+  document: Pick<EditorDocument, "form">,
   ocrWords: readonly OcrTextObject[] = []
 ): PdfHoverIds => {
   const formHit = hitTestPdfFormField(document, page.id, point);

@@ -96,8 +96,9 @@ export const findPdfAnnotation = (
 ): PdfAnnotationObject | undefined =>
   page?.pdfAnnotationObjects.find((object) => object.id === objectId);
 
-export const documentForm = (document: EditorDocument): PdfFormModel =>
-  document.form ?? EMPTY_PDF_FORM;
+export const documentForm = (
+  document: Pick<EditorDocument, "form">
+): PdfFormModel => document.form ?? EMPTY_PDF_FORM;
 
 export const findPdfFormField = (
   document: EditorDocument,
@@ -183,21 +184,47 @@ export const pdfFormFieldPreviewText = (
   }
 };
 
-/** Widget order on a page: field list, then widgets. PDF /Tabs R/C/S is not used. */
-export const pdfFormWidgetsOnPage = (
-  document: EditorDocument,
-  pageId: string
-): readonly { field: PdfFormField; widget: PdfFormWidget }[] => {
-  const items: { field: PdfFormField; widget: PdfFormWidget }[] = [];
-  for (const field of documentForm(document).fields) {
+interface PdfFormWidgetItem {
+  field: PdfFormField;
+  widget: PdfFormWidget;
+}
+
+const NO_FORM_WIDGETS: readonly PdfFormWidgetItem[] = [];
+
+/** Forms are immutable, so each form's per-page index is built once. */
+const formWidgetIndex = new WeakMap<
+  PdfFormModel,
+  ReadonlyMap<string, readonly PdfFormWidgetItem[]>
+>();
+
+const formWidgetsByPage = (
+  form: PdfFormModel
+): ReadonlyMap<string, readonly PdfFormWidgetItem[]> => {
+  const cached = formWidgetIndex.get(form);
+  if (cached) {
+    return cached;
+  }
+  const index = new Map<string, PdfFormWidgetItem[]>();
+  for (const field of form.fields) {
     for (const widget of field.widgets) {
-      if (widget.pageId === pageId) {
+      const items = index.get(widget.pageId);
+      if (items) {
         items.push({ field, widget });
+      } else {
+        index.set(widget.pageId, [{ field, widget }]);
       }
     }
   }
-  return items;
+  formWidgetIndex.set(form, index);
+  return index;
 };
+
+/** Widget order on a page: field list, then widgets. PDF /Tabs R/C/S is not used. */
+export const pdfFormWidgetsOnPage = (
+  document: Pick<EditorDocument, "form">,
+  pageId: string
+): readonly PdfFormWidgetItem[] =>
+  formWidgetsByPage(documentForm(document)).get(pageId) ?? NO_FORM_WIDGETS;
 
 const pointInRect = (point: Point, rect: Rect): boolean =>
   point.x >= rect.x &&
@@ -206,17 +233,12 @@ const pointInRect = (point: Point, rect: Rect): boolean =>
   point.y <= rect.y + rect.height;
 
 export const hitTestPdfFormField = (
-  document: EditorDocument,
+  document: Pick<EditorDocument, "form">,
   pageId: string,
   point: Point
 ): PdfFormField | undefined => {
   const hits = pdfFormWidgetsOnPage(document, pageId);
-  for (const { field, widget } of hits.toReversed()) {
-    if (pointInRect(point, widget)) {
-      return field;
-    }
-  }
-  return undefined;
+  return hits.findLast(({ widget }) => pointInRect(point, widget))?.field;
 };
 
 const rectsOverlap = (left: Rect, right: Rect): boolean =>

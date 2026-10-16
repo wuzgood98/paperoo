@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 import { ObjectView } from "@/components/editor/objects/object-view";
 import {
   requireOverlayRoot,
@@ -22,7 +24,7 @@ interface RefBox<T> {
   current: T;
 }
 
-export const OverlayObject = ({
+const OverlayObjectView = ({
   boundsRef,
   editing,
   gestureRef,
@@ -164,3 +166,6 @@ export const OverlayObject = ({
     </ContextMenu>
   );
 };
+
+/** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
+export const OverlayObject = memo(OverlayObjectView);

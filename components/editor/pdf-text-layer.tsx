@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
@@ -217,7 +217,7 @@ const PdfTextEditor = ({
   );
 };
 
-export const PdfTextLayer = ({
+const PdfTextLayerView = ({
   editingId,
   hoveredId,
   objects,
@@ -384,3 +384,6 @@ export const PdfTextLayer = ({
     </>
   );
 };
+
+/** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
+export const PdfTextLayer = memo(PdfTextLayerView);

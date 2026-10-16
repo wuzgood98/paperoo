@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 
 import { objectWrapperStyle } from "@/lib/editor/coordinates";
 import { visibleOcrWords } from "@/lib/ocr/hit";
 import type { OcrTextObject } from "@/lib/ocr/types";
 import { cn } from "@/lib/utils";
 
-export const OcrWordLayer = ({
+const OcrWordLayerView = ({
   hoveredId,
   selectedIds,
   showRegions,
@@ -65,3 +65,6 @@ export const OcrWordLayer = ({
     </>
   );
 };
+
+/** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
+export const OcrWordLayer = memo(OcrWordLayerView);

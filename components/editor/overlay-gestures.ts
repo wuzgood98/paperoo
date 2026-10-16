@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import type { Dispatch, PointerEvent, SetStateAction } from "react";
 
 import { toastManager } from "@/components/ui/toast-manager";
@@ -121,13 +121,32 @@ export const useOverlayGestures = ({
   tool: EditorTool;
   zoom: number;
 }) => {
-  const toPage = (event: { clientX: number; clientY: number }): Point => {
-    // The pointerdown snapshot only holds for an in-flight gesture; hover and
-    // clicks after a scroll or zoom need the page's current position.
-    const cached = gestureRef.current ? boundsRef.current : null;
-    const bounds =
-      cached ?? snapshotBounds(requireOverlayRoot(rootRef.current));
-    return screenToPage({ x: event.clientX, y: event.clientY }, bounds, zoom);
+  // Stable per zoom so memoized layers that receive it can skip re-renders.
+  const toPage = useCallback(
+    (event: { clientX: number; clientY: number }): Point => {
+      // The pointerdown snapshot only holds for an in-flight gesture; hover and
+      // clicks after a scroll or zoom need the page's current position.
+      const cached = gestureRef.current ? boundsRef.current : null;
+      const bounds =
+        cached ?? snapshotBounds(requireOverlayRoot(rootRef.current));
+      return screenToPage({ x: event.clientX, y: event.clientY }, bounds, zoom);
+    },
+    [boundsRef, gestureRef, rootRef, zoom]
+  );
+  const draftFrameRef = useRef<number | null>(null);
+
+  /** Copy the stroke into React state at most once per frame. */
+  const scheduleDrawDraft = (): void => {
+    if (draftFrameRef.current !== null) {
+      return;
+    }
+    draftFrameRef.current = requestAnimationFrame(() => {
+      draftFrameRef.current = null;
+      const gesture = gestureRef.current;
+      if (gesture?.kind === "draw") {
+        setDraft({ kind: "draw", points: [...gesture.points] });
+      }
+    });
   };
 
   const writeNodeBox = (
@@ -276,7 +295,7 @@ export const useOverlayGestures = ({
       for (const coalesced of events) {
         gesture.points.push(toPage(coalesced));
       }
-      setDraft({ kind: "draw", points: [...gesture.points] });
+      scheduleDrawDraft();
       return;
     }
 
