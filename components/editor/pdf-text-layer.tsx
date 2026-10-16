@@ -3,6 +3,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
+import { PdfVectorCover } from "@/components/editor/pdf-vector-layer";
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
   captionUnderlineCssOffsetFromRunTop,
@@ -14,6 +15,8 @@ import {
   pdfTextCssInkOffsetFromRunTop,
   pdfTextCoverColor,
   pdfTextCoverRects,
+  pdfTextInkCoverStyle,
+  pdfTextInkOutline,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
   pdfTextOverlayBox,
@@ -143,7 +146,13 @@ const PdfTextEditor = ({
   const fontSizeCss = pageToCss(fontSize, zoom);
   // Keystrokes only change `draft`; until measurement lands this walks the
   // whole page, so compute it once per run and page version.
-  const covers = useMemo(() => pdfTextCoverRects(object, page), [object, page]);
+  // A run that owns its outline is covered by repainting that path at page
+  // level (see PdfTextInkCover); rect plates would blank neighbouring art.
+  const covers = useMemo(
+    () =>
+      pdfTextInkOutline(object, page) ? [] : pdfTextCoverRects(object, page),
+    [object, page]
+  );
   const inkTop = pdfTextCssInkOffsetFromRunTop(
     object,
     frame,
@@ -299,7 +308,27 @@ const PdfTextLayerView = ({
   return (
     <>
       {objects.map((object) => {
-        if (object.id === editingId || !isPdfTextDirty(object)) {
+        const outline = pdfTextInkOutline(object, page);
+        if (!(outline && (object.id === editingId || isPdfTextDirty(object)))) {
+          return null;
+        }
+        return (
+          <PdfVectorCover
+            crop={page.cropBox}
+            key={`ink-cover-${object.id}`}
+            object={outline}
+            sourceRotate={page.sourceRotate}
+            style={pdfTextInkCoverStyle(pdfTextCoverColor(object))}
+            zoom={zoom}
+          />
+        );
+      })}
+      {objects.map((object) => {
+        if (
+          object.id === editingId ||
+          !isPdfTextDirty(object) ||
+          pdfTextInkOutline(object, page)
+        ) {
           return null;
         }
         // Covers paint in their own pass, under every run's text and the

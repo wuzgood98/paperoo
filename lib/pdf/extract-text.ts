@@ -60,6 +60,11 @@ export interface PdfJsTextContent {
 export interface PdfFontFaceMeta {
   bold?: boolean;
   isType3?: boolean;
+  /**
+   * Type3 face whose glyph procedures only declare metrics (`d0`/`d1`), so its
+   * text is invisible. Figma draws the visible glyphs as outline paths instead.
+   */
+  paintsNothing?: boolean;
   italic?: boolean;
   missingFile?: boolean;
   name?: string;
@@ -69,6 +74,8 @@ export interface PdfFontFaceMeta {
 export interface PdfJsFontFaceData {
   black?: boolean;
   bold?: boolean;
+  /** Type3 only: each glyph procedure's operator list, keyed by glyph name. */
+  charProcOperatorList?: ReadonlyMap<string, { fnArray: readonly number[] }>;
   isType3Font?: boolean;
   italic?: boolean;
   missingFile?: boolean;
@@ -85,8 +92,28 @@ export interface PdfJsFontObjectStore {
 
 const FONT_FACE_RESOLVE_MS = 2000;
 
+/** Operators a Type3 glyph procedure may hold without painting anything. */
+export type Type3MetricOps = ReadonlySet<number>;
+
+const type3PaintsNothing = (
+  value: PdfJsFontFaceData,
+  metricOps: Type3MetricOps | undefined
+): boolean => {
+  const procs = value.charProcOperatorList;
+  if (!(metricOps && value.isType3Font === true && procs && procs.size > 0)) {
+    return false;
+  }
+  for (const proc of procs.values()) {
+    if (proc.fnArray.some((fn) => !metricOps.has(fn))) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const parseFontFace = (
-  value: PdfJsFontFaceData | undefined
+  value: PdfJsFontFaceData | undefined,
+  metricOps?: Type3MetricOps
 ): PdfFontFaceMeta | null => {
   if (!value) {
     return null;
@@ -97,18 +124,20 @@ const parseFontFace = (
     italic: value.italic === true,
     missingFile: value.missingFile === true,
     name: value.name,
+    paintsNothing: type3PaintsNothing(value, metricOps),
   };
 };
 
 const readResolvedFontFace = (
   store: PdfJsFontObjectStore,
-  loadedName: string
+  loadedName: string,
+  metricOps: Type3MetricOps | undefined
 ): PdfFontFaceMeta | null => {
   if (!store.has(loadedName)) {
     return null;
   }
   try {
-    return parseFontFace(store.get(loadedName));
+    return parseFontFace(store.get(loadedName), metricOps);
   } catch {
     return null;
   }
@@ -116,9 +145,10 @@ const readResolvedFontFace = (
 
 const resolveFontFace = (
   store: PdfJsFontObjectStore,
-  loadedName: string
+  loadedName: string,
+  metricOps: Type3MetricOps | undefined
 ): Promise<PdfFontFaceMeta | null> => {
-  const ready = readResolvedFontFace(store, loadedName);
+  const ready = readResolvedFontFace(store, loadedName, metricOps);
   if (ready) {
     return Promise.resolve(ready);
   }
@@ -139,7 +169,7 @@ const resolveFontFace = (
     }, FONT_FACE_RESOLVE_MS);
 
     store.get(loadedName, (data) => {
-      const parsed = parseFontFace(data);
+      const parsed = parseFontFace(data, metricOps);
       if (!parsed) {
         return;
       }
@@ -152,7 +182,9 @@ const resolveFontFace = (
 /** Resolve PDF.js Font records from commonObjs for each text-item loadedName. */
 export const collectPdfFontFaces = async (
   store: PdfJsFontObjectStore,
-  items: readonly ExtractableTextItem[]
+  items: readonly ExtractableTextItem[],
+  /** pdf.js `setCharWidth`/`setCharWidthAndBounds`; enables `paintsNothing`. */
+  type3MetricOps?: Type3MetricOps
 ): Promise<Record<string, PdfFontFaceMeta>> => {
   const loadedNames = new Set<string>();
   for (const item of items) {
@@ -164,7 +196,7 @@ export const collectPdfFontFaces = async (
   const faces: Record<string, PdfFontFaceMeta> = {};
   await Promise.all(
     [...loadedNames].map(async (loadedName) => {
-      const face = await resolveFontFace(store, loadedName);
+      const face = await resolveFontFace(store, loadedName, type3MetricOps);
       if (face) {
         faces[loadedName] = face;
       }
@@ -284,6 +316,7 @@ const embeddedRunFields = (
       : "",
     embeddedFontUnavailable:
       face?.isType3 === true || face?.missingFile === true,
+    invisibleGlyphs: face?.paintsNothing === true,
   };
 };
 

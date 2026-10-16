@@ -18,7 +18,10 @@ import {
   extractPdfTextObjects,
   toExtractableTextContent,
 } from "@/lib/pdf/extract-text";
-import type { PdfJsFontObjectStore } from "@/lib/pdf/extract-text";
+import type {
+  PdfFontFaceMeta,
+  PdfJsFontObjectStore,
+} from "@/lib/pdf/extract-text";
 import {
   extractPdfTextPaints,
   toPdfTextColorOps,
@@ -28,6 +31,7 @@ import {
   extractPdfVectorObjects,
   toPdfVectorOps,
 } from "@/lib/pdf/extract-vectors";
+import { linkTextInkOutlines } from "@/lib/pdf/link-text-ink";
 import {
   AnnotationMode,
   ensurePdfjsWorker,
@@ -110,6 +114,24 @@ const observeRejection = (promise: Promise<unknown>): void => {
 };
 
 /** First paint covers the initial viewport window (visible + overscan). */
+/** Type3 glyph-procedure ops that only declare metrics and paint nothing. */
+const TYPE3_METRIC_OPS: ReadonlySet<number> = new Set([
+  OPS.setCharWidth,
+  OPS.setCharWidthAndBounds,
+]);
+
+const paintlessFontIds = (
+  faces: Readonly<Record<string, PdfFontFaceMeta>>
+): Set<string> => {
+  const ids = new Set<string>();
+  for (const [id, face] of Object.entries(faces)) {
+    if (face.paintsNothing === true) {
+      ids.add(id);
+    }
+  }
+  return ids;
+};
+
 export const FIRST_PAINT_PAGES = 3;
 
 /** Bound worker fan-out so N-page opens don't queue 3N requests at once. */
@@ -420,7 +442,8 @@ class PdfSession {
     // SAFETY: commonObjs uses the same PDFObjects.get contract as page.objs.
     const fontFaces = await collectPdfFontFaces(
       page.commonObjs as PdfJsFontObjectStore,
-      extractableText.items
+      extractableText.items,
+      TYPE3_METRIC_OPS
     );
     if (this.#doc !== doc) {
       return null;
@@ -434,6 +457,12 @@ class PdfSession {
       textPaints,
       DEFAULT_PDF_TEXT_COLOR
     );
+    const pdfVectorObjects = extractPdfVectorObjects(
+      operatorList,
+      extractPage,
+      toPdfVectorOps(OPS),
+      paintlessFontIds(fontFaces)
+    );
     const editorPage = {
       cropBox,
       height: viewport.height,
@@ -445,17 +474,16 @@ class PdfSession {
         extractPage,
         toPdfImageOps(OPS)
       ),
-      pdfTextObjects: extractPdfTextObjects(
-        extractableText,
-        extractPage,
-        fontFaces,
-        itemPaints
+      pdfTextObjects: linkTextInkOutlines(
+        extractPdfTextObjects(
+          extractableText,
+          extractPage,
+          fontFaces,
+          itemPaints
+        ),
+        pdfVectorObjects
       ),
-      pdfVectorObjects: extractPdfVectorObjects(
-        operatorList,
-        extractPage,
-        toPdfVectorOps(OPS)
-      ),
+      pdfVectorObjects,
       rotation: 0,
       skippedPdfAnnotationSubtypes: skippedSubtypes,
       sourceIndex,

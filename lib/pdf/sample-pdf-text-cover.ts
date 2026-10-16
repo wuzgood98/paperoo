@@ -1,5 +1,5 @@
 import {
-  measurePdfTextCoverRects,
+  pdfTextCoverRects,
   neighbourReachBox,
   pdfTextOriginalInkBox,
   rectsIntersect,
@@ -190,9 +190,7 @@ export const measurePdfTextForEdit = async (
   zoom: number,
   env: PdfTextMeasureEnv = browserMeasureEnv
 ): Promise<PdfTextMeasurement> => {
-  const coverRects =
-    object.coverRects ??
-    measurePdfTextCoverRects(object, page, page.pdfTextObjects);
+  const coverRects = object.coverRects ?? pdfTextCoverRects(object, page);
   const [sample, reusableFontGlyphs] = await Promise.all([
     object.coverColor
       ? null

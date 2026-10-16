@@ -65,6 +65,13 @@ export interface PdfVectorOps {
   shadingFill: number;
   stroke: number;
   transform: number;
+  /** Text ops below are optional: they only tag Type3 glyph outlines. */
+  beginText?: number;
+  nextLineSetSpacingShowText?: number;
+  nextLineShowText?: number;
+  setFont?: number;
+  showSpacedText?: number;
+  showText?: number;
 }
 
 export const toPdfVectorOps = (ops: PdfVectorOps): PdfVectorOps => ({ ...ops });
@@ -628,18 +635,89 @@ const miterLimitChangesCorners = (
 const ctmLineScale = (ctm: Ctm): number =>
   Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
 
+const CTM_EPSILON = 1e-6;
+
+const sameCtm = (left: Ctm, right: Ctm): boolean =>
+  left.every((value, index) => {
+    const other = right[index];
+    return other !== undefined && Math.abs(value - other) <= CTM_EPSILON;
+  });
+
+/**
+ * Figma draws each text node as a filled outline path and then repeats it as
+ * invisible Type3 text under the same `cm`. This remembers the last filled
+ * path so the text that follows can claim it as its glyph ink.
+ */
+interface TextInkTracker {
+  font: string | null;
+  lastFill: { ctm: Ctm; object: PdfVectorObject } | null;
+  textCtm: Ctm | null;
+}
+
+const isShowTextFn = (fn: number, ops: PdfVectorOps): boolean =>
+  fn === ops.showText ||
+  fn === ops.showSpacedText ||
+  fn === ops.nextLineShowText ||
+  fn === ops.nextLineSetSpacingShowText;
+
+/** Returns true when `fn` was a text op this tracker consumed. */
+const trackTextInk = (
+  tracker: TextInkTracker,
+  fn: number,
+  args: OperatorArg,
+  ctm: Ctm,
+  ops: PdfVectorOps,
+  paintlessFonts: ReadonlySet<string>
+): boolean => {
+  if (fn === ops.setFont) {
+    // pdf.js setFont args: [loadedName, size].
+    const [font] = Array.isArray(args) ? args : [];
+    tracker.font = font === undefined || font === null ? null : String(font);
+    return true;
+  }
+  if (fn === ops.beginText) {
+    tracker.textCtm = ctm;
+    return true;
+  }
+  if (!isShowTextFn(fn, ops)) {
+    return false;
+  }
+  const { font, lastFill, textCtm } = tracker;
+  if (
+    font !== null &&
+    paintlessFonts.has(font) &&
+    lastFill &&
+    textCtm &&
+    sameCtm(lastFill.ctm, textCtm)
+  ) {
+    lastFill.object.textInk = true;
+  }
+  tracker.lastFill = null;
+  return true;
+};
+
 // oxlint-disable-next-line eslint/complexity -- operator-list walk branches once per OPS id, same shape as image extraction
 export const extractPdfVectorObjects = (
   list: ExtractableOperatorList,
   page: ExtractVectorPage,
-  ops: PdfVectorOps
+  ops: PdfVectorOps,
+  /** pdf.js font ids of Type3 faces whose glyphs paint nothing. */
+  paintlessFonts: ReadonlySet<string> = new Set()
 ): PdfVectorObject[] => {
   const objects: PdfVectorObject[] = [];
   const stack: GraphicsState[] = [];
   let current = defaultState();
+  const textInk: TextInkTracker = { font: null, lastFill: null, textCtm: null };
 
   for (const [sourceIndex, fn] of list.fnArray.entries()) {
     const args = list.argsArray[sourceIndex];
+
+    if (
+      paintlessFonts.size > 0 &&
+      trackTextInk(textInk, fn, args, current.ctm, ops, paintlessFonts)
+    ) {
+      continue;
+    }
 
     if (fn === ops.save) {
       stack.push(current);
@@ -843,7 +921,7 @@ export const extractPdfVectorObjects = (
         }
       : null;
 
-    objects.push({
+    const object: PdfVectorObject = {
       commands,
       deleted: false,
       fill,
@@ -867,7 +945,11 @@ export const extractPdfVectorObjects = (
       width: box.width,
       x: box.x,
       y: box.y,
-    });
+    };
+    objects.push(object);
+    if (fill) {
+      textInk.lastFill = { ctm: current.ctm, object };
+    }
   }
 
   return objects;

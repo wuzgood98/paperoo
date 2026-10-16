@@ -23,6 +23,7 @@ import {
   shouldPaintPdfVectorCover,
   shouldPaintPdfVectorPreview,
 } from "@/lib/editor/object-utils";
+import type { PdfVectorCoverPathStyle } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type {
   CropBox,
@@ -304,18 +305,20 @@ const PdfVectorPreview = ({
   );
 };
 
-const PdfVectorCover = ({
+/** Repaints a vector's original path to hide it; text ink passes its own style. */
+export const PdfVectorCover = ({
   crop,
   object,
   sourceRotate,
+  style = pdfVectorCoverPathStyle(object),
   zoom,
 }: {
   crop: CropBox;
   object: PdfVectorObject;
   sourceRotate: PageRotation;
+  style?: PdfVectorCoverPathStyle;
   zoom: number;
 }) => {
-  const style = pdfVectorCoverPathStyle(object);
   const geometry = {
     ...pdfVectorCoverGeometry(object),
     rotation: object.originalRotation,
