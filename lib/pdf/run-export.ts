@@ -1,3 +1,4 @@
+import { toastManager } from "@/components/ui/toast-manager";
 import { editorStore } from "@/lib/editor/store";
 import { FONT_FILES } from "@/lib/fonts/measure-text";
 import { ocrSession } from "@/lib/ocr/session";
@@ -13,7 +14,13 @@ const fetchBytes = async (url: string): Promise<ArrayBuffer> => {
   return response.arrayBuffer();
 };
 
-export const buildEditedPdfBytes = async (): Promise<ArrayBuffer> => {
+export interface EditedPdf {
+  bytes: ArrayBuffer;
+  /** Edited runs whose old text could only be covered, not removed. */
+  coverOnlyRunIds: string[];
+}
+
+export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
   const state = editorStore.getState();
   const { bytes } = pdfSession;
   if (!bytes || state.document.pages.length === 0) {
@@ -55,19 +62,23 @@ export const buildEditedPdfBytes = async (): Promise<ArrayBuffer> => {
     });
 
     // oxlint-disable-next-line promise/avoid-new -- worker results arrive through message events
-    return await new Promise<ArrayBuffer>((resolve, reject) => {
+    return await new Promise<EditedPdf>((resolve, reject) => {
       worker.addEventListener(
         "message",
         (
           event: MessageEvent<{
             bytes?: ArrayBuffer;
+            coverOnlyRunIds?: string[];
             error?: string;
             ok: boolean;
           }>
         ) => {
           worker.terminate();
           if (event.data.ok && event.data.bytes) {
-            resolve(event.data.bytes);
+            resolve({
+              bytes: event.data.bytes,
+              coverOnlyRunIds: event.data.coverOnlyRunIds ?? [],
+            });
             return;
           }
           reject(new Error(event.data.error ?? "Export failed."));
@@ -94,8 +105,22 @@ export const buildEditedPdfBytes = async (): Promise<ArrayBuffer> => {
   }
 };
 
+const warnCoverOnly = (count: number): void => {
+  if (count === 0) {
+    return;
+  }
+  toastManager.add({
+    description:
+      count === 1
+        ? "One edit could only be covered. Its old text is still in the file and other PDF tools can find it."
+        : `${count} edits could only be covered. Their old text is still in the file and other PDF tools can find it.`,
+    title: "Old text still in the file",
+    type: "warning",
+  });
+};
+
 export const runExport = async (): Promise<void> => {
-  const result = await buildEditedPdfBytes();
+  const { bytes: result, coverOnlyRunIds } = await buildEditedPdfBytes();
   const state = editorStore.getState();
   const blob = new Blob([result], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
@@ -105,4 +130,5 @@ export const runExport = async (): Promise<void> => {
   link.download = `${baseName}-edited.pdf`;
   link.click();
   URL.revokeObjectURL(url);
+  warnCoverOnly(coverOnlyRunIds.length);
 };

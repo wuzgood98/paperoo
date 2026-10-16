@@ -87,6 +87,7 @@ import {
   copyPagesWithAcroForm,
 } from "@/lib/pdf/export-forms";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
+import { removeOriginalInk } from "@/lib/pdf/remove-original-ink";
 import { reusedFontHex, reuseEmbeddedPdfFont } from "@/lib/pdf/reuse-pdf-font";
 import type { ReusedPdfFontText } from "@/lib/pdf/reuse-pdf-font";
 
@@ -1034,9 +1035,46 @@ const drawInvisibleOcrWords = (
   }
 };
 
-export const exportDocument = async (
+export interface ExportReport {
+  bytes: Uint8Array;
+  /**
+   * Edited runs whose original ink could only be covered, so the old text
+   * or its glyph shapes are still in the file.
+   */
+  coverOnlyRunIds: string[];
+}
+
+/**
+ * Take dirty runs' original ink out of the page where it can be verified, and
+ * cover the rest. Returns the runs that could only be covered.
+ */
+const removeOrCoverDirtyText = (
+  output: PDFDocument,
+  page: PDFPage,
+  editorPage: EditorPage,
+  dirtyText: readonly PdfTextObject[]
+): string[] => {
+  const coverOnly: string[] = [];
+  const removal = removeOriginalInk(output, page, editorPage, dirtyText);
+  // Every cover goes down before any text: a run emptied by a link label
+  // edit must not hide the caption drawn by the run before it.
+  for (const object of dirtyText) {
+    const inkGone = removal.inkRemoved.has(object.id);
+    if (!(inkGone && removal.textRemoved.has(object.id))) {
+      coverOnly.push(object.id);
+    }
+    // A link caption's cover also hides its underline, which stays.
+    if (!inkGone || object.captionUnderline) {
+      drawDirtyPdfTextCovers(page, object, editorPage);
+    }
+  }
+  return coverOnly;
+};
+
+export const exportDocumentWithReport = async (
   input: ExportInput
-): Promise<Uint8Array> => {
+): Promise<ExportReport> => {
+  const coverOnlyRunIds: string[] = [];
   let source: PDFDocument;
   try {
     source = await PDFDocument.load(input.bytes);
@@ -1084,11 +1122,10 @@ export const exportDocument = async (
       drawInvisibleOcrWords(page, ocrWords, editorPage, ocrFont);
     }
     const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
-    // Every cover goes down before any text: a run emptied by a link label
-    // edit must not hide the caption drawn by the run before it.
-    for (const object of dirtyText) {
-      drawDirtyPdfTextCovers(page, object, editorPage);
-    }
+    // Removal first, on the page's own content; covers only where ink stays.
+    coverOnlyRunIds.push(
+      ...removeOrCoverDirtyText(output, page, editorPage, dirtyText)
+    );
     for (const object of dirtyText) {
       if (object.text === "") {
         continue;
@@ -1135,7 +1172,14 @@ export const exportDocument = async (
     }
   }
 
-  return output.save();
+  return { bytes: await output.save(), coverOnlyRunIds };
+};
+
+export const exportDocument = async (
+  input: ExportInput
+): Promise<Uint8Array> => {
+  const report = await exportDocumentWithReport(input);
+  return report.bytes;
 };
 
 export const displayedPointOnPage = (

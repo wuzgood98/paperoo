@@ -48,6 +48,10 @@ import type {
   PDFDocumentProxy,
   PDFPageProxy,
 } from "@/lib/pdf/pdfjs";
+import {
+  attachRemovalTargets,
+  indexPageRemovals,
+} from "@/lib/pdf/removal-targets";
 
 export const PDF_HEADER = "%PDF";
 
@@ -457,13 +461,29 @@ class PdfSession {
       textPaints,
       DEFAULT_PDF_TEXT_COLOR
     );
-    const pdfVectorObjects = extractPdfVectorObjects(
+    const extractedVectors = extractPdfVectorObjects(
       operatorList,
       extractPage,
       toPdfVectorOps(OPS),
       paintlessFontIds(fontFaces)
     );
+    const removalIndex = indexPageRemovals(operatorList, OPS);
+    const { runs: pdfTextObjects, vectors: pdfVectorObjects } =
+      attachRemovalTargets(
+        removalIndex,
+        linkTextInkOutlines(
+          extractPdfTextObjects(
+            extractableText,
+            extractPage,
+            fontFaces,
+            itemPaints
+          ),
+          extractedVectors
+        ),
+        extractedVectors
+      );
     const editorPage = {
+      contentOpCounts: removalIndex.counts,
       cropBox,
       height: viewport.height,
       id,
@@ -474,15 +494,7 @@ class PdfSession {
         extractPage,
         toPdfImageOps(OPS)
       ),
-      pdfTextObjects: linkTextInkOutlines(
-        extractPdfTextObjects(
-          extractableText,
-          extractPage,
-          fontFaces,
-          itemPaints
-        ),
-        pdfVectorObjects
-      ),
+      pdfTextObjects,
       pdfVectorObjects,
       rotation: 0,
       skippedPdfAnnotationSubtypes: skippedSubtypes,

@@ -150,6 +150,11 @@ export interface PdfTextObject {
   inkVectorId?: string;
   /** True when that outline also paints other runs, so it cannot be covered alone. */
   inkShared?: boolean;
+  /**
+   * The run's own text-showing operator, when it can be emptied without
+   * moving other text. Unset means Removal is impossible: export covers it.
+   */
+  removalTarget?: PdfTextRemovalTarget;
   /** The run's glyphs paint nothing (Type3 `d0`/`d1`-only procedures). */
   invisibleGlyphs?: boolean;
   dir: PdfTextDir;
@@ -368,6 +373,8 @@ export interface PdfVectorObject {
   sourceIndex: number;
   sourceOperatorIndices: number[];
   stroke: PdfVectorStrokeStyle | null;
+  /** The vector's own path-painting operator, when it is top-level content. */
+  removalTarget?: PdfPathRemovalTarget;
   /**
    * Glyph outline of invisible Type3 text (Figma export). The text run owns
    * it: it is the run's original ink and is not selectable on its own.
@@ -483,7 +490,34 @@ export const EMPTY_PDF_FORM: PdfFormModel = {
   signatures: [],
 };
 
+/**
+ * Top-level operator totals pdf.js reported for a page's content. Export only
+ * edits the raw content stream when its own counts match these.
+ */
+export interface PdfContentOpCounts {
+  paths: number;
+  shows: number;
+}
+
+/** Where a run's text-showing operator sits in the page's raw content. */
+export interface PdfTextRemovalTarget {
+  /** Glyphs pdf.js decoded from the operator, to verify the raw string. */
+  glyphCount: number;
+  /** Index among the page's top-level `Tj`/`TJ`/`'`/`"` operators. */
+  showOrdinal: number;
+}
+
+/** Where a vector's path-painting operator sits in the page's raw content. */
+export interface PdfPathRemovalTarget {
+  /** pdf.js path bounds in the path's own coordinates: [minX, minY, maxX, maxY]. */
+  box: readonly [number, number, number, number];
+  /** Index among the page's top-level path-painting operators. */
+  pathOrdinal: number;
+}
+
 export interface EditorPage {
+  /** Set at load; missing means export never edits this page's content. */
+  contentOpCounts?: PdfContentOpCounts;
   id: string;
   sourceIndex: number;
   width: number;
