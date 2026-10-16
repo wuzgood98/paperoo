@@ -1421,12 +1421,63 @@ export const pdfLinkPrimaryCoverRects = (
     : [...covers, band];
 };
 
+/**
+ * The outline path that paints a run, when the run owns it alone (Figma
+ * Type3 export). Its shape is the run's original ink, so covering the path
+ * hides the old text without touching neighbouring artwork.
+ */
+export const pdfTextInkOutline = (
+  object: Pick<PdfTextObject, "inkShared" | "inkVectorId">,
+  page: Pick<EditorPage, "pdfVectorObjects">
+): PdfVectorObject | null => {
+  if (!object.inkVectorId || object.inkShared === true) {
+    return null;
+  }
+  return (
+    page.pdfVectorObjects.find((vector) => vector.id === object.inkVectorId) ??
+    null
+  );
+};
+
+/** PDF line join and cap value for round ends. */
+const ROUND_PATH_END = 1;
+
+/**
+ * Paint that repaints a glyph outline in the page color. A thin round stroke
+ * reaches the antialiased edge without miter spikes at glyph corners.
+ */
+export const pdfTextInkCoverStyle = (
+  coverColor: string
+): PdfVectorCoverPathStyle => ({
+  fill: coverColor,
+  lineCap: ROUND_PATH_END,
+  lineJoin: ROUND_PATH_END,
+  stroke: coverColor,
+  strokeWidth: PDF_VECTOR_COVER_BLEED,
+});
+
 export const pdfTextCoverRects = (
   object: PdfTextObject,
   page: EditorPage
-): Rect[] =>
-  object.coverRects ??
-  measurePdfTextCoverRects(object, page, page.pdfTextObjects);
+): Rect[] => {
+  const outline = pdfTextInkOutline(object, page);
+  if (outline) {
+    // The ink box: callers that need a rect (cover color sampling) use it,
+    // while preview and export paint the outline path itself.
+    return [
+      {
+        height: outline.originalHeight,
+        width: outline.originalWidth,
+        x: outline.originalX,
+        y: outline.originalY,
+      },
+    ];
+  }
+  return (
+    object.coverRects ??
+    measurePdfTextCoverRects(object, page, page.pdfTextObjects)
+  );
+};
 
 /**
  * Topmost run under `point`. Fitting a dirty run only widens it, so the
@@ -1696,6 +1747,8 @@ export const hitTestPdfVector = (
   objects.findLast(
     (object) =>
       !object.deleted &&
+      // A text run owns its glyph outline; it changes only through text edits.
+      object.textInk !== true &&
       hitTestVectorCommands(object, point, crop, sourceRotate)
   );
 

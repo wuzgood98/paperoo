@@ -27,7 +27,7 @@ export const FIGMA_BODY: FigmaType3Run = {
 };
 
 /** Glyph advance in text space units (FontMatrix is identity, not 1/1000). */
-const GLYPH_WIDTH = 0.55;
+export const GLYPH_WIDTH = 0.55;
 /**
  * Every glyph's d1 box spans this height, so pdf.js inflates each text item's
  * height by it (1.3×) the way it does for the Figma QA file's 1.306.
@@ -64,10 +64,13 @@ const toUnicodeCMap = (chars: readonly string[]): string => {
   ].join("\n");
 };
 
+/** Top of the stand-in glyph ink, in em above the baseline. */
+export const FIGMA_INK_TOP_EM = 0.72;
+
 /** A box standing in for the run's glyph outlines (the visible ink). */
 const outlinePath = (run: FigmaType3Run): string => {
   const width = run.text.length * GLYPH_WIDTH * run.size;
-  const height = run.size * 0.72;
+  const height = run.size * FIGMA_INK_TOP_EM;
   return `0 0 m ${width} 0 l ${width} ${height} l 0 ${height} l h f`;
 };
 
@@ -91,7 +94,9 @@ const showRun = (
  * [1 0 0 1 0 0], FontBBox [0 0 0 0], `Tf` size 1, the real size in `Tm`).
  */
 export const buildFigmaType3Fixture = async (
-  runs: readonly FigmaType3Run[] = [FIGMA_HEADING, FIGMA_BODY]
+  runs: readonly FigmaType3Run[] = [FIGMA_HEADING, FIGMA_BODY],
+  /** Raw content drawn after the runs, e.g. artwork beside a heading. */
+  extraContent = ""
 ): Promise<Uint8Array> => {
   const doc = await PDFDocument.create();
   const page = doc.addPage([792, 612]);
@@ -127,7 +132,7 @@ export const buildFigmaType3Fixture = async (
   page.node.setFontDictionary(PDFName.of("F1"), context.register(font));
 
   const content = context.flateStream(
-    runs.map((run) => showRun(run, codes)).join("\n")
+    [...runs.map((run) => showRun(run, codes)), extraContent].join("\n")
   );
   page.node.set(PDFName.of("Contents"), context.register(content));
 

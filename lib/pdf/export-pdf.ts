@@ -53,10 +53,13 @@ import {
   pdfImageCoverBox,
   pdfTextCoverColor,
   pdfTextCoverRects,
+  pdfTextInkCoverStyle,
+  pdfTextInkOutline,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
   pdfVectorCoverPathStyle,
 } from "@/lib/editor/object-utils";
+import type { PdfVectorCoverPathStyle } from "@/lib/editor/object-utils";
 import type {
   DrawingObject,
   EditorDocument,
@@ -334,34 +337,6 @@ const pushReusedPdfText = (
 type DirtyTextFont =
   | { kind: "bundled"; font: PDFFont }
   | { kind: "reused"; reused: ReusedPdfFontText };
-
-/**
- * Hide a dirty run's original glyphs. The cover leaves the original operators
- * in the page stream. A sampled page color hides that on flat tints; white
- * remains the fallback. The rects follow original glyph ink and stop at
- * neighbouring runs.
- */
-const drawDirtyPdfTextCovers = (
-  page: PDFPage,
-  object: PdfTextObject,
-  editorPage: EditorPage
-): void => {
-  const coverColor = color(pdfTextCoverColor(object));
-  for (const cover of pdfTextCoverRects(object, editorPage)) {
-    const coverUser = displayedToUserSpace(
-      cover,
-      editorPage.cropBox,
-      editorPage.sourceRotate
-    );
-    page.drawRectangle({
-      color: coverColor,
-      height: coverUser.height,
-      width: coverUser.width,
-      x: coverUser.x,
-      y: coverUser.y,
-    });
-  }
-};
 
 const drawDirtyPdfText = async (
   page: PDFPage,
@@ -714,12 +689,13 @@ const paintVectorOperators = (object: PdfVectorObject): PDFOperator[] => {
   return ops;
 };
 
-const drawDirtyPdfVector = (
+/** Repaint a vector's original path in `coverStyle` to hide its ink. */
+const paintPdfVectorCoverPath = (
   page: PDFPage,
   object: PdfVectorObject,
-  editorPage: EditorPage
+  editorPage: EditorPage,
+  coverStyle: PdfVectorCoverPathStyle
 ): void => {
-  const coverStyle = pdfVectorCoverPathStyle(object);
   const coverBox = {
     height: object.originalHeight,
     rotation: object.originalRotation,
@@ -736,6 +712,9 @@ const drawDirtyPdfVector = (
     ...object,
     ...coverBox,
     fill: coverStyle.fill ? { color: coverStyle.fill } : null,
+    // A fill-only outline still needs its cover's stroke painted: the stroke
+    // reaches the antialiased edge the fill alone leaves showing.
+    paint: coverStyle.fill && coverStyle.stroke ? "fillStroke" : object.paint,
     stroke: coverStyle.stroke
       ? {
           color: coverStyle.stroke,
@@ -756,6 +735,59 @@ const drawDirtyPdfVector = (
     ...paintVectorOperators(coverObject)
   );
   page.pushOperators(popGraphicsState());
+};
+
+/**
+ * Hide a dirty run's original glyphs. The cover leaves the original operators
+ * in the page stream. A sampled page color hides that on flat tints; white
+ * remains the fallback. A run that owns its outline path is covered by that
+ * path; otherwise the rects follow original glyph ink and stop at
+ * neighbouring runs.
+ */
+const drawDirtyPdfTextCovers = (
+  page: PDFPage,
+  object: PdfTextObject,
+  editorPage: EditorPage
+): void => {
+  const outline = pdfTextInkOutline(object, editorPage);
+  if (outline) {
+    // The run's ink is this outline path; repaint just its shape.
+    paintPdfVectorCoverPath(
+      page,
+      outline,
+      editorPage,
+      pdfTextInkCoverStyle(pdfTextCoverColor(object))
+    );
+    return;
+  }
+  const coverColor = color(pdfTextCoverColor(object));
+  for (const cover of pdfTextCoverRects(object, editorPage)) {
+    const coverUser = displayedToUserSpace(
+      cover,
+      editorPage.cropBox,
+      editorPage.sourceRotate
+    );
+    page.drawRectangle({
+      color: coverColor,
+      height: coverUser.height,
+      width: coverUser.width,
+      x: coverUser.x,
+      y: coverUser.y,
+    });
+  }
+};
+
+const drawDirtyPdfVector = (
+  page: PDFPage,
+  object: PdfVectorObject,
+  editorPage: EditorPage
+): void => {
+  paintPdfVectorCoverPath(
+    page,
+    object,
+    editorPage,
+    pdfVectorCoverPathStyle(object)
+  );
 
   if (object.deleted) {
     return;

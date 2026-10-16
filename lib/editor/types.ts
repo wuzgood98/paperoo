@@ -142,6 +142,16 @@ export interface PdfTextObject {
   embeddedFontGlyphs?: string;
   /** Type3 or non-embedded faces cannot be reused for a replacement. */
   embeddedFontUnavailable?: boolean;
+  /**
+   * Id of the outline path that paints this run (Figma export: the run's own
+   * Type3 glyphs are invisible). Its fill is the run's color and its shape is
+   * the run's original ink.
+   */
+  inkVectorId?: string;
+  /** True when that outline also paints other runs, so it cannot be covered alone. */
+  inkShared?: boolean;
+  /** The run's glyphs paint nothing (Type3 `d0`/`d1`-only procedures). */
+  invisibleGlyphs?: boolean;
   dir: PdfTextDir;
   fontFamily?: FontFamily;
   fontName: string;
@@ -358,6 +368,11 @@ export interface PdfVectorObject {
   sourceIndex: number;
   sourceOperatorIndices: number[];
   stroke: PdfVectorStrokeStyle | null;
+  /**
+   * Glyph outline of invisible Type3 text (Figma export). The text run owns
+   * it: it is the run's original ink and is not selectable on its own.
+   */
+  textInk?: boolean;
   type: "pdf-vector";
   width: number;
   x: number;
