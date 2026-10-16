@@ -9,6 +9,7 @@ import type {
   PdfTextRemovalTarget,
   PdfVectorObject,
 } from "@/lib/editor/types";
+import { inkedSubpaths } from "@/lib/ocr/outline-text";
 import {
   applyContentEdits,
   parseContentStream,
@@ -21,15 +22,30 @@ import type {
   ContentToken,
 } from "@/lib/pdf/content-stream";
 
+/** Lines of an outline-only label that stay as they were after its path was unpainted. */
+export interface KeptOutlineLines {
+  subpaths: readonly number[];
+  vectorId: string;
+}
+
 export interface InkRemovalResult {
   /** Runs whose original ink is gone from the page: no cover needed. */
   inkRemoved: ReadonlySet<string>;
-  /** Runs whose text-showing operator was emptied (no longer searchable). */
+  /**
+   * Unpainted outline-only labels whose other lines were not edited: export
+   * redraws these subpaths as they were.
+   */
+  keptOutlineLines: readonly KeptOutlineLines[];
+  /**
+   * Runs whose text-showing operator was emptied (no longer searchable), or
+   * outline-only runs, which have none.
+   */
   textRemoved: ReadonlySet<string>;
 }
 
 const NOTHING_REMOVED: InkRemovalResult = {
   inkRemoved: new Set(),
+  keptOutlineLines: [],
   textRemoved: new Set(),
 };
 
@@ -375,12 +391,48 @@ const planOutlineEdit = (
     : null;
 };
 
+/** The edit that stops an outline-only label's whole path painting, if verified. */
+const planLabelEdit = (
+  raw: RawContent,
+  vector: PdfVectorObject | undefined
+): ContentEdit | null => {
+  const target = vector?.removalTarget;
+  const paintIndex = target ? raw.paints[target.pathOrdinal] : undefined;
+  const paint =
+    paintIndex === undefined ? undefined : raw.operations[paintIndex];
+  return target &&
+    paint &&
+    paintIndex !== undefined &&
+    pathMatches(raw.operations, paintIndex, target)
+    ? unpaintPath(paint)
+    : null;
+};
+
+/** Dirty outline-only runs, grouped by the label path they share. */
+const groupByLabel = (
+  runs: readonly PdfTextObject[]
+): Map<string, PdfTextObject[]> => {
+  const groups = new Map<string, PdfTextObject[]>();
+  for (const run of runs) {
+    if (run.outlineText && run.inkVectorId) {
+      groups.set(run.inkVectorId, [
+        ...(groups.get(run.inkVectorId) ?? []),
+        run,
+      ]);
+    }
+  }
+  return groups;
+};
+
 /**
  * Remove dirty runs' original ink from the page's own content: empty each
  * run's text-showing operator and, for an outline-backed run, stop its
- * outline painting. Every target is verified against what pdf.js reported at
- * load; anything that does not match is left alone and gets a cover.
+ * outline painting. An outline-only label's path stops painting once for all
+ * its edited lines; its other lines are reported for redrawing. Every target
+ * is verified against what pdf.js reported at load; anything that does not
+ * match is left alone and gets a cover.
  */
+// oxlint-disable-next-line eslint/complexity -- one pass per kind of original ink
 export const removeOriginalInk = (
   doc: PDFDocument,
   page: PDFPage,
@@ -388,7 +440,7 @@ export const removeOriginalInk = (
   runs: readonly PdfTextObject[]
 ): InkRemovalResult => {
   const counts = editorPage.contentOpCounts;
-  if (!counts || runs.every((run) => !run.removalTarget)) {
+  if (!counts || runs.every((run) => !(run.removalTarget || run.outlineText))) {
     return NOTHING_REMOVED;
   }
   const raw = readRawContent(page, counts);
@@ -402,7 +454,36 @@ export const removeOriginalInk = (
   const edits: ContentEdit[] = [];
   const textRemoved = new Set<string>();
   const inkRemoved = new Set<string>();
+  const keptOutlineLines: KeptOutlineLines[] = [];
+  for (const [vectorId, labelRuns] of groupByLabel(runs)) {
+    const vector = vectors.get(vectorId);
+    const labelEdit = planLabelEdit(raw, vector);
+    if (!(vector && labelEdit)) {
+      continue;
+    }
+    edits.push(labelEdit);
+    const edited = new Set<number>();
+    for (const run of labelRuns) {
+      inkRemoved.add(run.id);
+      textRemoved.add(run.id);
+      for (const subpath of run.inkSubpaths ?? []) {
+        edited.add(subpath);
+      }
+    }
+    const kept: number[] = [];
+    for (const { index } of inkedSubpaths(vector.commands)) {
+      if (!edited.has(index)) {
+        kept.push(index);
+      }
+    }
+    if (kept.length > 0) {
+      keptOutlineLines.push({ subpaths: kept, vectorId });
+    }
+  }
   for (const run of runs) {
+    if (run.outlineText) {
+      continue;
+    }
     const showEdit = planShowEdit(raw, run);
     if (!showEdit) {
       continue;
@@ -427,5 +508,5 @@ export const removeOriginalInk = (
   const stream = doc.context.flateStream(fromLatin1(updated));
   const ref: PDFRef = doc.context.register(stream);
   page.node.set(PDFName.of("Contents"), ref);
-  return { inkRemoved, textRemoved };
+  return { inkRemoved, keptOutlineLines, textRemoved };
 };

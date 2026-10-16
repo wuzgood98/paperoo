@@ -30,7 +30,8 @@ export const searchDocumentText = (
   const hits: DocumentSearchHit[] = [];
   for (const page of pages) {
     const kind = classifyPageForOcr(page);
-    if (kind === "native") {
+    // Plain pages can still hold outline-only text recognized into runs.
+    if (kind !== "scanned") {
       for (const object of page.pdfTextObjects) {
         if (!matchesQuery(object.text, trimmed)) {
           continue;
@@ -46,9 +47,6 @@ export const searchDocumentText = (
           y: object.y,
         });
       }
-      continue;
-    }
-    if (kind !== "scanned") {
       continue;
     }
     const suppressed = page.suppressedOcrWordIds

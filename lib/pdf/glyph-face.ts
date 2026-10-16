@@ -138,17 +138,20 @@ const faceCache = new WeakMap<
 /**
  * The face a Figma run was set in, rebuilt from glyphs cut from the
  * document's own outlines. Null when the run is not outline-backed or its
- * text block was not sliced.
+ * text block was not sliced. Outline-only text names a matched face's text
+ * block in `glyphFace` instead of its own.
  */
 export const resolveGlyphFace = (
   pages: readonly EditorPage[],
-  pageId: string,
-  run: Pick<PdfTextObject, "invisibleGlyphs" | "showOrdinal">
+  runPageId: string,
+  run: Pick<PdfTextObject, "glyphFace" | "invisibleGlyphs" | "showOrdinal">
 ): GlyphFace | null => {
-  if (run.invisibleGlyphs !== true || run.showOrdinal === undefined) {
+  const pageId = run.glyphFace?.pageId ?? runPageId;
+  const showOrdinal = run.glyphFace?.showOrdinal ?? run.showOrdinal;
+  if (run.invisibleGlyphs !== true || showOrdinal === undefined) {
     return null;
   }
-  const cacheKey = `${pageId}:${run.showOrdinal}`;
+  const cacheKey = `${pageId}:${showOrdinal}`;
   const cache = faceCache.get(pages) ?? new Map<string, GlyphFace | null>();
   faceCache.set(pages, cache);
   const cached = cache.get(cacheKey);
@@ -157,7 +160,7 @@ export const resolveGlyphFace = (
   }
   const page = pages.find((item) => item.id === pageId);
   const show = page?.type3Glyphs?.shows.find(
-    (item) => item.showOrdinal === run.showOrdinal
+    (item) => item.showOrdinal === showOrdinal
   );
   const face =
     page && show ? collectFace(faceShows(pages, { page, show })) : null;
@@ -210,7 +213,12 @@ export const rebuiltGlyphLayout = (
   page: Pick<EditorPage, "id" | "sourceRotate">,
   run: Pick<
     PdfTextObject,
-    "captionUnderline" | "invisibleGlyphs" | "rotation" | "showOrdinal" | "text"
+    | "captionUnderline"
+    | "glyphFace"
+    | "invisibleGlyphs"
+    | "rotation"
+    | "showOrdinal"
+    | "text"
   >
 ): GlyphLayout | null => {
   if (

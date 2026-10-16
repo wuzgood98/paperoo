@@ -25,6 +25,7 @@ import {
   findPdfText,
   findPdfVector,
   fittedPdfTextBox,
+  isPdfVectorDirty,
   mapDocumentFormFields,
   mapPageObjects,
   mapPagePdfAnnotations,
@@ -389,6 +390,60 @@ export const editorStore = {
         mergeHydratedPages
       ),
     }));
+    emit();
+  },
+
+  /**
+   * Store text recognized in an outline-only label. Recognition describes
+   * the source PDF, not an edit: it skips undo and fills every history
+   * snapshot where the label's path is still untouched. The path becomes
+   * the runs' original ink and leaves vector selection.
+   */
+  applyOutlineTextRuns: (
+    pageId: string,
+    vectorId: string,
+    runs: readonly PdfTextObject[]
+  ): void => {
+    const attach = (page: EditorPage): EditorPage => {
+      const vector = page.pdfVectorObjects.find((item) => item.id === vectorId);
+      if (
+        !vector ||
+        vector.textInk === true ||
+        isPdfVectorDirty(vector) ||
+        page.pdfTextObjects.some((run) => run.inkVectorId === vectorId)
+      ) {
+        return page;
+      }
+      return {
+        ...page,
+        pdfTextObjects: [...page.pdfTextObjects, ...runs],
+        pdfVectorObjects: page.pdfVectorObjects.map((item) =>
+          item.id === vectorId ? { ...item, textInk: true } : item
+        ),
+      };
+    };
+    const patch = (document: EditorDocument): EditorDocument => ({
+      ...document,
+      pages: document.pages.map((page) =>
+        page.id === pageId ? attach(page) : page
+      ),
+    });
+    const [first] = runs;
+    const reselect =
+      internal.state.selectedPdfVectorId === vectorId && first !== undefined;
+    internal.state = {
+      ...internal.state,
+      document: patch(internal.state.document),
+    };
+    if (reselect) {
+      // A click on the label selected its path; it is text now.
+      internal.state = {
+        ...internal.state,
+        selectedPdfTextId: first.id,
+        selectedPdfVectorId: null,
+      };
+    }
+    patchHistoryDocuments(patch);
     emit();
   },
 

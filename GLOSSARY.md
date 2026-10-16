@@ -15,3 +15,5 @@ A browser PDF editor that lets users change text, images, and vectors already on
 **Removal**: Taking a dirty run's original ink out of the page itself, so nothing underneath needs hiding. _Avoid_: Delete, erase, redaction
 
 **Cover**: A patch painted over original ink to hide it when removal is not possible. _Avoid_: Mask, white box, whiteout
+
+**Outline-only text**: Text a PDF draws only as filled glyph outlines, with no text layer; Paperoo recognizes it with OCR and turns each line into a run whose original ink is its part of the outline. _Avoid_: Vector text, shape text

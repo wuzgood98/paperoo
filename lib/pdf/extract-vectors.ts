@@ -86,6 +86,8 @@ interface GraphicsState {
   clipped: boolean;
   ctm: Ctm;
   fill: PdfVectorFillStyle | null;
+  /** Constant fill alpha from `ca`; export redraws it with an ExtGState. */
+  fillAlpha: number;
   fillOk: boolean;
   formDepth: number;
   lineCap: number;
@@ -93,6 +95,8 @@ interface GraphicsState {
   lineWidth: number;
   miterLimit: number;
   stroke: PdfVectorFillStyle | null;
+  /** Constant stroke alpha from `CA`. */
+  strokeAlpha: number;
   strokeOk: boolean;
   unsafe: boolean;
 }
@@ -509,6 +513,7 @@ const defaultState = (): GraphicsState => ({
   clipped: false,
   ctm: IDENTITY_CTM,
   fill: { color: "#000000" },
+  fillAlpha: OPAQUE,
   fillOk: true,
   formDepth: 0,
   lineCap: 0,
@@ -516,6 +521,7 @@ const defaultState = (): GraphicsState => ({
   lineWidth: 1,
   miterLimit: DEFAULT_MITER_LIMIT,
   stroke: { color: "#000000" },
+  strokeAlpha: OPAQUE,
   strokeOk: true,
   unsafe: false,
 });
@@ -525,9 +531,10 @@ const patchState = (
   patch: Partial<GraphicsState>
 ): GraphicsState => ({ ...current, ...patch });
 
-const isOpaqueAlpha = (value: OperatorArg): boolean => {
+/** A constant alpha export can redraw: above 0 (an invisible paint is not art), at most 1. */
+const readAlpha = (value: OperatorArg): number | null => {
   const alpha = finiteNumber(value);
-  return alpha !== null && alpha >= OPAQUE;
+  return alpha !== null && alpha > 0 ? Math.min(alpha, OPAQUE) : null;
 };
 
 const isNormalBlendMode = (value: OperatorArg): boolean =>
@@ -570,8 +577,8 @@ const readNonNegative = (value: OperatorArg): number | null => {
 
 /**
  * Applies an ExtGState to the graphics state. Keys the vector export can
- * reproduce (line width, cap, join, miter limit) are tracked; anything that
- * changes paint in ways the redraw cannot match (soft masks, transparency,
+ * reproduce (line width, cap, join, miter limit, constant alpha) are tracked;
+ * anything that changes paint in ways the redraw cannot match (soft masks,
  * blend modes, dashes, transfer functions, fonts, unknown keys) marks the
  * state unsafe so later paths stay in the page content.
  */
@@ -605,8 +612,19 @@ const applyGState = (
       }
       continue;
     }
+    if (key === "CA" || key === "ca") {
+      const alpha = readAlpha(value);
+      if (alpha === null) {
+        return patchState(current, { unsafe: true });
+      }
+      if (key === "ca") {
+        patch.fillAlpha = alpha;
+      } else {
+        patch.strokeAlpha = alpha;
+      }
+      continue;
+    }
     const reproducible =
-      ((key === "CA" || key === "ca") && isOpaqueAlpha(value)) ||
       (key === "BM" && isNormalBlendMode(value)) ||
       (key === "SMask" && value === false) ||
       (key === "D" && isSolidDash(value));
@@ -630,6 +648,12 @@ const miterLimitChangesCorners = (
   }
   return state.miterLimit !== DEFAULT_MITER_LIMIT;
 };
+
+const withAlpha = (
+  fill: PdfVectorFillStyle,
+  alpha: number
+): PdfVectorFillStyle =>
+  alpha < OPAQUE ? { color: fill.color, opacity: alpha } : fill;
 
 /** Line width is in user space at paint time; vectors are stored in page space. */
 const ctmLineScale = (ctm: Ctm): number =>
@@ -877,7 +901,7 @@ export const extractPdfVectorObjects = (
       continue;
     }
 
-    if (current.clipped || current.formDepth > 0 || current.unsafe) {
+    if (current.clipped || current.unsafe) {
       continue;
     }
 
@@ -887,6 +911,11 @@ export const extractPdfVectorObjects = (
     }
     const paint = paintName(paintFn, ops);
     if (!paint) {
+      continue;
+    }
+    // Form content is kept only as plain fills, for outline-only text.
+    const formNested = current.formDepth > 0;
+    if (formNested && paint !== "fill" && paint !== "eoFill") {
       continue;
     }
 
@@ -923,9 +952,10 @@ export const extractPdfVectorObjects = (
       continue;
     }
 
-    const fill: PdfVectorFillStyle | null = usesFill(paint)
-      ? current.fill
-      : null;
+    const fill: PdfVectorFillStyle | null =
+      usesFill(paint) && current.fill
+        ? withAlpha(current.fill, current.fillAlpha)
+        : null;
     const stroke: PdfVectorStrokeStyle | null = usesStroke(paint)
       ? {
           color: current.stroke?.color ?? "#000000",
@@ -934,6 +964,9 @@ export const extractPdfVectorObjects = (
           width: current.lineWidth * ctmLineScale(current.ctm),
         }
       : null;
+    if (stroke && current.strokeAlpha < OPAQUE) {
+      stroke.opacity = current.strokeAlpha;
+    }
 
     const object: PdfVectorObject = {
       commands,
@@ -960,11 +993,13 @@ export const extractPdfVectorObjects = (
       x: box.x,
       y: box.y,
     };
-    if (fill && !textStarted && coversPage(box, pageArea)) {
+    if (formNested) {
+      object.formNested = true;
+    } else if (fill && !textStarted && coversPage(box, pageArea)) {
       object.pageBackground = true;
     }
     objects.push(object);
-    if (fill) {
+    if (fill && !formNested) {
       textInk.lastFill = { ctm: current.ctm, object };
     }
   }

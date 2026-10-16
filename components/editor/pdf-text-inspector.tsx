@@ -33,6 +33,29 @@ import {
 } from "@/lib/pdf/glyph-face";
 import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
 
+const UNKNOWN_FACE_MESSAGE =
+  "Recognized text; the original font isn't available, so a substitute is used.";
+
+/** Which glyphs an edited Figma or recognized run is drawn in; null otherwise. */
+const runGlyphMessage = (
+  pages: readonly EditorPage[],
+  page: EditorPage,
+  object: PdfTextObject
+): string | null => {
+  if (object.invisibleGlyphs !== true || !isPdfTextDirty(object)) {
+    return null;
+  }
+  if (object.outlineText && !object.glyphFace) {
+    return UNKNOWN_FACE_MESSAGE;
+  }
+  return glyphSourceMessage(
+    resolveGlyphFace(pages, page.id, object),
+    rebuiltGlyphLayout(pages, page, object),
+    object.text,
+    figmaFallbackFor(pages, page, object)?.family === "inter"
+  );
+};
+
 export const PdfTextInspector = ({
   object,
   page,
@@ -43,15 +66,7 @@ export const PdfTextInspector = ({
   const zoom = useEditorStore((state) => state.zoom);
   const pages = useEditorStore((state) => state.document.pages);
   const figmaRun = object.invisibleGlyphs === true;
-  const glyphMessage =
-    figmaRun && isPdfTextDirty(object)
-      ? glyphSourceMessage(
-          resolveGlyphFace(pages, page.id, object),
-          rebuiltGlyphLayout(pages, page, object),
-          object.text,
-          figmaFallbackFor(pages, page, object)?.family === "inter"
-        )
-      : null;
+  const glyphMessage = runGlyphMessage(pages, page, object);
   const showFill = pdfTextNeedsFill(object.textRenderingMode);
   const showStroke = pdfTextNeedsStroke(object.textRenderingMode);
 

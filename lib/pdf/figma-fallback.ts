@@ -128,7 +128,12 @@ export const figmaFallbackFor = (
   page: Pick<EditorPage, "id" | "sourceRotate">,
   run: Pick<
     PdfTextObject,
-    "captionUnderline" | "invisibleGlyphs" | "rotation" | "showOrdinal" | "text"
+    | "captionUnderline"
+    | "glyphFace"
+    | "invisibleGlyphs"
+    | "rotation"
+    | "showOrdinal"
+    | "text"
   >
 ): FigmaFallbackStyle | null => {
   if (run.invisibleGlyphs !== true || rebuiltGlyphLayout(pages, page, run)) {

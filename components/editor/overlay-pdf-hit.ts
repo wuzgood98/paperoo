@@ -16,6 +16,8 @@ import type {
 import { ensureEditorFonts } from "@/lib/fonts/measure-text";
 import { textObjectFromOcrWord } from "@/lib/ocr/edit";
 import { hitTestOcrWord, visibleOcrWords } from "@/lib/ocr/hit";
+import { outlineTextSession } from "@/lib/ocr/outline-session";
+import { isOutlineTextCandidate } from "@/lib/ocr/outline-text";
 import type { OcrTextObject } from "@/lib/ocr/types";
 import { ensurePdfImagePreview } from "@/lib/pdf/pdf-image-preview";
 
@@ -86,6 +88,10 @@ export const selectPdfObjectAtPoint = (
   );
   if (vectorHit) {
     editorStore.selectPdfVector(vectorHit.id);
+    // It may be text drawn as outlines: read it now rather than in turn.
+    if (isOutlineTextCandidate(vectorHit)) {
+      outlineTextSession.prioritize(page.id, vectorHit.id);
+    }
     return true;
   }
   editorStore.clearSelection();

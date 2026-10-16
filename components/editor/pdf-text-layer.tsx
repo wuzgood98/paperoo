@@ -34,6 +34,7 @@ import {
   ensureEditorFonts,
   LIBERATION_SANS_LINE_BOX_BASELINE_RATIO,
 } from "@/lib/fonts/measure-text";
+import { anchorOutlineRun } from "@/lib/ocr/outline-runs";
 import { pdfTextPreviewFontCss } from "@/lib/pdf/embedded-font";
 import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
 import { cn } from "@/lib/utils";
@@ -131,26 +132,32 @@ const PdfTextEditor = ({
   const value = draft ?? object.text;
   // Latest draft for the unmount commit: a click elsewhere on the page can
   // close the editor before the input ever sees a blur.
+  const frame = overlayFrame(object, value);
+  const rebuilt = useRebuiltGlyphLayout(object, page, value);
+  const fallbackCss = useFigmaFallbackCss(object, page, value);
+  const fontSize = object.fontSize ?? object.height;
+  // Advance of the draft, so a centered label line stays centered on commit.
+  const valueWidth = rebuilt
+    ? rebuilt.width * fontSize
+    : measurePdfTextWidth(object, value);
   const pendingRef = useRef({
     objectId: object.id,
-    pageId: page.id,
+    page,
     text: object.text,
     value,
+    valueWidth,
   });
   const settledRef = useRef(false);
 
   useEffect(() => {
     pendingRef.current = {
       objectId: object.id,
-      pageId: page.id,
+      page,
       text: object.text,
       value,
+      valueWidth,
     };
-  }, [object.id, object.text, page.id, value]);
-  const frame = overlayFrame(object, value);
-  const rebuilt = useRebuiltGlyphLayout(object, page, value);
-  const fallbackCss = useFigmaFallbackCss(object, page, value);
-  const fontSize = object.fontSize ?? object.height;
+  }, [object.id, object.text, page, value, valueWidth]);
   const fontSizeCss = pageToCss(fontSize, zoom);
   // Keystrokes only change `draft`; until measurement lands this walks the
   // whole page, so compute it once per run and page version.
@@ -191,14 +198,23 @@ const PdfTextEditor = ({
       if (settledRef.current || discardRef.current) {
         return;
       }
-      const { objectId, pageId, text, value: pending } = pendingRef.current;
+      const {
+        objectId,
+        page: pendingPage,
+        text,
+        value: pending,
+        valueWidth: pendingWidth,
+      } = pendingRef.current;
       if (pending === text) {
         return;
       }
-      editorStore.patchPdfTextById(pageId, objectId, (current) => ({
-        ...current,
-        text: pending,
-      }));
+      editorStore.patchPdfTextById(pendingPage.id, objectId, (current) =>
+        anchorOutlineRun(
+          { ...current, text: pending },
+          pendingPage,
+          pendingWidth
+        )
+      );
     },
     []
   );
@@ -206,10 +222,9 @@ const PdfTextEditor = ({
   const commit = (next: string): void => {
     settledRef.current = true;
     if (next !== object.text) {
-      editorStore.patchPdfTextById(page.id, object.id, (current) => ({
-        ...current,
-        text: next,
-      }));
+      editorStore.patchPdfTextById(page.id, object.id, (current) =>
+        anchorOutlineRun({ ...current, text: next }, page, valueWidth)
+      );
     }
     onExit();
   };
@@ -217,7 +232,10 @@ const PdfTextEditor = ({
   return (
     <div
       className="absolute origin-center"
-      style={objectWrapperStyle({ ...frame, rotation: object.rotation }, zoom)}
+      style={{
+        ...objectWrapperStyle({ ...frame, rotation: object.rotation }, zoom),
+        opacity: object.fillOpacity,
+      }}
     >
       {covers.map((cover) => (
         <PdfTextCoverPlate
@@ -408,7 +426,10 @@ const PdfTextLayerView = ({
           <div
             className="pointer-events-none absolute origin-center"
             key={`dirty-${object.id}`}
-            style={objectWrapperStyle({ ...frame, rotation: 0 }, zoom)}
+            style={{
+              ...objectWrapperStyle({ ...frame, rotation: 0 }, zoom),
+              opacity: object.fillOpacity,
+            }}
           >
             <RebuiltGlyphText
               fill={fillColor}

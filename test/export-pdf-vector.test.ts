@@ -228,3 +228,49 @@ test("clean vectors are left untouched on export", async () => {
   });
   expect(output.byteLength).toBeGreaterThan(0);
 });
+
+test("export redraws a moved translucent vector at its own alpha", async () => {
+  const source = await PDFDocument.create();
+  source.addPage([612, 792]).drawLine({
+    color: rgb(0, 0, 1),
+    end: { x: 200, y: 700 },
+    opacity: 0.5,
+    start: { x: 72, y: 700 },
+    thickness: 2,
+  });
+  const bytes = await source.save();
+  const translucent = {
+    color: "#0000ff",
+    lineCap: 0,
+    lineJoin: 0,
+    opacity: 0.5,
+    width: 2,
+  };
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document: documentWith(
+      pdfVector({
+        originalStroke: translucent,
+        stroke: translucent,
+        x: 100,
+        y: 120,
+      })
+    ),
+    fontBytes: {},
+  });
+
+  const task = loadPdfJsDocument(output);
+  const document = await task.promise;
+  const exportedPage = await document.getPage(1);
+  const list = await exportedPage.getOperatorList();
+  const redrawn = extractPdfVectorObjects(
+    list,
+    { cropBox: LETTER_CROP, id: "page-1", sourceRotate: 0 },
+    toPdfVectorOps(OPS)
+  ).filter((object) => object.stroke?.color === "#0000ff");
+  await task.destroy();
+
+  // The source line and its redraw both keep CA 0.5; the cover is opaque.
+  expect(redrawn.map((object) => object.stroke?.opacity)).toEqual([0.5, 0.5]);
+});

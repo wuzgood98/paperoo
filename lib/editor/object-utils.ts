@@ -56,6 +56,7 @@ import {
   canvasTextWidth,
   measurePdfTextGlyphInk,
 } from "@/lib/fonts/measure-text";
+import { pickSubpathCommands } from "@/lib/ocr/outline-text";
 import { pdfTextPreviewFontCss } from "@/lib/pdf/embedded-font";
 
 export const editorPageOrder = (
@@ -1421,22 +1422,56 @@ export const pdfLinkPrimaryCoverRects = (
     : [...covers, band];
 };
 
+const lineOutlines = new WeakMap<
+  PdfVectorObject,
+  Map<string, PdfVectorObject>
+>();
+
+/** The outline cut down to some of its subpaths; same box, so it maps the same. */
+export const pdfVectorSubpaths = (
+  outline: PdfVectorObject,
+  subpaths: readonly number[]
+): PdfVectorObject => {
+  const key = subpaths.join(",");
+  const cached = lineOutlines.get(outline)?.get(key);
+  if (cached) {
+    return cached;
+  }
+  const line = {
+    ...outline,
+    commands: pickSubpathCommands(outline.commands, new Set(subpaths)),
+  };
+  const byKey = lineOutlines.get(outline) ?? new Map<string, PdfVectorObject>();
+  byKey.set(key, line);
+  lineOutlines.set(outline, byKey);
+  return line;
+};
+
 /**
  * The outline path that paints a run, when the run owns it alone (Figma
- * Type3 export). Its shape is the run's original ink, so covering the path
- * hides the old text without touching neighbouring artwork.
+ * Type3 export), or the run's own line of an outline-only label. Its shape is
+ * the run's original ink, so covering the path hides the old text without
+ * touching neighbouring artwork.
  */
 export const pdfTextInkOutline = (
-  object: Pick<PdfTextObject, "inkShared" | "inkVectorId">,
+  object: Pick<PdfTextObject, "inkShared" | "inkSubpaths" | "inkVectorId">,
   page: Pick<EditorPage, "pdfVectorObjects">
 ): PdfVectorObject | null => {
-  if (!object.inkVectorId || object.inkShared === true) {
+  if (!object.inkVectorId) {
     return null;
   }
-  return (
-    page.pdfVectorObjects.find((vector) => vector.id === object.inkVectorId) ??
-    null
+  if (object.inkShared === true && !object.inkSubpaths) {
+    return null;
+  }
+  const outline = page.pdfVectorObjects.find(
+    (vector) => vector.id === object.inkVectorId
   );
+  if (!outline) {
+    return null;
+  }
+  return object.inkSubpaths
+    ? pdfVectorSubpaths(outline, object.inkSubpaths)
+    : outline;
 };
 
 /** Text rendering modes that paint no glyph ink (3 invisible, 7 clip only). */
@@ -1451,6 +1486,13 @@ export const pdfTextRemovable = (
   object: PdfTextObject,
   page: Pick<EditorPage, "contentOpCounts" | "pdfVectorObjects">
 ): boolean => {
+  if (object.outlineText) {
+    // Outline-only text has no text operator: removing its path is enough.
+    return (
+      page.contentOpCounts !== undefined &&
+      pdfTextInkOutline(object, page)?.removalTarget !== undefined
+    );
+  }
   if (!(object.removalTarget && page.contentOpCounts)) {
     return false;
   }
@@ -1485,6 +1527,12 @@ export const pdfTextCoverRects = (
   page: EditorPage
 ): Rect[] => {
   const outline = pdfTextInkOutline(object, page);
+  if (outline && object.inkSubpaths) {
+    // One line of a label: its own box, not the whole label's.
+    return [
+      { height: object.height, width: object.width, x: object.x, y: object.y },
+    ];
+  }
   if (outline) {
     // The ink box: callers that need a rect (cover color sampling) use it,
     // while preview and export paint the outline path itself.
@@ -1786,6 +1834,8 @@ export const hitTestPdfVector = (
       object.textInk !== true &&
       // The page background is never picked: it sits under every click.
       object.pageBackground !== true &&
+      // Form content is only extracted for text recognition.
+      object.formNested !== true &&
       hitTestVectorCommands(object, point, crop, sourceRotate)
   );
 

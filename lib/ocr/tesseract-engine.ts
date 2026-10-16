@@ -10,7 +10,13 @@ const OCR_WORKER_PATH = "/ocr/worker.min.js";
 const OCR_CORE_PATH = "/ocr/core";
 const OCR_LANG_PATH = "/ocr";
 
-export const createTesseractEngine = (): OcrEngine => {
+/**
+ * Tesseract in its own worker. Whole pages use automatic segmentation;
+ * a single outline label is one block of text.
+ */
+export const createTesseractEngine = (
+  pageSegMode: PSM = PSM.AUTO
+): OcrEngine => {
   let language: string | null = null;
   let worker: TesseractWorker | null = null;
 
@@ -38,7 +44,7 @@ export const createTesseractEngine = (): OcrEngine => {
       workerBlobURL: false,
       workerPath: OCR_WORKER_PATH,
     });
-    await next.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+    await next.setParameters({ tessedit_pageseg_mode: pageSegMode });
     worker = next;
     language = nextLanguage;
     return next;

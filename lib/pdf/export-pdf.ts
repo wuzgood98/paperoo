@@ -27,6 +27,7 @@ import {
   setTextMatrix,
   setLineCap,
   setLineJoin,
+  setGraphicsState,
   setLineWidth,
   setStrokingColor,
   setTextRenderingMode,
@@ -60,6 +61,7 @@ import {
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
   pdfVectorCoverPathStyle,
+  pdfVectorSubpaths,
 } from "@/lib/editor/object-utils";
 import type { PdfVectorCoverPathStyle } from "@/lib/editor/object-utils";
 import type {
@@ -396,7 +398,7 @@ type DirtyTextFont =
   | { kind: "bundled"; font: PDFFont }
   | { kind: "reused"; reused: ReusedPdfFontText };
 
-const drawDirtyPdfText = async (
+const drawDirtyPdfTextInk = async (
   page: PDFPage,
   object: PdfTextObject,
   editorPage: EditorPage,
@@ -757,8 +759,56 @@ const vectorPathOperators = (
   return ops;
 };
 
-const paintVectorOperators = (object: PdfVectorObject): PDFOperator[] => {
+const OPAQUE_ALPHA = 1;
+
+const alphaStates = new WeakMap<PDFPage, Map<string, PDFName>>();
+
+/**
+ * Set constant fill and stroke alpha through a page ExtGState (`ca`/`CA`).
+ * Null when both are opaque, so opaque paint adds no resource.
+ */
+export const alphaGraphicsState = (
+  page: PDFPage,
+  fillAlpha: number,
+  strokeAlpha: number
+): PDFOperator | null => {
+  if (fillAlpha >= OPAQUE_ALPHA && strokeAlpha >= OPAQUE_ALPHA) {
+    return null;
+  }
+  const key = `${fillAlpha}/${strokeAlpha}`;
+  let states = alphaStates.get(page);
+  if (!states) {
+    states = new Map();
+    alphaStates.set(page, states);
+  }
+  let name = states.get(key);
+  if (!name) {
+    name = page.node.newExtGState(
+      "GS",
+      page.doc.context.obj({
+        CA: strokeAlpha,
+        Type: "ExtGState",
+        ca: fillAlpha,
+      })
+    );
+    states.set(key, name);
+  }
+  return setGraphicsState(name);
+};
+
+const paintVectorOperators = (
+  page: PDFPage,
+  object: PdfVectorObject
+): PDFOperator[] => {
   const ops: PDFOperator[] = [];
+  const alpha = alphaGraphicsState(
+    page,
+    object.fill?.opacity ?? OPAQUE_ALPHA,
+    object.stroke?.opacity ?? OPAQUE_ALPHA
+  );
+  if (alpha) {
+    ops.push(alpha);
+  }
   if (object.fill) {
     ops.push(setFillingColor(color(object.fill.color)));
   }
@@ -791,6 +841,40 @@ const paintVectorOperators = (object: PdfVectorObject): PDFOperator[] => {
     }
   }
   return ops;
+};
+
+/** Draw a dirty run's replacement at the original ink's opacity. */
+const drawDirtyPdfText = async (
+  page: PDFPage,
+  object: PdfTextObject,
+  editorPage: EditorPage,
+  fonts: Map<string, PDFFont>,
+  doc: PDFDocument,
+  fontBytes: Record<string, Uint8Array>,
+  pages: readonly EditorPage[]
+): Promise<void> => {
+  const alpha =
+    object.fillOpacity === undefined
+      ? null
+      : alphaGraphicsState(page, object.fillOpacity, OPAQUE_ALPHA);
+  if (alpha) {
+    page.pushOperators(pushGraphicsState(), alpha);
+  }
+  try {
+    await drawDirtyPdfTextInk(
+      page,
+      object,
+      editorPage,
+      fonts,
+      doc,
+      fontBytes,
+      pages
+    );
+  } finally {
+    if (alpha) {
+      page.pushOperators(popGraphicsState());
+    }
+  }
 };
 
 /** Repaint a vector's original path in `coverStyle` to hide its ink. */
@@ -836,7 +920,7 @@ const paintPdfVectorCoverPath = (
       editorPage,
       coverLocal
     ),
-    ...paintVectorOperators(coverObject)
+    ...paintVectorOperators(page, coverObject)
   );
   page.pushOperators(popGraphicsState());
 };
@@ -881,6 +965,25 @@ const drawDirtyPdfTextCovers = (
   }
 };
 
+/** Paint a vector at its current place and style. */
+const drawPdfVectorPath = (
+  page: PDFPage,
+  object: PdfVectorObject,
+  editorPage: EditorPage
+): void => {
+  const local = displayedToUserSpace(
+    object,
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  applyCtm(page, object, local);
+  page.pushOperators(
+    ...vectorPathOperators(object.commands, object, editorPage, local),
+    ...paintVectorOperators(page, object)
+  );
+  page.pushOperators(popGraphicsState());
+};
+
 const drawDirtyPdfVector = (
   page: PDFPage,
   object: PdfVectorObject,
@@ -896,18 +999,7 @@ const drawDirtyPdfVector = (
   if (object.deleted) {
     return;
   }
-
-  const local = displayedToUserSpace(
-    object,
-    editorPage.cropBox,
-    editorPage.sourceRotate
-  );
-  applyCtm(page, object, local);
-  page.pushOperators(
-    ...vectorPathOperators(object.commands, object, editorPage, local),
-    ...paintVectorOperators(object)
-  );
-  page.pushOperators(popGraphicsState());
+  drawPdfVectorPath(page, object, editorPage);
 };
 
 const drawImageObject = async (
@@ -1094,6 +1186,38 @@ const encodeWinAnsiText = (font: PDFFont, text: string) => {
   }
 };
 
+/** Searchable, unpainted text (rendering mode 3) at a baseline origin. */
+const pushInvisibleText = (
+  page: PDFPage,
+  font: PDFFont,
+  text: string,
+  size: number,
+  origin: Point
+): void => {
+  const encoded = encodeWinAnsiText(font, text);
+  if (!encoded) {
+    return;
+  }
+  const embeddedFontKey = page.node.newFontDictionary(font.name, font.ref);
+  const zero = degrees(0);
+  page.pushOperators(
+    pushGraphicsState(),
+    beginText(),
+    setTextRenderingMode(TextRenderingMode.Invisible),
+    setFontAndSize(embeddedFontKey, size),
+    rotateAndSkewTextRadiansAndTranslate(
+      toRadians(zero),
+      toRadians(zero),
+      toRadians(zero),
+      origin.x,
+      origin.y
+    ),
+    showText(encoded),
+    endText(),
+    popGraphicsState()
+  );
+};
+
 const drawInvisibleOcrWords = (
   page: PDFPage,
   words: readonly OcrTextObject[],
@@ -1103,39 +1227,62 @@ const drawInvisibleOcrWords = (
   const suppressed = editorPage.suppressedOcrWordIds
     ? new Set(editorPage.suppressedOcrWordIds)
     : null;
-  const embeddedFontKey = page.node.newFontDictionary(font.name, font.ref);
-  const zero = degrees(0);
   for (const word of words) {
     if (suppressed?.has(word.id) || word.text.trim().length === 0) {
       continue;
     }
-    const encoded = encodeWinAnsiText(font, word.text);
-    if (!encoded) {
-      continue;
-    }
-    const size = Math.max(word.height, MIN_INVISIBLE_OCR_FONT_SIZE);
-    const origin = displayedPointToUserSpace(
-      { x: word.x, y: word.baselineY },
-      editorPage.cropBox,
-      editorPage.sourceRotate
-    );
-    page.pushOperators(
-      pushGraphicsState(),
-      beginText(),
-      setTextRenderingMode(TextRenderingMode.Invisible),
-      setFontAndSize(embeddedFontKey, size),
-      rotateAndSkewTextRadiansAndTranslate(
-        toRadians(zero),
-        toRadians(zero),
-        toRadians(zero),
-        origin.x,
-        origin.y
-      ),
-      showText(encoded),
-      endText(),
-      popGraphicsState()
+    pushInvisibleText(
+      page,
+      font,
+      word.text,
+      Math.max(word.height, MIN_INVISIBLE_OCR_FONT_SIZE),
+      displayedPointToUserSpace(
+        { x: word.x, y: word.baselineY },
+        editorPage.cropBox,
+        editorPage.sourceRotate
+      )
     );
   }
+};
+
+/**
+ * Outline-only text the user did not edit is still only outlines in the
+ * page; recognized text under it makes the export searchable.
+ */
+const drawInvisibleOutlineText = (
+  page: PDFPage,
+  runs: readonly PdfTextObject[],
+  editorPage: EditorPage,
+  font: PDFFont
+): void => {
+  for (const run of runs) {
+    pushInvisibleText(
+      page,
+      font,
+      run.text,
+      Math.max(run.fontSize ?? run.height, MIN_INVISIBLE_OCR_FONT_SIZE),
+      pdfTextBaselineUserSpace(
+        run.transform,
+        editorPage.cropBox,
+        editorPage.sourceRotate
+      )
+    );
+  }
+};
+
+const OCR_FONT_KEY = "ocr-helvetica";
+
+const ocrFontFor = async (
+  fonts: Map<string, PDFFont>,
+  doc: PDFDocument
+): Promise<PDFFont> => {
+  const cached = fonts.get(OCR_FONT_KEY);
+  if (cached) {
+    return cached;
+  }
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  fonts.set(OCR_FONT_KEY, font);
+  return font;
 };
 
 export interface ExportReport {
@@ -1159,6 +1306,20 @@ const removeOrCoverDirtyText = (
 ): string[] => {
   const coverOnly: string[] = [];
   const removal = removeOriginalInk(output, page, editorPage, dirtyText);
+  // Unedited lines of a label whose path stopped painting come back as they were.
+  const vectors = new Map(
+    editorPage.pdfVectorObjects.map((vector) => [vector.id, vector])
+  );
+  for (const kept of removal.keptOutlineLines) {
+    const vector = vectors.get(kept.vectorId);
+    if (vector) {
+      drawPdfVectorPath(
+        page,
+        pdfVectorSubpaths(vector, kept.subpaths),
+        editorPage
+      );
+    }
+  }
   // Every cover goes down before any text: a run emptied by a link label
   // edit must not hide the caption drawn by the run before it.
   for (const object of dirtyText) {
@@ -1215,20 +1376,32 @@ export const exportDocumentWithReport = async (
     const images = new Map<string, PDFImage>();
     const ocrWords = input.ocrWordsByPage?.[editorPage.id];
     if (ocrWords && ocrWords.length > 0) {
-      const ocrFontKey = "ocr-helvetica";
-      let ocrFont = fonts.get(ocrFontKey);
-      if (!ocrFont) {
+      drawInvisibleOcrWords(
+        page,
+        ocrWords,
+        editorPage,
         // oxlint-disable-next-line eslint/no-await-in-loop -- Helvetica is embedded once per export
-        ocrFont = await output.embedFont(StandardFonts.Helvetica);
-        fonts.set(ocrFontKey, ocrFont);
-      }
-      drawInvisibleOcrWords(page, ocrWords, editorPage, ocrFont);
+        await ocrFontFor(fonts, output)
+      );
     }
     const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
     // Removal first, on the page's own content; covers only where ink stays.
     coverOnlyRunIds.push(
       ...removeOrCoverDirtyText(output, page, editorPage, dirtyText)
     );
+    // After Removal, which rewrites the page's own content.
+    const cleanOutlineText = editorPage.pdfTextObjects.filter(
+      (run) => run.outlineText && !isPdfTextDirty(run)
+    );
+    if (cleanOutlineText.length > 0) {
+      drawInvisibleOutlineText(
+        page,
+        cleanOutlineText,
+        editorPage,
+        // oxlint-disable-next-line eslint/no-await-in-loop -- Helvetica is embedded once per export
+        await ocrFontFor(fonts, output)
+      );
+    }
     for (const object of dirtyText) {
       if (object.text === "") {
         continue;
