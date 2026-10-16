@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { EditorHotkeys } from "@/components/editor/editor-hotkeys";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { EmptyState } from "@/components/editor/empty-state";
+import { LargeDeleteDialog } from "@/components/editor/large-delete-dialog";
 import { PageSidebar } from "@/components/editor/page-sidebar";
 import { SignatureDialog } from "@/components/editor/signature-dialog";
 import { ToolRail } from "@/components/editor/tool-rail";
@@ -69,6 +70,7 @@ export const EditorShell = () => {
         <ToolRail />
       </div>
       <SignatureDialog />
+      <LargeDeleteDialog />
     </div>
   );
 };

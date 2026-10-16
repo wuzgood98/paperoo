@@ -378,6 +378,12 @@ export interface PdfVectorObject {
   /** The vector's own path-painting operator, when it is top-level content. */
   removalTarget?: PdfPathRemovalTarget;
   /**
+   * A fill covering (nearly) the whole page, drawn before any text: the page
+   * background. Not selectable, so a click can't pick it and Delete can't
+   * remove it.
+   */
+  pageBackground?: boolean;
+  /**
    * Glyph outline of invisible Type3 text (Figma export). The text run owns
    * it: it is the run's original ink and is not selectable on its own.
    */

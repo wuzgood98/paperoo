@@ -2,6 +2,7 @@
 
 import { ColorField } from "@/components/editor/color-field";
 import { inspectorStripClassName } from "@/components/editor/inspector-strip";
+import { requestDeleteSelection } from "@/components/editor/large-delete";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { editorStore } from "@/lib/editor/store";
@@ -62,7 +63,7 @@ export const PdfVectorInspector = ({ object }: { object: PdfVectorObject }) => (
     <Button
       onClick={() => {
         editorStore.selectPdfVector(object.id);
-        editorStore.deleteSelected();
+        requestDeleteSelection();
       }}
       size="xs"
       variant="destructive"
