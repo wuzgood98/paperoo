@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { pageToCss, pdfTextBaselineDisplayed } from "@/lib/editor/coordinates";
 import { useEditorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject, Rect } from "@/lib/editor/types";
+import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
 import { glyphLayoutSvgPath, rebuiltGlyphLayout } from "@/lib/pdf/glyph-face";
 import type { GlyphLayout } from "@/lib/pdf/glyph-face";
 
@@ -76,7 +77,37 @@ export const RebuiltGlyphSvg = ({
   );
 };
 
-/** The run's text in its rebuilt face when possible, else `children`. */
+const FALLBACK_FAMILIES = {
+  inter: '"Paperoo Inter", "Liberation Sans", Arial, sans-serif',
+  liberation: '"Liberation Sans", Arial, sans-serif',
+} as const;
+
+/**
+ * CSS for a Figma run drawn in its substitute (same face, weight and letter
+ * spacing as export), or null when the run is not a Figma fallback.
+ */
+export const useFigmaFallbackCss = (
+  object: PdfTextObject,
+  page: EditorPage,
+  text: string
+): React.CSSProperties | null => {
+  const pages = useEditorStore((state) => state.document.pages);
+  return useMemo(() => {
+    const style = figmaFallbackFor(pages, page, { ...object, text });
+    return style
+      ? {
+          fontFamily: FALLBACK_FAMILIES[style.family],
+          fontWeight: style.weight,
+          letterSpacing: `${style.letterSpacingEm}em`,
+        }
+      : null;
+  }, [object, page, pages, text]);
+};
+
+/**
+ * The run's text in its rebuilt face when possible, else `children`, called
+ * with the Figma fallback CSS (null for other runs).
+ */
 export const RebuiltGlyphText = ({
   children,
   fill,
@@ -85,7 +116,7 @@ export const RebuiltGlyphText = ({
   page,
   zoom,
 }: {
-  children: React.ReactNode;
+  children: (fallbackCss: React.CSSProperties | null) => React.ReactNode;
   fill: string;
   frame: Rect;
   object: PdfTextObject;
@@ -93,8 +124,9 @@ export const RebuiltGlyphText = ({
   zoom: number;
 }) => {
   const layout = useRebuiltGlyphLayout(object, page, object.text);
+  const fallbackCss = useFigmaFallbackCss(object, page, object.text);
   if (!layout) {
-    return children;
+    return children(fallbackCss);
   }
   return (
     <RebuiltGlyphSvg
