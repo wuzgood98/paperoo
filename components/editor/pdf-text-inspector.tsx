@@ -25,6 +25,7 @@ import {
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
 import { embeddedFontCanDraw } from "@/lib/pdf/embedded-font";
+import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
 import {
   glyphSourceMessage,
   rebuiltGlyphLayout,
@@ -47,7 +48,8 @@ export const PdfTextInspector = ({
       ? glyphSourceMessage(
           resolveGlyphFace(pages, page.id, object),
           rebuiltGlyphLayout(pages, page, object),
-          object.text
+          object.text,
+          figmaFallbackFor(pages, page, object)?.family === "inter"
         )
       : null;
   const showFill = pdfTextNeedsFill(object.textRenderingMode);

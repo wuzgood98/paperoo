@@ -277,15 +277,20 @@ export const glyphLayoutSvgPath = (
 export const glyphSourceMessage = (
   face: GlyphFace | null,
   layout: GlyphLayout | null,
-  text: string
+  text: string,
+  /** The substitute is Inter, because the face's widths match it. */
+  approximatedWithInter = false
 ): string => {
   if (layout) {
     return "Using the document's own glyphs.";
   }
+  const substitute = approximatedWithInter
+    ? "approximated with Inter (Figma's default)"
+    : "using a substitute";
   const missing = face ? missingGlyphs(face, text) : [];
   if (missing.length === 0) {
-    return "The document's own glyphs can't be used here; using a substitute.";
+    return `The document's own glyphs can't be used here; ${substitute}.`;
   }
   const names = missing.map((char) => (char === " " ? "space" : `“${char}”`));
-  return `Original glyphs missing for ${names.join(", ")}; using a substitute.`;
+  return `Original glyphs missing for ${names.join(", ")}; ${substitute}.`;
 };

@@ -1,6 +1,11 @@
 import type { FontFamily, FontWeight } from "@/lib/editor/types";
 
 export const FONT_FILES = {
+  /** Figma's default face; only fetched when a Figma run's widths match it. */
+  inter: {
+    400: "/fonts/Inter-Regular.ttf",
+    600: "/fonts/Inter-SemiBold.ttf",
+  },
   sans: {
     400: "/fonts/LiberationSans-Regular.ttf",
     700: "/fonts/LiberationSans-Bold.ttf",

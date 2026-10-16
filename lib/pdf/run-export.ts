@@ -1,8 +1,10 @@
 import { toastManager } from "@/components/ui/toast-manager";
+import { isPdfTextDirty } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import { FONT_FILES } from "@/lib/fonts/measure-text";
 import { ocrSession } from "@/lib/ocr/session";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
+import { interWeightsNeeded } from "@/lib/pdf/figma-fallback";
 import { ensureDirtyPdfImageAssets } from "@/lib/pdf/pdf-image-preview";
 import { pdfSession } from "@/lib/pdf/session";
 
@@ -31,11 +33,15 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
 
   try {
     const fontBytes: Record<string, ArrayBuffer> = {};
-    const fontUrls = [
+    const fontUrls: string[] = [
       FONT_FILES.sans[400],
       FONT_FILES.sans[700],
       FONT_FILES.sans.italic400,
       FONT_FILES.sans.italic700,
+      // Inter only when a Figma edit's face proved to be Inter.
+      ...[...interWeightsNeeded(state.document.pages, isPdfTextDirty)].map(
+        (weight) => FONT_FILES.inter[weight]
+      ),
     ];
     const buffers = await Promise.all(fontUrls.map((url) => fetchBytes(url)));
     for (const [index, url] of fontUrls.entries()) {

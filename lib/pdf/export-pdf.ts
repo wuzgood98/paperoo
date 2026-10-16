@@ -22,7 +22,9 @@ import {
   pushGraphicsState,
   rotateAndSkewTextRadiansAndTranslate,
   setFillingColor,
+  setCharacterSpacing,
   setFontAndSize,
+  setTextMatrix,
   setLineCap,
   setLineJoin,
   setLineWidth,
@@ -87,6 +89,8 @@ import {
   copyPagesWithAcroForm,
 } from "@/lib/pdf/export-forms";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
+import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
+import type { InterWeight } from "@/lib/pdf/figma-fallback";
 import { rebuiltGlyphLayout } from "@/lib/pdf/glyph-face";
 import { pushRebuiltType3Text } from "@/lib/pdf/rebuilt-type3-font";
 import { removeOriginalInk } from "@/lib/pdf/remove-original-ink";
@@ -219,6 +223,57 @@ const embedFontForStyle = async (
     : await doc.embedFont(standardFontFor(family, weight, italic));
   fonts.set(key, font);
   return font;
+};
+
+/** Inter for a Figma fallback, or null when its bytes were not supplied. */
+const embedInterFont = async (
+  weight: InterWeight,
+  fonts: Map<string, PDFFont>,
+  doc: PDFDocument,
+  fontBytes: Record<string, Uint8Array>
+): Promise<PDFFont | null> => {
+  const key = FONT_FILES.inter[weight];
+  const cached = fonts.get(key);
+  if (cached) {
+    return cached;
+  }
+  const bytes = fontBytes[key];
+  if (!bytes) {
+    return null;
+  }
+  const font = await doc.embedFont(bytes, { subset: true });
+  fonts.set(key, font);
+  return font;
+};
+
+interface SpacedTextDraw {
+  fill: ReturnType<typeof rgb>;
+  font: PDFFont;
+  /** Extra space after each glyph, in points (PDF `Tc`). */
+  letterSpacing: number;
+  /** Baseline origin in user space. */
+  origin: { x: number; y: number };
+  size: number;
+  text: string;
+}
+
+/** One line of text with the source's letter spacing. */
+const pushSpacedText = (
+  page: PDFPage,
+  { fill, font, letterSpacing, origin, size, text }: SpacedTextDraw
+): void => {
+  const fontName = page.node.newFontDictionary(font.name, font.ref);
+  page.pushOperators(
+    pushGraphicsState(),
+    beginText(),
+    setFillingColor(fill),
+    setFontAndSize(fontName, size),
+    setCharacterSpacing(letterSpacing),
+    setTextMatrix(1, 0, 0, 1, origin.x, origin.y),
+    showText(font.encodeText(text)),
+    endText(),
+    popGraphicsState()
+  );
 };
 
 const drawTextObject = async (
@@ -366,6 +421,35 @@ const drawDirtyPdfText = async (
       size,
     })
   ) {
+    return;
+  }
+  const fallback = figmaFallbackFor(pages, editorPage, object);
+  if (fallback) {
+    const fallbackFont =
+      fallback.family === "inter" && fallback.weight !== 700
+        ? await embedInterFont(fallback.weight, fonts, doc, fontBytes)
+        : null;
+    pushSpacedText(page, {
+      fill: color(object.color),
+      font:
+        fallbackFont ??
+        (await embedFontForStyle(
+          "sans",
+          fallback.weight === 400 ? 400 : 700,
+          false,
+          fonts,
+          doc,
+          fontBytes
+        )),
+      letterSpacing: fallback.letterSpacingEm * size,
+      origin: pdfTextBaselineUserSpace(
+        object.transform,
+        editorPage.cropBox,
+        editorPage.sourceRotate
+      ),
+      size,
+      text: object.text,
+    });
     return;
   }
   const weight = object.fontWeight ?? 400;

@@ -1,6 +1,29 @@
 import { PDFDocument, PDFName } from "pdf-lib";
 
-export type FigmaFace = "regular" | "semibold";
+import {
+  INTER_3_400_ADVANCES,
+  INTER_4_400_ADVANCES,
+  INTER_4_600_ADVANCES,
+} from "@/lib/fonts/inter-advances";
+
+/**
+ * Synthetic faces, plus faces whose widths are Inter's own (what a Figma
+ * export set in Inter, Figma's default, carries).
+ */
+export type FigmaFace =
+  | "regular"
+  | "semibold"
+  | "inter-3-regular"
+  | "inter-regular"
+  | "inter-semibold";
+
+const INTER_FACE_ADVANCES: Partial<
+  Record<FigmaFace, Readonly<Record<string, number>>>
+> = {
+  "inter-3-regular": INTER_3_400_ADVANCES,
+  "inter-regular": INTER_4_400_ADVANCES,
+  "inter-semibold": INTER_4_600_ADVANCES,
+};
 
 /** What a Figma export puts in the Type3 text layer for one text node. */
 export interface FigmaType3Run {
@@ -60,9 +83,10 @@ export const figmaGlyph = (face: FigmaFace, char: string): FigmaGlyph => {
   }
   const code = char.codePointAt(0) ?? 0;
   const width =
+    INTER_FACE_ADVANCES[face]?.[char] ??
     BASE_WIDTH +
-    (code % WIDTH_BUCKETS) * WIDTH_STEP +
-    (face === "semibold" ? SEMIBOLD_EXTRA_WIDTH : 0);
+      (code % WIDTH_BUCKETS) * WIDTH_STEP +
+      (face === "semibold" ? SEMIBOLD_EXTRA_WIDTH : 0);
   const top = char === char.toLowerCase() ? LOWERCASE_TOP_EM : FIGMA_INK_TOP_EM;
   return {
     box: [GLYPH_SIDE_BEARING, 0, width - GLYPH_SIDE_BEARING, top],

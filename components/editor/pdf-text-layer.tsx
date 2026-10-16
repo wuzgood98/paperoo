@@ -7,6 +7,7 @@ import { PdfVectorCover } from "@/components/editor/pdf-vector-layer";
 import {
   RebuiltGlyphSvg,
   RebuiltGlyphText,
+  useFigmaFallbackCss,
   useRebuiltGlyphLayout,
 } from "@/components/editor/rebuilt-glyph-text";
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
@@ -148,6 +149,7 @@ const PdfTextEditor = ({
   }, [object.id, object.text, page.id, value]);
   const frame = overlayFrame(object, value);
   const rebuilt = useRebuiltGlyphLayout(object, page, value);
+  const fallbackCss = useFigmaFallbackCss(object, page, value);
   const fontSize = object.fontSize ?? object.height;
   const fontSizeCss = pageToCss(fontSize, zoom);
   // Keystrokes only change `draft`; until measurement lands this walks the
@@ -270,6 +272,7 @@ const PdfTextEditor = ({
         ref={inputRef}
         style={{
           ...pdfTextInkStyle(object, value, fontSizeCss, zoom),
+          ...fallbackCss,
           // The rebuilt glyphs above are the visible text; keep the caret.
           ...(rebuilt
             ? { caretColor: object.color, color: "transparent" }
@@ -414,26 +417,29 @@ const PdfTextLayerView = ({
               page={page}
               zoom={zoom}
             >
-              <div
-                className="absolute left-0 whitespace-nowrap"
-                style={{
-                  ...pdfTextInkStyle(
-                    object,
-                    object.text,
-                    fontSizeCss,
-                    zoom,
-                    fillColor
-                  ),
-                  top: pageToCss(inkTop, zoom),
-                  transform:
-                    object.rotation === 0
-                      ? undefined
-                      : `rotate(${object.rotation}deg)`,
-                  transformOrigin: "left top",
-                }}
-              >
-                {object.text}
-              </div>
+              {(fallbackCss) => (
+                <div
+                  className="absolute left-0 whitespace-nowrap"
+                  style={{
+                    ...pdfTextInkStyle(
+                      object,
+                      object.text,
+                      fontSizeCss,
+                      zoom,
+                      fillColor
+                    ),
+                    ...fallbackCss,
+                    top: pageToCss(inkTop, zoom),
+                    transform:
+                      object.rotation === 0
+                        ? undefined
+                        : `rotate(${object.rotation}deg)`,
+                    transformOrigin: "left top",
+                  }}
+                >
+                  {object.text}
+                </div>
+              )}
             </RebuiltGlyphText>
             {underline ? (
               <div

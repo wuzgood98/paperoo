@@ -237,6 +237,22 @@
   src: url("/fonts/LiberationSans-BoldItalic.ttf") format("truetype");
 }
 
+/* Figma's default face, for edits whose source widths prove it is Inter.
+   Browsers only fetch it when such an edit is on screen. */
+@font-face {
+  font-family: "Paperoo Inter";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/fonts/Inter-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Paperoo Inter";
+  font-style: normal;
+  font-weight: 600;
+  src: url("/fonts/Inter-SemiBold.ttf") format("truetype");
+}
+
 @media (width < 48rem) {
   :root {
     --editor-mobile-tool-rail: 3rem;
