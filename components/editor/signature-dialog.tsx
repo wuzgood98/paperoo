@@ -126,7 +126,7 @@ export const SignatureDialog = () => {
           <DialogTitle>Draw your signature</DialogTitle>
         </DialogHeader>
         <canvas
-          className="bg-background text-foreground w-full touch-none rounded-md border"
+          className="bg-background text-foreground editor-draw-cursor w-full touch-none rounded-md border"
           height={CANVAS_HEIGHT}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
