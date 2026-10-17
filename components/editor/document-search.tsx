@@ -85,6 +85,7 @@ export const DocumentSearch = ({
       >
         <ComboboxInput
           aria-label="Search document"
+          data-document-search=""
           placeholder="Search"
           showClear
           showTrigger={false}
