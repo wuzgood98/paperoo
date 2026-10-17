@@ -46,6 +46,34 @@ const nudgeSelected = (deltaX: number, deltaY: number): void => {
   }));
 };
 
+// Hidden by CSS, or cut off behind an open modal (Base UI hides the rest of
+// the page from assistive tech while one is open).
+const isReachable = (element: HTMLElement): boolean =>
+  element.offsetParent !== null &&
+  element.closest("[aria-hidden='true'], [inert]") === null;
+
+const focusDocumentSearch = (): void => {
+  // The toolbar input is hidden on small screens, where search lives in a
+  // dialog behind a trigger button instead.
+  const input = [
+    ...document.querySelectorAll<HTMLInputElement>(
+      "input[data-document-search]"
+    ),
+  ].find(isReachable);
+  if (input) {
+    input.focus();
+    input.select();
+    return;
+  }
+
+  const trigger = document.querySelector<HTMLButtonElement>(
+    "[data-document-search-trigger]"
+  );
+  if (trigger && isReachable(trigger)) {
+    trigger.click();
+  }
+};
+
 export const EditorHotkeys = () => {
   useEffect(
     () =>
@@ -111,6 +139,7 @@ export const EditorHotkeys = () => {
           },
           key: "ArrowRight",
         },
+        { handler: focusDocumentSearch, key: "/" },
         { handler: () => editorStore.zoomBy(ZOOM_STEP), key: "=", meta: true },
         { handler: () => editorStore.zoomBy(-ZOOM_STEP), key: "-", meta: true },
         {

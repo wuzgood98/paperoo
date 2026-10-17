@@ -88,6 +88,7 @@ const SearchSheetButton = () => {
         pressable
         aria-label="Search document"
         className="md:hidden"
+        data-document-search-trigger=""
         onClick={() => setOpen(true)}
         size="icon-sm"
         variant="ghost"
