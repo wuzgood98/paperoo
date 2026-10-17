@@ -1,11 +1,13 @@
 "use client";
 
-import { CircleIcon, MinusIcon, SquareIcon } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { CheckIcon, CircleIcon, MinusIcon, SquareIcon } from "lucide-react";
+import { useState } from "react";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
 import { Toggle } from "@/components/ui/toggle";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
+import { toolTooltip } from "@/lib/editor/tool-keys";
 import type { ShapeKind } from "@/lib/editor/types";
 
 const SHAPES: { icon: React.ReactNode; id: ShapeKind; label: string }[] = [
@@ -14,36 +16,31 @@ const SHAPES: { icon: React.ReactNode; id: ShapeKind; label: string }[] = [
   { icon: <CircleIcon />, id: "circle", label: "Circle" },
 ];
 
-const MD_QUERY = "(min-width: 768px)";
-
-const subscribeMd = (onChange: () => void) => {
-  const media = window.matchMedia(MD_QUERY);
-  media.addEventListener("change", onChange);
-  return () => media.removeEventListener("change", onChange);
-};
-
-const getMdSnapshot = () => window.matchMedia(MD_QUERY).matches;
-
-export const ShapeMenu = ({ disabled }: { disabled: boolean }) => {
+/** Rendered inside the tool rail's ToggleGroup, which owns pressed state. */
+export const ShapeMenu = ({ isMdUp }: { isMdUp: boolean }) => {
   const tool = useEditorStore((state) => state.tool);
   const shape = useEditorStore((state) => state.shapeStyle.shape);
-  const isMdUp = useSyncExternalStore(subscribeMd, getMdSnapshot, () => true);
+  const [open, setOpen] = useState(false);
+  const current = SHAPES.find((item) => item.id === shape) ?? SHAPES[0];
 
   return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Toggle
-            aria-label="Shapes"
-            pressable
-            disabled={disabled}
-            pressed={tool === "shape"}
-            size="sm"
-          >
-            <SquareIcon />
-          </Toggle>
-        }
-      />
+    <Popover onOpenChange={setOpen} open={open}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Toggle aria-label="Shapes" pressable size="sm" value="shape">
+                  {current?.icon}
+                </Toggle>
+              }
+            />
+          }
+        />
+        <TooltipPopup side={isMdUp ? "left" : "top"}>
+          {toolTooltip("Shapes", "shape")}
+        </TooltipPopup>
+      </Tooltip>
       <PopoverPopup
         align={isMdUp ? "start" : "center"}
         side={isMdUp ? "left" : "top"}
@@ -56,15 +53,17 @@ export const ShapeMenu = ({ disabled }: { disabled: boolean }) => {
               onClick={() => {
                 editorStore.setShapeStyle({ shape: item.id });
                 editorStore.setTool("shape");
+                setOpen(false);
               }}
               type="button"
             >
               {item.icon}
               {item.label}
-              {shape === item.id ? (
-                <span className="text-muted-foreground ml-auto text-xs">
-                  Active
-                </span>
+              {tool === "shape" && shape === item.id ? (
+                <CheckIcon
+                  aria-label="Active"
+                  className="text-muted-foreground ml-auto size-4"
+                />
               ) : null}
             </button>
           ))}

@@ -18,6 +18,7 @@ import {
   EDITOR_OBJECT_SOURCE,
   EMPTY_PDF_FORM,
   HIGHLIGHT_OPACITY,
+  MIN_CREATE_DRAG,
 } from "@/lib/editor/types";
 import type {
   DrawingObject,
@@ -44,8 +45,8 @@ import type {
   PdfVectorObject,
   Point,
   Rect,
-  ShapeKind,
   ShapeObject,
+  ShapeStyleDefaults,
   SignatureObject,
   Size,
   TextObject,
@@ -2154,19 +2155,46 @@ export const createHighlightObject = (
 
 export const createShapeObject = (
   rect: Rect,
-  shape: ShapeKind = DEFAULT_SHAPE_STYLE.shape
-): ShapeObject => ({
-  fill: DEFAULT_SHAPE_STYLE.fill,
-  id: createId(),
-  opacity: DEFAULT_OBJECT_OPACITY,
-  rotation: 0,
-  shape,
-  source: EDITOR_OBJECT_SOURCE,
-  stroke: DEFAULT_SHAPE_STYLE.stroke,
-  strokeWidth: DEFAULT_SHAPE_STYLE.strokeWidth,
-  type: "shape",
-  ...rect,
-});
+  style: ShapeStyleDefaults = DEFAULT_SHAPE_STYLE,
+  flip = false
+): ShapeObject => {
+  const shape: ShapeObject = {
+    fill: style.shape === "line" ? null : style.fill,
+    id: createId(),
+    opacity: DEFAULT_OBJECT_OPACITY,
+    rotation: 0,
+    shape: style.shape,
+    source: EDITOR_OBJECT_SOURCE,
+    stroke: style.stroke,
+    strokeWidth: style.strokeWidth,
+    type: "shape",
+    ...rect,
+  };
+  if (style.shape === "line" && flip) {
+    shape.flip = true;
+  }
+  return shape;
+};
+
+/** True when a drag from start to end runs bottom-left to top-right (or reverse). */
+export const isRisingDrag = (start: Point, end: Point): boolean =>
+  (end.x - start.x) * (end.y - start.y) < 0;
+
+/**
+ * Whether a drag is too short to create an object. Lines need length on one
+ * axis; boxes need it on both.
+ */
+export const isClickDrag = (
+  start: Point,
+  end: Point,
+  oneAxis = false
+): boolean => {
+  const dx = Math.abs(end.x - start.x);
+  const dy = Math.abs(end.y - start.y);
+  return oneAxis
+    ? Math.max(dx, dy) < MIN_CREATE_DRAG
+    : Math.min(dx, dy) < MIN_CREATE_DRAG;
+};
 
 export const normalizedRect = (start: Point, end: Point): Rect => {
   const x = Math.min(start.x, end.x);

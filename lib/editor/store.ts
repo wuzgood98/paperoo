@@ -328,11 +328,20 @@ export const editorStore = {
     return asset;
   },
 
-  addObject: (object: EditorObject, select = true): void => {
+  /**
+   * Adds an object to the current page. By default it selects the object and
+   * returns to the Select tool; `keepTool` leaves both alone so a repeatable
+   * tool (draw, highlight, shapes) stays ready for the next stroke.
+   */
+  addObject: (
+    object: EditorObject,
+    { keepTool = false }: { keepTool?: boolean } = {}
+  ): void => {
     const pageId = internal.state.currentPageId;
     if (!pageId) {
       return;
     }
+    const select = !keepTool;
     commit(() => {
       internal.state = {
         ...internal.state,
@@ -355,7 +364,7 @@ export const editorStore = {
         selectedPdfImageId: select ? null : internal.state.selectedPdfImageId,
         selectedPdfTextId: select ? null : internal.state.selectedPdfTextId,
         selectedPdfVectorId: select ? null : internal.state.selectedPdfVectorId,
-        tool: "select",
+        tool: keepTool ? internal.state.tool : "select",
       };
     }, true);
   },
@@ -1009,6 +1018,43 @@ export const editorStore = {
     internal.history = result.history;
     applySnapshot(result.snapshot);
     emit();
+  },
+
+  /**
+   * Make the first selected object's style the default for the next object of
+   * its kind, so a color or width picked once carries forward.
+   */
+  rememberSelectedStyle: (): void => {
+    const [id] = internal.state.selectedObjectIds;
+    const object = currentPage()?.objects.find((item) => item.id === id);
+    if (object?.type === "text") {
+      const { align, color, fontFamily, fontSize, fontWeight, italic } = object;
+      editorStore.setTextStyle({
+        align,
+        color,
+        fontFamily,
+        fontSize,
+        fontWeight,
+        italic,
+      });
+    } else if (object?.type === "drawing") {
+      editorStore.setDrawStyle({
+        stroke: object.stroke,
+        strokeWidth: object.strokeWidth,
+      });
+    } else if (object?.type === "shape") {
+      const style: Partial<ShapeStyleDefaults> = {
+        stroke: object.stroke,
+        strokeWidth: object.strokeWidth,
+      };
+      // A line has no fill; keep the last box fill for the next box.
+      if (object.shape !== "line") {
+        style.fill = object.fill;
+      }
+      editorStore.setShapeStyle(style);
+    } else if (object?.type === "highlight") {
+      editorStore.setHighlightColor(object.color);
+    }
   },
 
   reorderSelected: (placement: "front" | "back"): void => {

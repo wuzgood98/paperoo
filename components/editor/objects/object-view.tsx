@@ -185,8 +185,8 @@ export const ObjectView = ({
               strokeWidth={object.strokeWidth}
               x1={0}
               x2={object.width}
-              y1={0}
-              y2={object.height}
+              y1={object.flip ? object.height : 0}
+              y2={object.flip ? 0 : object.height}
             />
           </svg>
         );

@@ -10,10 +10,13 @@ import {
 } from "@/lib/editor/coordinates";
 import type { PageBounds, ResizeHandle } from "@/lib/editor/coordinates";
 import {
+  boundsFromPoints,
   createDrawingObject,
   createHighlightObject,
   createImageObject,
   createShapeObject,
+  isClickDrag,
+  isRisingDrag,
   normalizedRect,
   pdfAnnotationWithGestureBox,
   pdfImageWithGestureBox,
@@ -21,7 +24,7 @@ import {
   scaleObjectToBox,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
-import { MIN_OBJECT_SIZE } from "@/lib/editor/types";
+import { MIN_CREATE_DRAG, MIN_OBJECT_SIZE } from "@/lib/editor/types";
 import type {
   DrawStyleDefaults,
   EditorObject,
@@ -185,20 +188,12 @@ export const useOverlayGestures = ({
     gestureRef.current = null;
     boundsRef.current = null;
     setTransformingId(null);
-    if (!object || !gesture) {
-      return;
-    }
-    if (gesture.kind === "draw") {
-      editorStore.addObject(
-        createDrawingObject(
-          gesture.points,
-          drawStyle.stroke,
-          drawStyle.strokeWidth
-        )
-      );
-      return;
-    }
-    if (gesture.kind === "rect") {
+    if (
+      !object ||
+      !gesture ||
+      gesture.kind === "draw" ||
+      gesture.kind === "rect"
+    ) {
       return;
     }
     if (object.type === "pdf-image") {
@@ -289,11 +284,11 @@ export const useOverlayGestures = ({
     }
 
     if (gesture.kind === "draw") {
-      const events = event.nativeEvent.getCoalescedEvents?.() ?? [
-        event.nativeEvent,
-      ];
-      for (const coalesced of events) {
-        gesture.points.push(toPage(coalesced));
+      // Constructed events report an empty list, not a missing method.
+      const coalesced = event.nativeEvent.getCoalescedEvents?.() ?? [];
+      const samples = coalesced.length > 0 ? coalesced : [event.nativeEvent];
+      for (const sample of samples) {
+        gesture.points.push(toPage(sample));
       }
       scheduleDrawDraft();
       return;
@@ -355,24 +350,38 @@ export const useOverlayGestures = ({
     }
     if (gesture.kind === "draw") {
       finishGesture(null);
+      const box = boundsFromPoints(gesture.points);
+      if (Math.max(box.width, box.height) < MIN_CREATE_DRAG) {
+        return;
+      }
       editorStore.addObject(
         createDrawingObject(
           gesture.points,
           drawStyle.stroke,
           drawStyle.strokeWidth
-        )
+        ),
+        { keepTool: true }
       );
       return;
     }
     if (gesture.kind === "rect") {
-      const rect = normalizedRect(gesture.start, point);
-      if (tool === "highlight") {
-        editorStore.addObject(createHighlightObject(rect, highlightColor));
-      } else {
-        editorStore.addObject(createShapeObject(rect, shapeStyle.shape));
-      }
       gestureRef.current = null;
       boundsRef.current = null;
+      const isLine = tool === "shape" && shapeStyle.shape === "line";
+      if (isClickDrag(gesture.start, point, isLine)) {
+        return;
+      }
+      const rect = normalizedRect(gesture.start, point);
+      editorStore.addObject(
+        tool === "highlight"
+          ? createHighlightObject(rect, highlightColor)
+          : createShapeObject(
+              rect,
+              shapeStyle,
+              isRisingDrag(gesture.start, point)
+            ),
+        { keepTool: true }
+      );
     }
   };
 

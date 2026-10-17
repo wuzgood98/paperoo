@@ -1150,9 +1150,10 @@ const drawShape = (
   } else if (object.shape === "line") {
     page.drawLine({
       color: border,
-      end: { x: user.width, y: user.height },
+      // User space is y-up from the box's bottom-left corner.
+      end: { x: user.width, y: object.flip ? user.height : 0 },
       opacity: object.opacity,
-      start: { x: 0, y: user.height },
+      start: { x: 0, y: object.flip ? 0 : user.height },
       thickness: object.strokeWidth,
     });
   } else {
