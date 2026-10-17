@@ -180,6 +180,11 @@ export interface PdfTextObject {
   fontWeight?: FontWeight;
   hasEOL: boolean;
   height: number;
+  /**
+   * Advance-axis over em-axis length of the text matrix (`Tz`, or a stretched
+   * `cm`). Unset means 1. Already included in `width`.
+   */
+  horizontalScale?: number;
   id: string;
   italic?: boolean;
   originalColor: string;

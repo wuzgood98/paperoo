@@ -1,5 +1,6 @@
 import {
   DEFAULT_ASCENT_RATIO,
+  isPdfTextTurned,
   objectCenter,
   pdfTextBaselineDisplayed,
   rotatePoint,
@@ -827,6 +828,81 @@ export const pdfTextOverlayBox = (
         y: object.y,
       };
 
+/**
+ * Degrees a run's box turns about its baseline origin (see
+ * `pdfTextFramePivot`). 0 for runs on the page's axes, including those that
+ * only follow a page `/Rotate`: their box is already where the ink is.
+ */
+export const pdfTextFrameRotation = (
+  object: Pick<PdfTextObject, "rotation" | "transform">
+): number => (isPdfTextTurned(object.transform) ? object.rotation : 0);
+
+/** The run's baseline origin in displayed space: the pivot of its frame. */
+export const pdfTextFramePivot = (
+  object: Pick<PdfTextObject, "ascentRatio" | "fontSize" | "height" | "x" | "y">
+): Point => {
+  const ascentRatio =
+    object.ascentRatio !== undefined && object.ascentRatio > 0
+      ? object.ascentRatio
+      : DEFAULT_ASCENT_RATIO;
+  return {
+    x: object.x,
+    y: object.y + (object.fontSize ?? object.height) * ascentRatio,
+  };
+};
+
+type PdfTextFrameFields = Pick<
+  PdfTextObject,
+  "ascentRatio" | "fontSize" | "height" | "rotation" | "transform" | "x" | "y"
+>;
+
+/** A displayed point in the run's unturned frame, where its box is a plain rect. */
+export const pdfTextFramePoint = (
+  object: PdfTextFrameFields,
+  point: Point
+): Point => {
+  const rotation = pdfTextFrameRotation(object);
+  return rotation === 0
+    ? point
+    : rotatePoint(point, pdfTextFramePivot(object), -rotation);
+};
+
+/** Corners (clockwise from top-left) of a frame rect, in displayed space. */
+export const pdfTextFrameCorners = (
+  object: PdfTextFrameFields,
+  rect: Rect
+): Point[] => {
+  const rotation = pdfTextFrameRotation(object);
+  const pivot = pdfTextFramePivot(object);
+  return [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+    { x: rect.x, y: rect.y + rect.height },
+  ].map((corner) => rotatePoint(corner, pivot, rotation));
+};
+
+/** Displayed-space bounds of a frame rect. */
+export const pdfTextFrameBounds = (
+  object: PdfTextFrameFields,
+  rect: Rect
+): Rect => {
+  if (pdfTextFrameRotation(object) === 0) {
+    return rect;
+  }
+  const corners = pdfTextFrameCorners(object, rect);
+  const xs = corners.map((corner) => corner.x);
+  const ys = corners.map((corner) => corner.y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  return {
+    height: Math.max(...ys) - top,
+    width: Math.max(...xs) - left,
+    x: left,
+    y: top,
+  };
+};
+
 /** Canvas font for drawing `text` in a run, in the face preview would use. */
 export const pdfTextCanvasFont = (
   object: PdfTextObject,
@@ -839,10 +915,13 @@ export const pdfTextCanvasFont = (
   italic: object.italic === true,
 });
 
+/** Advance of `text` in page units, stretched like the run's own glyphs. */
 export const measurePdfTextWidth = (
   object: PdfTextObject,
   text: string = object.text
-): number => canvasTextWidth(text, pdfTextCanvasFont(object, text));
+): number =>
+  canvasTextWidth(text, pdfTextCanvasFont(object, text)) *
+  (object.horizontalScale ?? 1);
 
 export const pdfLinkBoxAfterLabel = (
   _link: PdfLinkAnnotation,
@@ -1255,12 +1334,12 @@ export const pdfTextOriginalInkBox = (
   measureInk: GlyphInkMeasurer = measurePdfTextGlyphInk
 ): Rect => {
   if (!isUprightRun(object.rotation)) {
-    return {
+    return pdfTextFrameBounds(object, {
       height: object.height,
       width: object.width,
       x: object.x,
       y: object.y,
-    };
+    });
   }
   const baselineY = uprightBaselineY(object, page);
   const glyphs = glyphInkRects(object, baselineY, measureInk);
@@ -1306,11 +1385,17 @@ export const neighbourReachBox = (
     object.y + object.height,
     box ? box.baselineY + box.descent : object.y + object.height
   );
+  const bounds = pdfTextFrameBounds(object, {
+    height: bottom - top,
+    width: object.width,
+    x: object.x,
+    y: top,
+  });
   return {
-    height: bottom - top + reach * 2,
-    width: object.width + reach * 2,
-    x: object.x - reach,
-    y: top - reach,
+    height: bounds.height + reach * 2,
+    width: bounds.width + reach * 2,
+    x: bounds.x - reach,
+    y: bounds.y - reach,
   };
 };
 
@@ -1333,6 +1418,10 @@ const neighbourInkRects = (
 /**
  * Cover for a dirty run: original glyph ink, not the replacement width, with
  * pieces removed where that ink would paint over a neighbouring run.
+ *
+ * A turned run's cover is one rect in its own frame (see
+ * `pdfTextFrameCorners`): neighbours on the page's axes cannot be cut out of
+ * it as rects, so it is not clipped.
  */
 export const measurePdfTextCoverRects = (
   object: PdfTextObject,
@@ -1344,6 +1433,21 @@ export const measurePdfTextCoverRects = (
   const underline =
     pdfLinkTextAppearance(page, object)?.underline ?? object.captionUnderline;
   const bleed = PDF_TEXT_COVER_BLEED;
+  if (pdfTextFrameRotation(object) !== 0) {
+    const cover = dirtyPdfTextCoverBox(
+      { height: object.height, width: object.width, x: object.x, y: object.y },
+      fontSize,
+      underline
+    );
+    return [
+      {
+        height: cover.height + bleed * 2,
+        width: cover.width + bleed * 2,
+        x: cover.x - bleed,
+        y: cover.y - bleed,
+      },
+    ];
+  }
   let seed: Rect;
   if (isUprightRun(object.rotation)) {
     const ink = pdfTextOriginalInkBox(object, page, measureInk);
@@ -1558,9 +1662,11 @@ export const pdfTextCoverRects = (
  */
 export const hitTestPdfText = (
   objects: readonly PdfTextObject[],
-  point: Point
+  pagePoint: Point
 ): PdfTextObject | undefined =>
   objects.findLast((object) => {
+    // A turned run's box is a plain rect in its own frame.
+    const point = pdfTextFramePoint(object, pagePoint);
     if (
       object.height <= 0 ||
       point.y < object.y ||

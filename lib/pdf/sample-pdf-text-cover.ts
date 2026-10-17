@@ -1,5 +1,6 @@
 import {
   pdfTextCoverRects,
+  pdfTextFrameBounds,
   neighbourReachBox,
   pdfTextOriginalInkBox,
   rectsIntersect,
@@ -194,7 +195,14 @@ export const measurePdfTextForEdit = async (
   const [sample, reusableFontGlyphs] = await Promise.all([
     object.coverColor
       ? null
-      : sampleCoverSafely(page, object, zoom, coverRects, env),
+      : sampleCoverSafely(
+          page,
+          object,
+          zoom,
+          // A turned run's covers are in its own frame; sample around them.
+          coverRects.map((cover) => pdfTextFrameBounds(object, cover)),
+          env
+        ),
     object.reusableFontGlyphs ?? probeFontSafely(page, object, env),
   ]);
   const measurement: PdfTextMeasurement = { coverRects, reusableFontGlyphs };

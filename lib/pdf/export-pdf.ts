@@ -23,6 +23,7 @@ import {
   rotateAndSkewTextRadiansAndTranslate,
   setFillingColor,
   setCharacterSpacing,
+  setCharacterSqueeze,
   setFontAndSize,
   setTextMatrix,
   setLineCap,
@@ -43,8 +44,10 @@ import {
   centerRotateCtm,
   displayedPointToUserSpace,
   displayedToUserSpace,
+  isPdfTextTurned,
   normalizeRotation,
   pdfTextBaselineUserSpace,
+  pdfTextUserAngle,
   userPointToDisplayed,
   vectorAxisScale,
   vectorStrokeScale,
@@ -58,6 +61,8 @@ import {
   pdfImageCoverBox,
   pdfTextCoverColor,
   pdfTextCoverRects,
+  pdfTextFrameCorners,
+  pdfTextFrameRotation,
   pdfTextInkCoverStyle,
   pdfTextInkOutline,
   pdfTextNeedsFill,
@@ -80,6 +85,7 @@ import type {
   PdfTextObject,
   PdfVectorObject,
   Point,
+  Rect,
   ShapeObject,
   SignatureObject,
   TextObject,
@@ -335,7 +341,8 @@ const drawTextObject = async (
   page.pushOperators(popGraphicsState());
 };
 
-const reusedTextMode = (
+/** Clip modes (4–7) are written without the clip; 3 and 7 stay invisible. */
+const dirtyTextMode = (
   needsFill: boolean,
   needsStroke: boolean
 ): TextRenderingMode => {
@@ -345,30 +352,38 @@ const reusedTextMode = (
   if (needsStroke) {
     return TextRenderingMode.Outline;
   }
-  return TextRenderingMode.Fill;
+  if (needsFill) {
+    return TextRenderingMode.Fill;
+  }
+  return TextRenderingMode.Invisible;
 };
 
-interface ReusedPdfTextDraw {
+/** `Tz` takes a percentage. */
+const PERCENT = 100;
+
+/** `Tm` operands: [a, b, c, d, e, f] in PDF user space. */
+type TextMatrix = readonly [number, number, number, number, number, number];
+
+interface DirtyPdfTextDraw {
+  encoded: ReturnType<PDFFont["encodeText"]>;
   fillHex: string;
+  fontName: PDFName;
+  matrix: TextMatrix;
   object: PdfTextObject;
-  /** Text origin (baseline start) in PDF user space. */
-  origin: Point;
-  reused: ReusedPdfFontText;
   size: number;
 }
 
-const pushReusedPdfText = (
+/** One replacement run: its paint, font, turned matrix and `Tz` stretch. */
+const pushDirtyPdfText = (
   page: PDFPage,
-  { fillHex, object, origin, reused, size }: ReusedPdfTextDraw
+  { encoded, fillHex, fontName, matrix, object, size }: DirtyPdfTextDraw
 ): void => {
   const needsFill = pdfTextNeedsFill(object.textRenderingMode);
   const needsStroke = pdfTextNeedsStroke(object.textRenderingMode);
-  const mode = reusedTextMode(needsFill, needsStroke);
-  const zero = degrees(0);
   const ops: PDFOperator[] = [
     pushGraphicsState(),
     beginText(),
-    setTextRenderingMode(mode),
+    setTextRenderingMode(dirtyTextMode(needsFill, needsStroke)),
   ];
   if (needsFill) {
     ops.push(setFillingColor(color(fillHex)));
@@ -379,20 +394,85 @@ const pushReusedPdfText = (
       setLineWidth(object.strokeWidth)
     );
   }
+  ops.push(setFontAndSize(fontName, size));
+  const scale = object.horizontalScale ?? 1;
+  if (scale !== 1) {
+    ops.push(setCharacterSqueeze(scale * PERCENT));
+  }
   ops.push(
-    setFontAndSize(PDFName.of(reused.resourceName), size),
-    rotateAndSkewTextRadiansAndTranslate(
-      toRadians(zero),
-      toRadians(zero),
-      toRadians(zero),
-      origin.x,
-      origin.y
-    ),
-    showText(reusedFontHex(reused.encoded)),
+    setTextMatrix(...matrix),
+    showText(encoded),
     endText(),
     popGraphicsState()
   );
   page.pushOperators(...ops);
+};
+
+/**
+ * `Tm` for a replacement run. A turned run keeps its baseline direction from
+ * the source matrix; its origin moves back along it when right-to-left text
+ * grows. Unturned runs keep the axis-aligned matrix.
+ */
+const dirtyTextMatrix = (
+  object: PdfTextObject,
+  fitted: Rect,
+  user: Rect,
+  baseline: Point
+): TextMatrix => {
+  if (!isPdfTextTurned(object.transform)) {
+    return [1, 0, 0, 1, user.x, baseline.y];
+  }
+  const angle = (pdfTextUserAngle(object.transform) * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const shift = object.x - fitted.x;
+  return [
+    cos,
+    sin,
+    -sin,
+    cos,
+    baseline.x - cos * shift,
+    baseline.y - sin * shift,
+  ];
+};
+
+/**
+ * A bundled face that can encode `text`. The standard 14 fonts only encode
+ * WinAnsi; for other characters the run falls back to embedded Liberation
+ * Sans in the same weight and style, when its bytes were supplied.
+ */
+const encodableBundledFont = async (
+  text: string,
+  style: { family: FontFamily; italic: boolean; weight: FontWeight },
+  fonts: Map<string, PDFFont>,
+  doc: PDFDocument,
+  fontBytes: Record<string, Uint8Array>
+): Promise<PDFFont> => {
+  const { family, italic, weight } = style;
+  const font = await embedFontForStyle(
+    family,
+    weight,
+    italic,
+    fonts,
+    doc,
+    fontBytes
+  );
+  try {
+    font.encodeText(text);
+    return font;
+  } catch (error) {
+    if (!fontBytes[fontKey("sans", weight, italic)]) {
+      throw error;
+    }
+    return await embedFontForStyle(
+      "sans",
+      weight,
+      italic,
+      fonts,
+      doc,
+      fontBytes
+    );
+  }
 };
 
 /** The run's own font resource, or a bundled face when it cannot be reused. */
@@ -464,10 +544,9 @@ const drawDirtyPdfTextInk = async (
   const textFont: DirtyTextFont = reused
     ? { kind: "reused", reused }
     : {
-        font: await embedFontForStyle(
-          family,
-          weight,
-          italic,
+        font: await encodableBundledFont(
+          object.text,
+          { family, italic, weight },
           fonts,
           doc,
           fontBytes
@@ -475,11 +554,13 @@ const drawDirtyPdfTextInk = async (
         kind: "bundled",
       };
 
-  const fitted = fittedPdfTextBox(
-    object,
+  const advance =
     textFont.kind === "reused"
       ? textFont.reused.width
-      : textFont.font.widthOfTextAtSize(object.text, size)
+      : textFont.font.widthOfTextAtSize(object.text, size);
+  const fitted = fittedPdfTextBox(
+    object,
+    advance * (object.horizontalScale ?? 1)
   );
   const user = displayedToUserSpace(
     fitted,
@@ -494,90 +575,47 @@ const drawDirtyPdfTextInk = async (
     editorPage.cropBox,
     editorPage.sourceRotate
   );
-  const textX = user.x;
-  const textY = baseline.y;
-  const needsFill = pdfTextNeedsFill(object.textRenderingMode);
-  const needsStroke = pdfTextNeedsStroke(object.textRenderingMode);
 
-  const drawLinkCaptionUnderline = (): void => {
-    if (!linkAppearance) {
-      return;
-    }
-    const { underline } = linkAppearance;
-    const yDisplay = fitted.y + underline.offsetFromRunTop;
-    const start = displayedPointToUserSpace(
-      { x: fitted.x, y: yDisplay },
-      editorPage.cropBox,
-      editorPage.sourceRotate
-    );
-    const end = displayedPointToUserSpace(
-      { x: fitted.x + fitted.width, y: yDisplay },
-      editorPage.cropBox,
-      editorPage.sourceRotate
-    );
-    page.drawLine({
-      color: color(underline.color),
-      end,
-      start,
-      thickness: underline.thickness,
-    });
-  };
+  pushDirtyPdfText(page, {
+    ...(textFont.kind === "reused"
+      ? {
+          encoded: reusedFontHex(textFont.reused.encoded),
+          fontName: PDFName.of(textFont.reused.resourceName),
+        }
+      : {
+          encoded: textFont.font.encodeText(object.text),
+          fontName: page.node.newFontDictionary(
+            textFont.font.name,
+            textFont.font.ref
+          ),
+        }),
+    fillHex,
+    matrix: dirtyTextMatrix(object, fitted, user, baseline),
+    object,
+    size,
+  });
 
-  if (textFont.kind === "reused") {
-    pushReusedPdfText(page, {
-      fillHex,
-      object,
-      origin: { x: textX, y: textY },
-      reused: textFont.reused,
-      size,
-    });
-    drawLinkCaptionUnderline();
+  if (!linkAppearance) {
     return;
   }
-  const { font } = textFont;
-
-  if (!needsStroke) {
-    page.drawText(object.text, {
-      color: color(fillHex),
-      font,
-      size,
-      x: textX,
-      y: textY,
-    });
-    drawLinkCaptionUnderline();
-    return;
-  }
-
-  const embeddedFontKey = page.node.newFontDictionary(font.name, font.ref);
-  const mode = needsFill
-    ? TextRenderingMode.FillAndOutline
-    : TextRenderingMode.Outline;
-  const zero = degrees(0);
-  const ops: PDFOperator[] = [
-    pushGraphicsState(),
-    beginText(),
-    setTextRenderingMode(mode),
-  ];
-  if (needsFill) {
-    ops.push(setFillingColor(color(fillHex)));
-  }
-  ops.push(
-    setStrokingColor(color(object.strokeColor)),
-    setLineWidth(object.strokeWidth),
-    setFontAndSize(embeddedFontKey, size),
-    rotateAndSkewTextRadiansAndTranslate(
-      toRadians(zero),
-      toRadians(zero),
-      toRadians(zero),
-      textX,
-      textY
-    ),
-    showText(font.encodeText(object.text)),
-    endText(),
-    popGraphicsState()
+  const { underline } = linkAppearance;
+  const yDisplay = fitted.y + underline.offsetFromRunTop;
+  const start = displayedPointToUserSpace(
+    { x: fitted.x, y: yDisplay },
+    editorPage.cropBox,
+    editorPage.sourceRotate
   );
-  page.pushOperators(...ops);
-  drawLinkCaptionUnderline();
+  const end = displayedPointToUserSpace(
+    { x: fitted.x + fitted.width, y: yDisplay },
+    editorPage.cropBox,
+    editorPage.sourceRotate
+  );
+  page.drawLine({
+    color: color(underline.color),
+    end,
+    start,
+    thickness: underline.thickness,
+  });
 };
 
 const drawEmbeddedImage = async (
@@ -945,7 +983,31 @@ const drawDirtyPdfTextCovers = (
     return;
   }
   const coverColor = color(pdfTextCoverColor(object));
+  const turned = pdfTextFrameRotation(object) !== 0;
   for (const cover of pdfTextCoverRects(object, editorPage)) {
+    if (turned) {
+      // A turned run's cover is a rect in its own frame: paint it turned.
+      const [first, ...rest] = pdfTextFrameCorners(object, cover).map(
+        (corner) =>
+          displayedPointToUserSpace(
+            corner,
+            editorPage.cropBox,
+            editorPage.sourceRotate
+          )
+      );
+      if (first) {
+        page.pushOperators(
+          pushGraphicsState(),
+          setFillingColor(coverColor),
+          moveTo(first.x, first.y),
+          ...rest.map((corner) => lineTo(corner.x, corner.y)),
+          closePath(),
+          fillPath(),
+          popGraphicsState()
+        );
+      }
+      continue;
+    }
     const coverUser = displayedToUserSpace(
       cover,
       editorPage.cropBox,
