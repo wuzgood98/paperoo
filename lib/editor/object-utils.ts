@@ -1478,6 +1478,18 @@ export const pdfTextInkOutline = (
 /** Text rendering modes that paint no glyph ink (3 invisible, 7 clip only). */
 const INVISIBLE_TEXT_RENDER_MODES = new Set([3, 7]);
 
+/** Tr 4–7 add the glyphs to the clip path, which later paint relies on. */
+const CLIP_TEXT_RENDER_MODES = new Set([4, 5, 6, 7]);
+
+/**
+ * Whether the run's text can be edited. A clip-mode run's show op builds a
+ * clip that later operators (often an `sh`) paint through, so emptying or
+ * redrawing it would change other ink. It stays selectable and searchable.
+ */
+export const pdfTextEditable = (
+  object: Pick<PdfTextObject, "originalTextRenderingMode">
+): boolean => !CLIP_TEXT_RENDER_MODES.has(object.originalTextRenderingMode);
+
 /**
  * Whether export can take this run's original ink out of the page (Removal)
  * rather than only cover it. Export re-verifies against the raw content and
@@ -1494,7 +1506,9 @@ export const pdfTextRemovable = (
       pdfTextInkOutline(object, page)?.removalTarget !== undefined
     );
   }
-  if (!(object.removalTarget && page.contentOpCounts)) {
+  if (
+    !(object.removalTarget && page.contentOpCounts && pdfTextEditable(object))
+  ) {
     return false;
   }
   const paintsOwnInk =

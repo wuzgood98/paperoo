@@ -19,6 +19,7 @@ import { normalizeHex } from "@/lib/editor/color";
 import {
   isPdfTextDirty,
   pdfTextNeedsFill,
+  pdfTextEditable,
   pdfTextNeedsStroke,
   pdfTextRemovable,
 } from "@/lib/editor/object-utils";
@@ -78,6 +79,17 @@ export const PdfTextInspector = ({
       void ensurePdfTextMeasured(page, object, zoom);
     }
   };
+
+  if (!pdfTextEditable(object)) {
+    return (
+      <div className={inspectorStripClassName}>
+        <p className="text-muted-foreground text-xs">
+          This text cuts out other content on the page, so editing it would
+          change that content too.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={inspectorStripClassName}>

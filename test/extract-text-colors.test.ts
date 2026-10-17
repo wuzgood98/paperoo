@@ -20,7 +20,11 @@ import {
 import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
-import { DEFAULT_PDF_TEXT_COLOR } from "@/lib/editor/types";
+import {
+  DEFAULT_PDF_TEXT_COLOR,
+  DEFAULT_PDF_TEXT_STROKE_COLOR,
+} from "@/lib/editor/types";
+import type { OperatorArg } from "@/lib/pdf/extract-images";
 import {
   colorsToItemPaints,
   extractPdfTextObjects,
@@ -714,4 +718,218 @@ test("text inside a form XObject keeps the form fill", () => {
     FAKE_OPS
   );
   expect(paints[0]?.color).toBe("#1a1a1a");
+});
+
+/** A showText op's args as pdf.js passes them: one glyph object per char. */
+const shown = (text: string): OperatorArg => [
+  Array.from(text, (unicode) => ({ unicode })),
+];
+
+const item = (str: string, hasEOL = false) => ({
+  hasEOL,
+  str,
+  transform: [12, 0, 0, 12, 72, 700],
+});
+
+const fillPaint = (color: string) => ({
+  color,
+  strokeColor: DEFAULT_PDF_TEXT_STROKE_COLOR,
+  strokeWidth: 1,
+  textRenderingMode: 0,
+});
+
+test("one show op split into words by pdf.js paints every word", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [
+        ["#ff0000"],
+        shown("Courier: The quick brown fox jumps 0123456789"),
+        ["#0000ff"],
+        shown("Next line"),
+      ],
+      fnArray: [
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.nextLineShowText,
+      ],
+    },
+    FAKE_OPS
+  );
+  const items = [
+    item("Courier:"),
+    item(" "),
+    item("The"),
+    item(" "),
+    item("quick"),
+    item(" "),
+    item("brown"),
+    item(" "),
+    item("fox jumps 0123456789"),
+    item("", true),
+    item("Next line"),
+  ];
+
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(items, paints);
+
+  expect(aligned).toBe(true);
+  const colorOf = (text: string) =>
+    itemPaints[items.findIndex((entry) => entry.str === text)]?.color;
+  for (const word of ["Courier:", "The", "quick", "brown"]) {
+    expect(colorOf(word)).toBe("#ff0000");
+  }
+  expect(colorOf("fox jumps 0123456789")).toBe("#ff0000");
+  expect(colorOf("Next line")).toBe("#0000ff");
+});
+
+test("pdf.js collapsing a double space does not break alignment", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [["#00ff00"], shown("6pt  Sphinx"), ["#ff0000"], shown("of")],
+      fnArray: [
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+      ],
+    },
+    FAKE_OPS
+  );
+
+  const result = zipPdfTextItemPaints(
+    [item("6pt Sphinx"), item("", true), item("of")],
+    paints
+  );
+
+  expect(result.aligned).toBe(true);
+  expect(result.paints[0]).toEqual(fillPaint("#00ff00"));
+  expect(result.paints[2]).toEqual(fillPaint("#ff0000"));
+});
+
+test("clip, stroke and fill runs on one page each keep their own paint", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [
+        [7],
+        shown("Clip"),
+        [1],
+        ["#00ff00"],
+        [2],
+        shown("Outline"),
+        [0],
+        ["#ff0000"],
+        shown("Red"),
+        ["#4b0082"],
+        shown("Indigo"),
+      ],
+      fnArray: [
+        FAKE_OPS.setTextRenderingMode,
+        FAKE_OPS.showText,
+        FAKE_OPS.setTextRenderingMode,
+        FAKE_OPS.setStrokeRGBColor,
+        FAKE_OPS.setLineWidth,
+        FAKE_OPS.showText,
+        FAKE_OPS.setTextRenderingMode,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+      ],
+    },
+    FAKE_OPS
+  );
+  expect(paints[0]).toEqual({
+    color: null,
+    strokeColor: null,
+    strokeWidth: 1,
+    textRenderingMode: 7,
+  });
+
+  const { aligned, paints: itemPaints } = zipPdfTextItemPaints(
+    [item("Clip"), item("Outline"), item("Red"), item("Indigo")],
+    paints
+  );
+
+  expect(aligned).toBe(true);
+  expect(itemPaints).toEqual([
+    {
+      color: DEFAULT_PDF_TEXT_COLOR,
+      strokeColor: DEFAULT_PDF_TEXT_STROKE_COLOR,
+      strokeWidth: 1,
+      textRenderingMode: 7,
+    },
+    {
+      color: DEFAULT_PDF_TEXT_COLOR,
+      strokeColor: "#00ff00",
+      strokeWidth: 2,
+      textRenderingMode: 1,
+    },
+    { ...fillPaint("#ff0000"), strokeWidth: 2 },
+    { ...fillPaint("#4b0082"), strokeWidth: 2 },
+  ]);
+});
+
+test("an unsupported CMYK run falls back without taking the page with it", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [
+        ["#ff0000"],
+        shown("Before"),
+        [[0, 1, 1, 0]],
+        shown("Cyan ink"),
+        ["#0000ff"],
+        shown("After"),
+      ],
+      fnArray: [
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+        FAKE_OPS.setFillCMYKColor,
+        FAKE_OPS.showText,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+      ],
+    },
+    FAKE_OPS
+  );
+  expect(paints[1]).toBeNull();
+
+  const { paints: itemPaints } = zipPdfTextItemPaints(
+    [item("Before"), item("Cyan"), item(" "), item("ink"), item("After")],
+    paints
+  );
+
+  expect(itemPaints.map((paint) => paint.color)).toEqual([
+    "#ff0000",
+    DEFAULT_PDF_TEXT_COLOR,
+    DEFAULT_PDF_TEXT_COLOR,
+    DEFAULT_PDF_TEXT_COLOR,
+    "#0000ff",
+  ]);
+});
+
+test("an item with no show op falls back alone and the rest stay aligned", () => {
+  const paints = extractPdfTextPaints(
+    {
+      argsArray: [["#ff0000"], shown("First"), ["#0000ff"], shown("Last")],
+      fnArray: [
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+        FAKE_OPS.setFillRGBColor,
+        FAKE_OPS.showText,
+      ],
+    },
+    FAKE_OPS
+  );
+
+  const result = zipPdfTextItemPaints(
+    [item("First"), item("Ghost"), item("Last")],
+    paints
+  );
+
+  expect(result.aligned).toBe(false);
+  expect(result.paints.map((paint) => paint.color)).toEqual([
+    "#ff0000",
+    DEFAULT_PDF_TEXT_COLOR,
+    "#0000ff",
+  ]);
 });

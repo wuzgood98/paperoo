@@ -2,7 +2,7 @@ import { PDFDocument, PDFName, StandardFonts } from "pdf-lib";
 import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
-import { pdfTextRemovable } from "@/lib/editor/object-utils";
+import { pdfTextEditable, pdfTextRemovable } from "@/lib/editor/object-utils";
 import type {
   EditorPage,
   PdfTextObject,
@@ -214,4 +214,43 @@ test("Figma runs and ordinary runs are removable at load", async () => {
       page.pdfTextObjects.every((run) => pdfTextRemovable(run, page))
     ).toBe(true);
   }
+});
+
+test("a clip-mode run is neither editable nor emptied on export", async () => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([612, 792]);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  page.node.setFontDictionary(PDFName.of("F1"), font.ref);
+  // The 7 Tr run is a clip mask the red fill paints through.
+  page.node.set(
+    PDFName.of("Contents"),
+    doc.context.register(
+      doc.context.flateStream(
+        "q BT /F1 48 Tf 7 Tr 72 700 Td (Mask) Tj ET 1 0 0 rg 0 0 612 792 re f Q " +
+          "BT /F1 12 Tf 3 Tr 72 600 Td (Hidden) Tj ET " +
+          "BT /F1 12 Tf 0 Tr 72 500 Td (Plain) Tj ET"
+      )
+    )
+  );
+  const bytes = await doc.save();
+  const { page: extracted } = await extractFigmaPage(bytes, { paints: true });
+  const run = (text: string) =>
+    extracted.pdfTextObjects.find((item) => item.originalText === text);
+
+  expect(run("Mask")?.originalTextRenderingMode).toBe(7);
+  expect(run("Hidden")?.originalTextRenderingMode).toBe(3);
+  expect(run("Plain")?.originalTextRenderingMode).toBe(0);
+  const mask = run("Mask");
+  expect(mask && pdfTextEditable(mask)).toBe(false);
+  expect(mask && pdfTextRemovable(mask, extracted)).toBe(false);
+  const plain = run("Plain");
+  expect(plain && pdfTextEditable(plain)).toBe(true);
+
+  const { text, vectors } = await exportAndRead(
+    bytes,
+    editRun(extracted, "Mask", "Edit")
+  );
+
+  expect(text).toContain("Mask");
+  expect(vectors.some((vector) => vector.fill?.color === "#ff0000")).toBe(true);
 });

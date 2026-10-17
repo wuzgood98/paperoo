@@ -5,6 +5,7 @@ import {
   hitTestPdfImage,
   hitTestPdfText,
   hitTestPdfVector,
+  pdfTextEditable,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type {
@@ -109,6 +110,9 @@ export const beginPdfTextEditAtPoint = (
     return false;
   }
   editorStore.selectPdfText(textHit.id);
+  if (!pdfTextEditable(textHit)) {
+    return true;
+  }
   setEditingPdfTextId(textHit.id);
   void ensureEditorFonts();
   return true;

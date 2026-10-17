@@ -24,6 +24,11 @@ export interface PdfImageOps {
   transform: number;
 }
 
+/** A glyph in a show op's args, as pdf.js builds it (only what we read). */
+export interface PdfGlyphArg {
+  readonly unicode?: string;
+}
+
 export type OperatorArg =
   | string
   | number
@@ -31,6 +36,7 @@ export type OperatorArg =
   | null
   | undefined
   | ArrayLike<number>
+  | PdfGlyphArg
   | readonly OperatorArg[];
 
 export interface ExtractableOperatorList {
