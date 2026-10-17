@@ -4,13 +4,16 @@ import { useEffect } from "react";
 
 import { requestDeleteSelection } from "@/components/editor/large-delete";
 import { toastManager } from "@/components/ui/toast-manager";
+import { pendingSignature } from "@/lib/editor/pending";
 import { editorStore } from "@/lib/editor/store";
+import { TOOL_KEYS } from "@/lib/editor/tool-keys";
 import {
   NUDGE_DISTANCE,
   NUDGE_DISTANCE_SHIFT,
   ZOOM_STEP,
 } from "@/lib/editor/types";
 import { bindHotkeys } from "@/lib/hotkeys";
+import type { HotkeyDefinition } from "@/lib/hotkeys";
 import { runPrint } from "@/lib/pdf/run-print";
 
 const printEditedPdf = async (): Promise<void> => {
@@ -45,6 +48,26 @@ const nudgeSelected = (deltaX: number, deltaY: number): void => {
     y: object.y + deltaY,
   }));
 };
+
+/** Escape leaves a creation tool (dropping a signature being placed) first, then clears the selection. */
+const escapeEditor = (): void => {
+  if (editorStore.getState().tool !== "select") {
+    pendingSignature.set(null);
+    editorStore.setTool("select");
+    return;
+  }
+  editorStore.clearSelection();
+};
+
+const TOOL_HOTKEYS: HotkeyDefinition[] = TOOL_KEYS.map(({ key, tool }) => ({
+  handler: () => {
+    if (editorStore.getState().status !== "ready") {
+      return;
+    }
+    editorStore.setTool(tool);
+  },
+  key,
+}));
 
 // Hidden by CSS, or cut off behind an open modal (Base UI hides the rest of
 // the page from assistive tech while one is open).
@@ -100,9 +123,10 @@ export const EditorHotkeys = () => {
           key: "Backspace",
         },
         {
-          handler: () => editorStore.clearSelection(),
+          handler: escapeEditor,
           key: "Escape",
         },
+        ...TOOL_HOTKEYS,
         {
           handler: (event) => {
             const distance = event.shiftKey

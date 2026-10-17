@@ -9,6 +9,8 @@ import { PdfFormInspector } from "@/components/editor/pdf-form-inspector";
 import { PdfImageInspector } from "@/components/editor/pdf-image-inspector";
 import { PdfTextInspector } from "@/components/editor/pdf-text-inspector";
 import { PdfVectorInspector } from "@/components/editor/pdf-vector-inspector";
+import { FillField, StrokeWidthField } from "@/components/editor/style-fields";
+import { ToolStyleInspector } from "@/components/editor/tool-style-inspector";
 import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { FONT_FAMILIES, fontFamilyFromSelect } from "@/components/editor/utils";
 import { Button } from "@/components/ui/button";
@@ -30,9 +32,52 @@ import {
   findPdfVector,
 } from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
-import type { TextAlign } from "@/lib/editor/types";
+import type { EditorObject, TextAlign } from "@/lib/editor/types";
 
 const TEXT_ALIGNS: TextAlign[] = ["left", "center", "right"];
+
+/** Restyle the selection and make that style the default for the next one. */
+const patchStyle = (updater: (object: EditorObject) => EditorObject): void => {
+  editorStore.patchSelected(updater);
+  editorStore.rememberSelectedStyle();
+};
+
+/** Width for stroked objects, plus fill for boxes and circles. */
+const StrokeStyleFields = ({ selected }: { selected: EditorObject }) => {
+  if (
+    selected.type !== "drawing" &&
+    selected.type !== "signature" &&
+    selected.type !== "shape"
+  ) {
+    return null;
+  }
+  return (
+    <>
+      <StrokeWidthField
+        onChange={(strokeWidth) =>
+          patchStyle((object) =>
+            object.type === "drawing" ||
+            object.type === "signature" ||
+            object.type === "shape"
+              ? { ...object, strokeWidth }
+              : object
+          )
+        }
+        value={selected.strokeWidth}
+      />
+      {selected.type === "shape" && selected.shape !== "line" ? (
+        <FillField
+          onChange={(fill) =>
+            patchStyle((object) =>
+              object.type === "shape" ? { ...object, fill } : object
+            )
+          }
+          value={selected.fill}
+        />
+      ) : null}
+    </>
+  );
+};
 
 export const InspectorBar = () => {
   const selected = useEditorStore((state) => {
@@ -94,7 +139,7 @@ export const InspectorBar = () => {
   }
 
   if (!selected) {
-    return null;
+    return <ToolStyleInspector />;
   }
 
   return (
@@ -104,7 +149,7 @@ export const InspectorBar = () => {
           <div className="flex items-center gap-2">
             <Select
               onValueChange={(value) =>
-                editorStore.patchSelected((object) =>
+                patchStyle((object) =>
                   object.type === "text"
                     ? {
                         ...object,
@@ -134,7 +179,7 @@ export const InspectorBar = () => {
               aria-label="Font size"
               min={8}
               onValueChange={(value) =>
-                editorStore.patchSelected((object) =>
+                patchStyle((object) =>
                   object.type === "text"
                     ? { ...object, fontSize: Number(value) }
                     : object
@@ -148,7 +193,7 @@ export const InspectorBar = () => {
           <ToolbarTip label="Bold">
             <Button
               onClick={() =>
-                editorStore.patchSelected((object) =>
+                patchStyle((object) =>
                   object.type === "text"
                     ? {
                         ...object,
@@ -167,7 +212,7 @@ export const InspectorBar = () => {
           <ToolbarTip label="Italic">
             <Button
               onClick={() =>
-                editorStore.patchSelected((object) =>
+                patchStyle((object) =>
                   object.type === "text"
                     ? { ...object, italic: !object.italic }
                     : object
@@ -185,7 +230,7 @@ export const InspectorBar = () => {
             <Button
               key={align}
               onClick={() =>
-                editorStore.patchSelected((object) =>
+                patchStyle((object) =>
                   object.type === "text" ? { ...object, align } : object
                 )
               }
@@ -198,7 +243,7 @@ export const InspectorBar = () => {
           <ColorField
             label="Color"
             onChange={(color) =>
-              editorStore.patchSelected((object) =>
+              patchStyle((object) =>
                 object.type === "text" ? { ...object, color } : object
               )
             }
@@ -210,7 +255,7 @@ export const InspectorBar = () => {
         <ColorField
           label="Fill"
           onChange={(color) =>
-            editorStore.patchSelected((object) =>
+            patchStyle((object) =>
               object.type === "highlight" ? { ...object, color } : object
             )
           }
@@ -223,7 +268,7 @@ export const InspectorBar = () => {
         <ColorField
           label="Stroke"
           onChange={(stroke) =>
-            editorStore.patchSelected((object) =>
+            patchStyle((object) =>
               object.type === "drawing" ||
               object.type === "signature" ||
               object.type === "shape"
@@ -240,6 +285,7 @@ export const InspectorBar = () => {
           }
         />
       ) : null}
+      <StrokeStyleFields selected={selected} />
       <div className="text-muted-foreground flex items-center gap-2 text-xs">
         Opacity
         <Slider

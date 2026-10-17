@@ -86,6 +86,8 @@ export type HighlightObject = BaseObject & {
 export type ShapeObject = BaseObject & {
   type: "shape";
   shape: ShapeKind;
+  /** Line only: runs bottom-left to top-right instead of top-left to bottom-right. */
+  flip?: boolean;
   fill: string | null;
   stroke: string;
   strokeWidth: number;
@@ -708,6 +710,9 @@ export const HIGHLIGHT_OPACITY = 0.4;
 export const NUDGE_DISTANCE = 1;
 export const NUDGE_DISTANCE_SHIFT = 10;
 export const MIN_OBJECT_SIZE = 8;
+
+/** A drag shorter than this (page pt) on both axes is a click, not a new object. */
+export const MIN_CREATE_DRAG = 2;
 export const MAX_PDF_BYTES = 80 * 1024 * 1024;
 export const MAX_PDF_PAGES = 200;
 export const ZOOM_SETTLE_MS = 140;

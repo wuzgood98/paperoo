@@ -38,16 +38,18 @@ pnpm dev
 
 ## Shortcuts
 
-| Action               | Keys                                      |
-| -------------------- | ----------------------------------------- |
-| Open                 | `⌘O` / `Ctrl+O`                           |
-| Undo                 | `⌘Z` / `Ctrl+Z`                           |
-| Redo                 | `⇧⌘Z` / `Ctrl+Shift+Z` or `⌘Y` / `Ctrl+Y` |
-| Print                | `⌘P` / `Ctrl+P`                           |
-| Zoom in / out        | `⌘=` / `⌘-` (`Ctrl` on Windows/Linux)     |
-| Delete selection     | `Delete` or `Backspace`                   |
-| Nudge selection      | Arrow keys (`Shift` for 10px)             |
-| Previous / next page | `Page Up` / `Page Down`                   |
+| Action | Keys |
+| --- | --- |
+| Open | `⌘O` / `Ctrl+O` |
+| Undo | `⌘Z` / `Ctrl+Z` |
+| Redo | `⇧⌘Z` / `Ctrl+Shift+Z` or `⌘Y` / `Ctrl+Y` |
+| Print | `⌘P` / `Ctrl+P` |
+| Zoom in / out | `⌘=` / `⌘-` (`Ctrl` on Windows/Linux) |
+| Delete selection | `Delete` or `Backspace` |
+| Nudge selection | Arrow keys (`Shift` for 10px) |
+| Previous / next page | `Page Up` / `Page Down` |
+| Leave tool / deselect | `Esc` |
+| Tools | `V` select, `T` text, `I` image, `D` draw, `S` signature, `H` highlight, `R` shapes |
 
 ## Limits
 
