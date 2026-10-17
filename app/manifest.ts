@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 
+import { appIcons, appIconSrc } from "@/lib/app-icons";
 import { siteConfig } from "@/lib/site";
 
 const manifest = (): MetadataRoute.Manifest => ({
@@ -8,20 +9,24 @@ const manifest = (): MetadataRoute.Manifest => ({
   display: "standalone",
   icons: [
     {
+      purpose: "any",
       sizes: "any",
       src: "/icon.svg",
       type: "image/svg+xml",
     },
-    {
-      sizes: "180x180",
-      src: "/apple-icon",
+    ...appIcons.map((icon) => ({
+      purpose: icon.purpose,
+      sizes: `${icon.size}x${icon.size}`,
+      src: appIconSrc(icon),
       type: "image/png",
-    },
+    })),
   ],
+  id: "/",
   name: siteConfig.name,
+  scope: "/",
   short_name: siteConfig.name,
   start_url: "/",
-  theme_color: "#141414",
+  theme_color: "#ffffff",
 });
 
 export default manifest;
