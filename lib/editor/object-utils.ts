@@ -2085,7 +2085,8 @@ export const createDrawingObject = (
   stroke = DEFAULT_DRAW_STYLE.stroke,
   strokeWidth = DEFAULT_DRAW_STYLE.strokeWidth
 ): DrawingObject => {
-  const box = boundsFromPoints(points);
+  // Pad by half the stroke so the box covers the ink, not just the path.
+  const box = expandRect(boundsFromPoints(points), strokeWidth / 2);
   return {
     id: createId(),
     opacity: DEFAULT_OBJECT_OPACITY,
@@ -2176,6 +2177,25 @@ export const createShapeObject = (
   return shape;
 };
 
+// Kept above zero: SVG skips a rect or ellipse with a zero size, stroke and all.
+const MIN_SHAPE_PATH_SIZE = 0.01;
+
+/**
+ * Path box for a rect or circle whose stroke sits inside its box. Strokes are
+ * centred on the path, so the path is inset by half the stroke width. Screen,
+ * preview and export all draw from this box so they agree.
+ */
+export const insetShapePathBox = (size: Size, strokeWidth: number): Rect => {
+  const width = Math.max(MIN_SHAPE_PATH_SIZE, size.width - strokeWidth);
+  const height = Math.max(MIN_SHAPE_PATH_SIZE, size.height - strokeWidth);
+  return {
+    height,
+    width,
+    x: (size.width - width) / 2,
+    y: (size.height - height) / 2,
+  };
+};
+
 /** True when a drag from start to end runs bottom-left to top-right (or reverse). */
 export const isRisingDrag = (start: Point, end: Point): boolean =>
   (end.x - start.x) * (end.y - start.y) < 0;
@@ -2206,6 +2226,17 @@ export const normalizedRect = (start: Point, end: Point): Rect => {
     y,
   };
 };
+
+/**
+ * A line's box keeps its true extent. A flat axis stays 0 (resize keeps it
+ * flat), where `normalizedRect`'s 1pt floor would tilt a straight line.
+ */
+export const lineRect = (start: Point, end: Point): Rect => ({
+  height: Math.abs(end.y - start.y),
+  width: Math.abs(end.x - start.x),
+  x: Math.min(start.x, end.x),
+  y: Math.min(start.y, end.y),
+});
 
 export const scaleObjectToBox = (
   object: EditorObject,

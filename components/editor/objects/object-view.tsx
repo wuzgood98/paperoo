@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef } from "react";
 
+import { ShapeSvg } from "@/components/editor/objects/shape-svg";
 import { editorStore } from "@/lib/editor/store";
 import type { EditorObject, TextObject } from "@/lib/editor/types";
 import { fontFamilyCss } from "@/lib/fonts/measure-text";
@@ -123,9 +124,11 @@ export const ObjectView = ({
     }
     case "drawing":
     case "signature": {
+      // Visible: the stroke is centred on the path, so its outer half can
+      // pass the box edge (resize, stroke-width change). Export does not clip.
       return (
         <svg
-          className="h-full w-full overflow-hidden"
+          className="h-full w-full overflow-visible"
           preserveAspectRatio="none"
           viewBox={`0 0 ${object.width} ${object.height}`}
         >
@@ -154,50 +157,17 @@ export const ObjectView = ({
       );
     }
     case "shape": {
-      if (object.shape === "circle") {
-        return (
-          <svg
-            className="h-full w-full overflow-hidden"
-            preserveAspectRatio="none"
-            viewBox={`0 0 ${object.width} ${object.height}`}
-          >
-            <ellipse
-              cx={object.width / 2}
-              cy={object.height / 2}
-              fill={object.fill ?? "none"}
-              rx={object.width / 2}
-              ry={object.height / 2}
-              stroke={object.stroke}
-              strokeWidth={object.strokeWidth}
-            />
-          </svg>
-        );
-      }
-      if (object.shape === "line") {
-        return (
-          <svg
-            className="h-full w-full overflow-hidden"
-            preserveAspectRatio="none"
-            viewBox={`0 0 ${object.width} ${object.height}`}
-          >
-            <line
-              stroke={object.stroke}
-              strokeWidth={object.strokeWidth}
-              x1={0}
-              x2={object.width}
-              y1={object.flip ? object.height : 0}
-              y2={object.flip ? 0 : object.height}
-            />
-          </svg>
-        );
-      }
       return (
-        <div
+        <ShapeSvg
           className="h-full w-full"
-          style={{
-            backgroundColor: object.fill ?? "transparent",
-            border: `${object.strokeWidth * zoom}px solid ${object.stroke}`,
-          }}
+          fill={object.fill}
+          flip={object.flip}
+          height={object.height}
+          shape={object.shape}
+          stroke={object.stroke}
+          strokeWidth={object.strokeWidth}
+          width={object.width}
+          zoom={zoom}
         />
       );
     }
