@@ -21,6 +21,8 @@ import {
   pdfTextCssInkOffsetFromRunTop,
   pdfTextCoverColor,
   pdfTextCoverRects,
+  pdfTextFramePivot,
+  pdfTextFrameRotation,
   pdfTextInkCoverStyle,
   pdfTextInkOutline,
   pdfTextNeedsFill,
@@ -61,6 +63,42 @@ const pdfTextInkStyle = (
     lineHeight: 1,
     paintOrder: stroke ? "stroke fill" : undefined,
   };
+};
+
+/**
+ * Wrapper for a run's frame. A turned run turns about its baseline origin, so
+ * its outline, covers, preview and editor all land on its original glyphs.
+ * `unturnedRotation` turns an unturned frame about its center instead.
+ */
+const pdfTextFrameStyle = (
+  object: PdfTextObject,
+  frame: Rect,
+  zoom: number,
+  unturnedRotation = 0
+): CSSProperties => {
+  const rotation = pdfTextFrameRotation(object);
+  if (rotation === 0) {
+    return objectWrapperStyle({ ...frame, rotation: unturnedRotation }, zoom);
+  }
+  const pivot = pdfTextFramePivot(object);
+  return {
+    ...objectWrapperStyle({ ...frame, rotation }, zoom),
+    transformOrigin: `${pageToCss(pivot.x - frame.x, zoom)}px ${pageToCss(pivot.y - frame.y, zoom)}px`,
+  };
+};
+
+/** Glyph transform inside the frame: page-`/Rotate` turn and `Tz` stretch. */
+const pdfTextGlyphTransform = (object: PdfTextObject): string | undefined => {
+  const parts: string[] = [];
+  const glyphRotation = object.rotation - pdfTextFrameRotation(object);
+  if (glyphRotation !== 0) {
+    parts.push(`rotate(${glyphRotation}deg)`);
+  }
+  const scale = object.horizontalScale ?? 1;
+  if (scale !== 1) {
+    parts.push(`scaleX(${scale})`);
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
 };
 
 const overlayFrame = (
@@ -235,7 +273,7 @@ const PdfTextEditor = ({
     <div
       className="absolute origin-center"
       style={{
-        ...objectWrapperStyle({ ...frame, rotation: object.rotation }, zoom),
+        ...pdfTextFrameStyle(object, frame, zoom, object.rotation),
         opacity: object.fillOpacity,
       }}
     >
@@ -299,7 +337,13 @@ const PdfTextEditor = ({
             : undefined),
           height: fontSizeCss,
           top: pageToCss(inkTop, zoom),
-          width: "100%",
+          // Stretched like the run's glyphs; the frame already fits that width.
+          transform:
+            (object.horizontalScale ?? 1) === 1
+              ? undefined
+              : `scaleX(${object.horizontalScale})`,
+          transformOrigin: "left top",
+          width: `${100 / (object.horizontalScale ?? 1)}%`,
         }}
         type="text"
         value={value}
@@ -382,7 +426,7 @@ const PdfTextLayerView = ({
           <div
             className="pointer-events-none absolute origin-center"
             key={`cover-${object.id}`}
-            style={objectWrapperStyle({ ...frame, rotation: 0 }, zoom)}
+            style={pdfTextFrameStyle(object, frame, zoom)}
           >
             {pdfTextCoverRects(object, page).map((cover) => (
               <PdfTextCoverPlate
@@ -429,7 +473,7 @@ const PdfTextLayerView = ({
             className="pointer-events-none absolute origin-center"
             key={`dirty-${object.id}`}
             style={{
-              ...objectWrapperStyle({ ...frame, rotation: 0 }, zoom),
+              ...pdfTextFrameStyle(object, frame, zoom),
               opacity: object.fillOpacity,
             }}
           >
@@ -453,10 +497,7 @@ const PdfTextLayerView = ({
                     ),
                     ...fallbackCss,
                     top: pageToCss(inkTop, zoom),
-                    transform:
-                      object.rotation === 0
-                        ? undefined
-                        : `rotate(${object.rotation}deg)`,
+                    transform: pdfTextGlyphTransform(object),
                     transformOrigin: "left top",
                   }}
                 >
@@ -499,10 +540,7 @@ const PdfTextLayerView = ({
                 : "outline-primary/40 outline"
             )}
             key={`chrome-${object.id}`}
-            style={objectWrapperStyle(
-              { ...overlayFrame(object), rotation: 0 },
-              zoom
-            )}
+            style={pdfTextFrameStyle(object, overlayFrame(object), zoom)}
           />
         );
       })}

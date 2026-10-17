@@ -283,8 +283,45 @@ export const pdfTextBaselineUserSpace = (
     sourceRotate
   );
 
+/** Runs within this many degrees of a page axis are treated as unturned. */
+const TEXT_UPRIGHT_TOLERANCE_DEG = 1;
+
+/** Baseline direction of a text matrix in user space, in degrees. */
+export const pdfTextUserAngle = (transform: TextItemTransform): number =>
+  (Math.atan2(transform[1], transform[0]) * 180) / Math.PI;
+
+/**
+ * True when the run's baseline is turned against the page's own axes (a `cm`
+ * or `Tm` rotation), as opposed to only following a page `/Rotate`.
+ */
+export const isPdfTextTurned = (transform: TextItemTransform): boolean => {
+  const turns = ((pdfTextUserAngle(transform) % 360) + 360) % 360;
+  return (
+    turns >= TEXT_UPRIGHT_TOLERANCE_DEG &&
+    turns <= 360 - TEXT_UPRIGHT_TOLERANCE_DEG
+  );
+};
+
+/**
+ * Horizontal scale of a text matrix: advance-axis length over the em size.
+ * 1 for ordinary text; 2.5 for `2.5 0 0 1 cm` or `Tz 250`. The em size is
+ * the matrix's em-axis length |(c, d)|, except for Type3 faces where pdf.js
+ * inflates that axis (see `textItemEmSize`).
+ */
+export const pdfTextHorizontalScale = (
+  transform: TextItemTransform,
+  em: number = Math.hypot(transform[2], transform[3])
+): number => {
+  const advance = Math.hypot(transform[0], transform[1]);
+  if (!(advance > 0 && em > 0)) {
+    return 1;
+  }
+  return advance / em;
+};
+
 export interface DisplayedTextBox extends Rect {
   fontSize: number;
+  horizontalScale: number;
   rotation: number;
 }
 
@@ -312,7 +349,6 @@ export const textItemToDisplayedBox = (
     x: baseline.x,
     y: baseline.y - belowBaseline,
   };
-  const displayed = userBoxToDisplayed(userBox, crop, sourceRotate);
   const advance = userPointToDisplayed(
     { x: baseline.x + transform[0], y: baseline.y + transform[1] },
     crop,
@@ -321,10 +357,21 @@ export const textItemToDisplayedBox = (
   const origin = userPointToDisplayed(baseline, crop, sourceRotate);
   const rotation =
     (Math.atan2(advance.y - origin.y, advance.x - origin.x) * 180) / Math.PI;
+  // A turned run's box is its unturned strip with the baseline origin at
+  // (x, y + ascent); turning it by `rotation` about that point gives its ink.
+  const displayed = isPdfTextTurned(transform)
+    ? {
+        height: userBox.height,
+        width: userBox.width,
+        x: origin.x,
+        y: origin.y - ascent,
+      }
+    : userBoxToDisplayed(userBox, crop, sourceRotate);
 
   return {
     ...displayed,
     fontSize: em,
+    horizontalScale: pdfTextHorizontalScale(transform, em),
     rotation,
   };
 };

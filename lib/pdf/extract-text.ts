@@ -428,6 +428,7 @@ export const extractPdfTextObjects = (
       fontWeight,
       hasEOL: item.hasEOL === true,
       height: box.height,
+      horizontalScale: box.horizontalScale,
       id: createId(),
       italic,
       originalColor: paint.color,
