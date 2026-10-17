@@ -312,6 +312,9 @@ class PdfSession {
       data: bytes,
       iccUrl: PDFJS_ICC_URL,
       standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
+      // System fonts leave standard-14 faces `missingFile`, and pdf.js only
+      // builds glyph paths for clip render modes (4–7) from real font data.
+      useSystemFonts: false,
       wasmUrl: PDFJS_WASM_URL,
     });
     this.#loadingTask = loadingTask;
