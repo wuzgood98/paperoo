@@ -237,7 +237,7 @@ export const EditorOverlay = ({
       className={cn(
         "absolute inset-0 select-none",
         captureTouch && "touch-none",
-        placingSignature && "editor-signature-cursor",
+        placingSignature && "cursor-crosshair",
         tool === "draw" && "editor-draw-cursor"
       )}
       onContextMenu={(event) => {
