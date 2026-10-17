@@ -289,8 +289,9 @@
 }
 
 /*
- * Pencil cursor for the draw tool, tip at the hotspot. Unlayered so it beats
- * the move/pointer cursors objects on the page set for themselves.
+ * Pencil cursor for the draw tool and signature pad, tip at the hotspot.
+ * Unlayered so it beats the move/pointer cursors objects on the page set for
+ * themselves.
  */
 .editor-draw-cursor,
 .editor-draw-cursor * {
