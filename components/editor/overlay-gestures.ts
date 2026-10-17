@@ -56,7 +56,8 @@ export type Gesture =
       handle: ResizeHandle;
       kind: "resize";
       object: GestureTarget;
-      start: Point;
+      /** The object as it was at pointerdown; every resize step measures from it. */
+      origin: GestureTarget;
     }
   | { kind: "draw"; points: Point[] }
   | { kind: "drag"; object: GestureTarget; start: Point; origin: Point }
@@ -71,6 +72,19 @@ export type Gesture =
 interface RefBox<T> {
   current: T;
 }
+
+/** Resize from the pre-gesture box so the anchor edge and point scale stay fixed. */
+export const resizeGestureBox = (
+  origin: GestureTarget,
+  handle: ResizeHandle,
+  point: Point,
+  shiftKey: boolean
+) =>
+  resizeRotatedBox(origin, origin.rotation, handle, point, {
+    lockAspect:
+      shiftKey || origin.type === "image" || origin.type === "pdf-image",
+    minSize: MIN_OBJECT_SIZE,
+  });
 
 export const requireOverlayRoot = (
   element: HTMLDivElement | null
@@ -251,20 +265,13 @@ export const useOverlayGestures = ({
     }
 
     if (gesture.kind === "resize") {
-      const nextBox = resizeRotatedBox(
-        gesture.object,
-        gesture.object.rotation,
+      const nextBox = resizeGestureBox(
+        gesture.origin,
         gesture.handle,
         point,
-        {
-          lockAspect:
-            event.shiftKey ||
-            gesture.object.type === "image" ||
-            gesture.object.type === "pdf-image",
-          minSize: MIN_OBJECT_SIZE,
-        }
+        event.shiftKey
       );
-      const next = { ...gesture.object, ...nextBox };
+      const next = { ...gesture.origin, ...nextBox };
       gesture.object = next;
       writeNodeBox(next);
       return;
@@ -318,29 +325,23 @@ export const useOverlayGestures = ({
       return;
     }
     if (gesture.kind === "resize") {
-      const nextBox = resizeRotatedBox(
-        gesture.object,
-        gesture.object.rotation,
+      const { origin } = gesture;
+      const nextBox = resizeGestureBox(
+        origin,
         gesture.handle,
         point,
-        {
-          lockAspect:
-            event.shiftKey ||
-            gesture.object.type === "image" ||
-            gesture.object.type === "pdf-image",
-          minSize: MIN_OBJECT_SIZE,
-        }
+        event.shiftKey
       );
       if (
-        gesture.object.type === "pdf-image" ||
-        gesture.object.type === "pdf-vector" ||
-        gesture.object.type === "pdf-free-text"
+        origin.type === "pdf-image" ||
+        origin.type === "pdf-vector" ||
+        origin.type === "pdf-free-text"
       ) {
-        finishGesture({ ...gesture.object, ...nextBox });
+        finishGesture({ ...origin, ...nextBox });
         return;
       }
-      if (!isPdfAnnotationGestureTarget(gesture.object)) {
-        finishGesture(scaleObjectToBox(gesture.object, nextBox));
+      if (!isPdfAnnotationGestureTarget(origin)) {
+        finishGesture(scaleObjectToBox(origin, nextBox));
       }
       return;
     }
