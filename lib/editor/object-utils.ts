@@ -4,6 +4,7 @@ import {
   pdfTextBaselineDisplayed,
   rotatePoint,
   userPointToDisplayed,
+  vectorAxisScale,
 } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
 import {
@@ -1611,10 +1612,8 @@ const mapUserPointToObjectDisplayed = (
   sourceRotate: EditorPage["sourceRotate"]
 ): Point => {
   const displayed = userPointToDisplayed(point, crop, sourceRotate);
-  const sx =
-    object.originalWidth > 1e-6 ? object.width / object.originalWidth : 1;
-  const sy =
-    object.originalHeight > 1e-6 ? object.height / object.originalHeight : 1;
+  const sx = vectorAxisScale(object.originalWidth, object.width);
+  const sy = vectorAxisScale(object.originalHeight, object.height);
   const local = {
     x: object.x + (displayed.x - object.originalX) * sx,
     y: object.y + (displayed.y - object.originalY) * sy,
