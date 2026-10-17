@@ -29,7 +29,8 @@ const ThemeHotkey = () => {
         return;
       }
 
-      if (event.key.toLowerCase() !== "d") {
+      // Not "d": that key belongs to the draw tool (lib/editor/tool-keys.ts).
+      if (event.key.toLowerCase() !== "m") {
         return;
       }
 

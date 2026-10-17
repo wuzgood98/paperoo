@@ -50,6 +50,7 @@ pnpm dev
 | Previous / next page | `Page Up` / `Page Down` |
 | Leave tool / deselect | `Esc` |
 | Tools | `V` select, `T` text, `I` image, `D` draw, `S` signature, `H` highlight, `R` shapes |
+| Toggle light / dark theme | `M` |
 
 ## Limits
 
