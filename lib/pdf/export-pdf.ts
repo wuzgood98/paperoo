@@ -54,6 +54,7 @@ import {
 } from "@/lib/editor/coordinates";
 import {
   fittedPdfTextBox,
+  insetShapePathBox,
   isPdfImageDirty,
   isPdfTextDirty,
   isPdfVectorDirty,
@@ -1126,6 +1127,46 @@ const drawHighlight = (
   page.pushOperators(popGraphicsState());
 };
 
+const drawShapeArea = (
+  page: PDFPage,
+  shape: "circle" | "rect",
+  path: Rect,
+  paint: {
+    border?: ReturnType<typeof color>;
+    fill?: ReturnType<typeof color>;
+    opacity: number | undefined;
+    strokeWidth: number;
+  }
+): void => {
+  const options = {
+    borderColor: paint.border,
+    borderOpacity: paint.opacity,
+    borderWidth: paint.border ? paint.strokeWidth : 0,
+    color: paint.fill,
+    opacity: paint.opacity,
+  };
+  if (shape === "circle") {
+    page.drawEllipse({
+      ...options,
+      // Keeps pdf-lib off its deprecated path, which wraps the ellipse in q/Q.
+      rotate: degrees(0),
+      x: path.x + path.width / 2,
+      xScale: path.width / 2,
+      y: path.y + path.height / 2,
+      yScale: path.height / 2,
+    });
+    return;
+  }
+  page.drawRectangle({
+    ...options,
+    height: path.height,
+    width: path.width,
+    // Inset boxes are centred, so the y-down offset is also the y-up one.
+    x: path.x,
+    y: path.y,
+  });
+};
+
 const drawShape = (
   page: PDFPage,
   object: ShapeObject,
@@ -1134,20 +1175,7 @@ const drawShape = (
   applyCtm(page, object, user);
   const fill = object.fill ? color(object.fill) : undefined;
   const border = color(object.stroke);
-  if (object.shape === "circle") {
-    page.drawEllipse({
-      borderColor: border,
-      borderOpacity: object.opacity,
-      borderWidth: object.strokeWidth,
-      color: fill,
-      opacity: object.opacity,
-      rotate: degrees(0),
-      x: user.width / 2,
-      xScale: user.width / 2,
-      y: user.height / 2,
-      yScale: user.height / 2,
-    });
-  } else if (object.shape === "line") {
+  if (object.shape === "line") {
     page.drawLine({
       color: border,
       // User space is y-up from the box's bottom-left corner.
@@ -1156,18 +1184,27 @@ const drawShape = (
       start: { x: 0, y: object.flip ? 0 : user.height },
       thickness: object.strokeWidth,
     });
+    page.pushOperators(popGraphicsState());
+    return;
+  }
+
+  // Same inset as the screen, which keeps rect and circle strokes in the box.
+  const path = insetShapePathBox(user, object.strokeWidth);
+  const paint = {
+    opacity: object.opacity,
+    strokeWidth: object.strokeWidth,
+  };
+  // The screen fades the whole object at once. PDF alpha applies per paint,
+  // so a translucent fill under the stroke's inner half would show through as
+  // a second tone. Fill only up to the stroke's inner edge instead.
+  const translucentFill =
+    fill !== undefined && (object.opacity ?? 1) < 1 && object.strokeWidth > 0;
+  if (translucentFill) {
+    const inner = insetShapePathBox(user, object.strokeWidth * 2);
+    drawShapeArea(page, object.shape, inner, { ...paint, fill });
+    drawShapeArea(page, object.shape, path, { ...paint, border });
   } else {
-    page.drawRectangle({
-      borderColor: border,
-      borderOpacity: object.opacity,
-      borderWidth: object.strokeWidth,
-      color: fill,
-      height: user.height,
-      opacity: object.opacity,
-      width: user.width,
-      x: 0,
-      y: 0,
-    });
+    drawShapeArea(page, object.shape, path, { ...paint, border, fill });
   }
   page.pushOperators(popGraphicsState());
 };

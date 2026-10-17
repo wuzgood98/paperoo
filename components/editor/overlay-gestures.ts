@@ -17,6 +17,7 @@ import {
   createShapeObject,
   isClickDrag,
   isRisingDrag,
+  lineRect,
   normalizedRect,
   pdfAnnotationWithGestureBox,
   pdfImageWithGestureBox,
@@ -372,7 +373,9 @@ export const useOverlayGestures = ({
       if (isClickDrag(gesture.start, point, isLine)) {
         return;
       }
-      const rect = normalizedRect(gesture.start, point);
+      const rect = isLine
+        ? lineRect(gesture.start, point)
+        : normalizedRect(gesture.start, point);
       editorStore.addObject(
         tool === "highlight"
           ? createHighlightObject(rect, highlightColor)

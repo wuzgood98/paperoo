@@ -7,6 +7,7 @@ import {
 } from "@/lib/editor/coordinates";
 import {
   boundsFromPoints,
+  createDrawingObject,
   fittedPdfTextBox,
   fittedPdfTextWidth,
   hitTestPdfFormField,
@@ -97,6 +98,31 @@ const text = (overrides: Partial<TextObject> = {}): TextObject => ({
   x: 100,
   y: 60,
   ...overrides,
+});
+
+test("createDrawingObject pads its box by half the stroke width", () => {
+  const strokeWidth = 6;
+  const pad = strokeWidth / 2;
+  const object = createDrawingObject(
+    [
+      { x: 10, y: 20 },
+      { x: 50, y: 5 },
+      { x: 30, y: 45 },
+    ],
+    "#000000",
+    strokeWidth
+  );
+
+  expect(object.x).toBe(10 - pad);
+  expect(object.y).toBe(5 - pad);
+  expect(object.width).toBe(40 + strokeWidth);
+  expect(object.height).toBe(40 + strokeWidth);
+  for (const point of object.points) {
+    expect(point.x).toBeGreaterThanOrEqual(pad);
+    expect(point.y).toBeGreaterThanOrEqual(pad);
+    expect(point.x).toBeLessThanOrEqual(object.width - pad);
+    expect(point.y).toBeLessThanOrEqual(object.height - pad);
+  }
 });
 
 test("scaleObjectToBox keeps drawing points inside a uniform resize", () => {
