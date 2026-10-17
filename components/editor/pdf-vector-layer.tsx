@@ -13,6 +13,8 @@ import {
   objectCenter,
   objectWrapperStyle,
   userPointToDisplayed,
+  vectorAxisScale,
+  vectorStrokeScale,
 } from "@/lib/editor/coordinates";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import {
@@ -64,8 +66,8 @@ const mapCommandPoint = (
   pad: number
 ): Point => {
   const displayed = userPointToDisplayed(point, crop, sourceRotate);
-  const sx = box.originalWidth > 1e-6 ? box.width / box.originalWidth : 1;
-  const sy = box.originalHeight > 1e-6 ? box.height / box.originalHeight : 1;
+  const sx = vectorAxisScale(box.originalWidth, box.width);
+  const sy = vectorAxisScale(box.originalHeight, box.height);
   return {
     x: roundPathCoordinate((displayed.x - box.originalX) * sx + pad),
     y: roundPathCoordinate((displayed.y - box.originalY) * sy + pad),
@@ -265,6 +267,23 @@ const PdfVectorPathSvg = ({
   );
 };
 
+/** Smallest on-screen thickness a selected vector can be dragged by. */
+const PDF_VECTOR_GRAB_MIN_PX = 10;
+
+/**
+ * Widens a selected vector's drag target to a grabbable size: a straight
+ * line's box is a hair thick and would otherwise give the pointer nothing
+ * to press.
+ */
+const pdfVectorGrabInset = (
+  object: { height: number; width: number },
+  zoom: number
+) => {
+  const padX = Math.max(0, (PDF_VECTOR_GRAB_MIN_PX - object.width * zoom) / 2);
+  const padY = Math.max(0, (PDF_VECTOR_GRAB_MIN_PX - object.height * zoom) / 2);
+  return { bottom: -padY, left: -padX, right: -padX, top: -padY };
+};
+
 const PdfVectorPreview = ({
   crop,
   nested,
@@ -278,7 +297,10 @@ const PdfVectorPreview = ({
   sourceRotate: PageRotation;
   zoom: number;
 }) => {
-  const pad = pdfVectorStrokePad(object.stroke?.width);
+  const strokeWidth = object.stroke
+    ? object.stroke.width * vectorStrokeScale(object)
+    : undefined;
+  const pad = pdfVectorStrokePad(strokeWidth);
   const svg = (
     <PdfVectorPathSvg
       box={object}
@@ -291,7 +313,7 @@ const PdfVectorPreview = ({
       sourceRotate={sourceRotate}
       stroke={object.stroke?.color ?? null}
       strokeOpacity={object.stroke?.opacity}
-      strokeWidth={object.stroke?.width ?? 0}
+      strokeWidth={strokeWidth ?? 0}
       zoom={zoom}
     />
   );
@@ -460,6 +482,11 @@ const PdfVectorLayerView = ({
             }}
             style={objectWrapperStyle(object, zoom)}
           >
+            <div
+              aria-hidden
+              className="absolute"
+              style={pdfVectorGrabInset(object, zoom)}
+            />
             {shouldPaintPdfVectorPreview(object, transformingId) ? (
               <PdfVectorPreview
                 crop={crop}
@@ -470,6 +497,7 @@ const PdfVectorLayerView = ({
               />
             ) : null}
             <SelectionBox
+              box={object}
               onResizePointerDown={(handle, event) => {
                 event.stopPropagation();
                 boundsRef.current = snapshotBounds(

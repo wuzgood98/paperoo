@@ -46,6 +46,8 @@ import {
   normalizeRotation,
   pdfTextBaselineUserSpace,
   userPointToDisplayed,
+  vectorAxisScale,
+  vectorStrokeScale,
 } from "@/lib/editor/coordinates";
 import {
   fittedPdfTextBox,
@@ -668,10 +670,8 @@ const mapVectorPointToLocal = (
     editorPage.cropBox,
     editorPage.sourceRotate
   );
-  const sx =
-    object.originalWidth > 1e-6 ? local.width / object.originalWidth : 1;
-  const sy =
-    object.originalHeight > 1e-6 ? local.height / object.originalHeight : 1;
+  const sx = vectorAxisScale(object.originalWidth, local.width);
+  const sy = vectorAxisScale(object.originalHeight, local.height);
   return {
     x: (displayed.x - object.originalX) * sx,
     y: local.height - (displayed.y - object.originalY) * sy,
@@ -813,13 +813,9 @@ const paintVectorOperators = (
     ops.push(setFillingColor(color(object.fill.color)));
   }
   if (object.stroke) {
-    const scale =
-      (object.width / Math.max(object.originalWidth, 1e-6) +
-        object.height / Math.max(object.originalHeight, 1e-6)) /
-      2;
     ops.push(
       setStrokingColor(color(object.stroke.color)),
-      setLineWidth(object.stroke.width * scale),
+      setLineWidth(object.stroke.width * vectorStrokeScale(object)),
       setLineCap(lineCapStyle(object.stroke.lineCap)),
       setLineJoin(lineJoinStyle(object.stroke.lineJoin))
     );

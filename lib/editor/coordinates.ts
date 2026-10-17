@@ -425,6 +425,44 @@ export const centerRotateCtm = (
 
 export type ResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
 
+/**
+ * Extents at or below this are a straight line's thickness, not a size: a
+ * zero-height path is floored to a hair (1e-4) at extraction, and scaling
+ * against that hair turns any resize into a ~10^5x stretch.
+ */
+export const DEGENERATE_EXTENT = 1e-2;
+
+export const isDegenerateExtent = (extent: number): boolean =>
+  extent <= DEGENERATE_EXTENT;
+
+/** Scale of one axis from its original extent; flat axes never stretch. */
+export const vectorAxisScale = (original: number, current: number): number =>
+  isDegenerateExtent(original) ? 1 : current / original;
+
+/**
+ * Stroke width multiplier for a resized vector: the area scale of its two
+ * axes. A straight line has no second axis, so its stroke keeps its width.
+ */
+export const vectorStrokeScale = (box: {
+  height: number;
+  originalHeight: number;
+  originalWidth: number;
+  width: number;
+}): number => {
+  if (
+    isDegenerateExtent(box.originalWidth) ||
+    isDegenerateExtent(box.originalHeight)
+  ) {
+    return 1;
+  }
+  return Math.sqrt(
+    Math.abs(
+      vectorAxisScale(box.originalWidth, box.width) *
+        vectorAxisScale(box.originalHeight, box.height)
+    )
+  );
+};
+
 export const HANDLE_LOCAL_OFFSET: Record<ResizeHandle, Point> = {
   e: { x: 0.5, y: 0 },
   n: { x: 0, y: -0.5 },
@@ -448,8 +486,15 @@ export const resizeRotatedBox = (
   pointer: Point,
   options: { minSize: number; lockAspect: boolean }
 ): Rect => {
+  // A flat axis (a straight line's thickness) stays flat: clamping it to
+  // `minSize` would stretch the path by minSize / hair on export.
+  const flatX = isDegenerateExtent(box.width);
+  const flatY = isDegenerateExtent(box.height);
   const center = objectCenter(box);
-  const handleOffset = HANDLE_LOCAL_OFFSET[handle];
+  const handleOffset = {
+    x: flatX ? 0 : HANDLE_LOCAL_OFFSET[handle].x,
+    y: flatY ? 0 : HANDLE_LOCAL_OFFSET[handle].y,
+  };
   const oppositeWorld = rotatePoint(
     {
       x: center.x - handleOffset.x * box.width,
@@ -465,7 +510,7 @@ export const resizeRotatedBox = (
   let nextWidth = handleOffset.x === 0 ? box.width : Math.abs(localX);
   let nextHeight = handleOffset.y === 0 ? box.height : Math.abs(localY);
 
-  if (options.lockAspect && box.width > 0 && box.height > 0) {
+  if (options.lockAspect && !flatX && !flatY) {
     const aspect = box.width / box.height;
     if (handleOffset.x !== 0 && handleOffset.y !== 0) {
       if (nextWidth / aspect > nextHeight) {
@@ -480,8 +525,12 @@ export const resizeRotatedBox = (
     }
   }
 
-  nextWidth = Math.max(options.minSize, nextWidth);
-  nextHeight = Math.max(options.minSize, nextHeight);
+  if (!flatX) {
+    nextWidth = Math.max(options.minSize, nextWidth);
+  }
+  if (!flatY) {
+    nextHeight = Math.max(options.minSize, nextHeight);
+  }
 
   const signX =
     handleOffset.x === 0 ? 0 : Math.sign(localX) || Math.sign(handleOffset.x);
