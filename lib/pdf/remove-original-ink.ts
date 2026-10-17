@@ -68,6 +68,8 @@ const BOX_SLACK = 0.01;
 const BOX_RELATIVE_SLACK = 1e-4;
 /** Text rendering modes that paint no glyph ink. */
 const INVISIBLE_RENDER_MODES = new Set([3, 7]);
+/** Text rendering modes that add the glyphs to the clip path. */
+const CLIP_RENDER_MODES = new Set([4, 5, 6, 7]);
 
 const latin1 = (bytes: Uint8Array): string => {
   let text = "";
@@ -481,7 +483,11 @@ export const removeOriginalInk = (
     }
   }
   for (const run of runs) {
-    if (run.outlineText) {
+    // Emptying a clip-mode show op drops the clip later paint depends on.
+    if (
+      run.outlineText ||
+      CLIP_RENDER_MODES.has(run.originalTextRenderingMode)
+    ) {
       continue;
     }
     const showEdit = planShowEdit(raw, run);

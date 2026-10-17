@@ -6,11 +6,14 @@ import {
 import type {
   ExtractableOperatorList,
   OperatorArg,
+  PdfGlyphArg,
 } from "@/lib/pdf/extract-images";
 import type { ExtractableTextItem } from "@/lib/pdf/extract-text";
 
 /** TextRenderingMode low bits: FILL=0, STROKE=1, FILL_STROKE=2, INVISIBLE=3 (and +4 add-to-path). */
 const TEXT_RENDERING_MODE_COUNT = 4;
+/** Tr 0–7 are defined; 4–7 also add the glyphs to the clip path. */
+const TEXT_RENDERING_MODE_MAX = 7;
 const TEXT_RENDERING_FILL = 0;
 const TEXT_RENDERING_STROKE = 1;
 const TEXT_RENDERING_FILL_STROKE = 2;
@@ -44,13 +47,25 @@ export const toPdfTextColorOps = (ops: PdfTextColorOps): PdfTextColorOps => ({
   ...ops,
 });
 
-/** One showText* sample; null means unsupported ink for the active Tr. */
+/**
+ * One showText* sample; null means unsupported ink for the active Tr.
+ * Invisible modes (3, 7) sample with no fill or stroke ink.
+ */
 export interface PdfTextPaint {
   color: string | null;
   strokeColor: string | null;
   strokeWidth: number;
+  /** Tr as set, 0–7: clip modes stay distinct from their paint-only twins. */
   textRenderingMode: number;
 }
+
+/**
+ * Paints in show order. `texts[i]` is what show op `i` drew (its glyphs'
+ * unicode), or null when the op carried no glyphs; the zip aligns on it.
+ */
+export type PdfTextPaints = (PdfTextPaint | null)[] & {
+  readonly texts?: readonly (string | null)[];
+};
 
 /** Per getTextContent item after zip (always concrete defaults). */
 export interface PdfTextItemPaint {
@@ -178,13 +193,18 @@ const isShowTextOp = (fn: number, ops: PdfTextColorOps): boolean =>
   fn === ops.nextLineShowText ||
   fn === ops.nextLineSetSpacingShowText;
 
+/** Keep a defined Tr (0–7) as is; fold anything else onto its low bits. */
+const settledMode = (textRenderingMode: number): number =>
+  Number.isInteger(textRenderingMode) &&
+  textRenderingMode >= 0 &&
+  textRenderingMode <= TEXT_RENDERING_MODE_MAX
+    ? textRenderingMode
+    : normalizeMode(textRenderingMode);
+
 const samplePaint = (state: GraphicsState): PdfTextPaint | null => {
-  const mode = normalizeMode(state.textRenderingMode);
+  const mode = settledMode(state.textRenderingMode);
   const fillNeeded = needsFill(mode);
   const strokeNeeded = needsStroke(mode);
-  if (!(fillNeeded || strokeNeeded)) {
-    return null;
-  }
   if (fillNeeded && !state.fillOk) {
     return null;
   }
@@ -276,12 +296,31 @@ const applyStateOp = (
   return null;
 };
 
+const isGlyphArg = (value: OperatorArg): value is PdfGlyphArg =>
+  Object.prototype.toString.call(value) === "[object Object]";
+
+/** pdf.js passes a show op's glyphs as objects carrying `unicode`; numbers are kerning. */
+const shownText = (args: OperatorArg): string | null => {
+  const glyphs = Array.isArray(args) ? args[0] : undefined;
+  if (!Array.isArray(glyphs)) {
+    return null;
+  }
+  let text = "";
+  for (const glyph of glyphs) {
+    if (isGlyphArg(glyph)) {
+      text += glyph.unicode ?? "";
+    }
+  }
+  return text;
+};
+
 /** Walk showText* ops and sample fill/stroke ink at each paint. */
 export const extractPdfTextPaints = (
   list: ExtractableOperatorList,
   ops: PdfTextColorOps
-): (PdfTextPaint | null)[] => {
+): PdfTextPaints => {
   const paints: (PdfTextPaint | null)[] = [];
+  const texts: (string | null)[] = [];
   const stack: GraphicsState[] = [];
   let current = defaultState();
 
@@ -310,9 +349,11 @@ export const extractPdfTextPaints = (
     }
 
     paints.push(samplePaint(current));
+    texts.push(shownText(args));
   }
 
-  return paints;
+  // Non-enumerable, so the list still compares and spreads as plain paints.
+  return Object.defineProperty(paints, "texts", { value: texts });
 };
 
 /**
@@ -414,14 +455,14 @@ const fallbackPaints = (length: number, fallback: string): PdfTextItemPaint[] =>
   Array.from({ length }, () => fallbackItemPaint(fallback));
 
 /**
- * Zip showText paints onto getTextContent items.
+ * Count-only zip for paints without text.
  * Fail closed to `fallback` when counts diverge or any paint is unsupported,
  * unless every paint shares one primary ink (same-color merge recovery).
  */
-export const zipPdfTextItemPaints = (
+const zipPaintsByCount = (
   items: readonly ExtractableTextItem[],
   paints: readonly (PdfTextPaint | null)[],
-  fallback: string = DEFAULT_PDF_TEXT_COLOR
+  fallback: string
 ): ZipPdfTextItemPaintsResult => {
   const itemPaints = fallbackPaints(items.length, fallback);
   const paintableIndices: number[] = [];
@@ -488,6 +529,173 @@ export const zipPdfTextItemPaints = (
   }
 
   return { aligned: true, paints: itemPaints };
+};
+
+const WHITESPACE = /\s+/gu;
+
+/**
+ * Text as both sides can agree on it: pdf.js items collapse and invent
+ * spaces and NFKC-fold ligatures, show ops carry the raw glyph unicode.
+ */
+const alignKey = (text: string): string =>
+  text.normalize("NFKC").replaceAll(WHITESPACE, "");
+
+/** How far past a lost item to look for the next one, in key characters. */
+const RESYNC_WINDOW = 256;
+
+/** Every show op's text joined, with each op's start offset into it. */
+interface ShowStream {
+  starts: number[];
+  text: string;
+}
+
+const toShowStream = (texts: readonly (string | null)[]): ShowStream => {
+  const starts: number[] = [];
+  let text = "";
+  for (const shown of texts) {
+    starts.push(text.length);
+    text += alignKey(shown ?? "");
+  }
+  return { starts, text };
+};
+
+/** Index of the show op that drew stream character `offset`. */
+const opAt = (stream: ShowStream, offset: number): number => {
+  let low = 0;
+  let high = stream.starts.length - 1;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (stream.starts[mid] <= offset) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return low;
+};
+
+const samePaint = (
+  left: PdfTextPaint | null,
+  right: PdfTextPaint | null
+): boolean =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.color === right.color &&
+    left.strokeColor === right.strokeColor &&
+    left.strokeWidth === right.strokeWidth &&
+    left.textRenderingMode === right.textRenderingMode);
+
+const MIXED_PAINT = "mixed";
+
+/**
+ * The one paint behind stream[start, end), or MIXED_PAINT. One op may span
+ * several items (pdf.js splits words) and one item several ops (pdf.js
+ * joins runs); a joined item whose ops disagree has no single ink.
+ */
+const itemPaint = (
+  stream: ShowStream,
+  paints: readonly (PdfTextPaint | null)[],
+  start: number,
+  end: number
+): PdfTextPaint | null | typeof MIXED_PAINT => {
+  const first = opAt(stream, start);
+  const last = opAt(stream, end - 1);
+  const paint = paints[first] ?? null;
+  for (let op = first + 1; op <= last; op += 1) {
+    // An op with no text (spaces only, or no glyphs) drew none of the item.
+    const drewNothing = stream.starts[op] === stream.starts[op + 1];
+    if (!(drewNothing || samePaint(paint, paints[op] ?? null))) {
+      return MIXED_PAINT;
+    }
+  }
+  return paint;
+};
+
+/** Where `key` sits in the stream from `cursor`, or -1 when it is lost. */
+const locateItem = (
+  stream: ShowStream,
+  key: string,
+  nextKey: string | undefined,
+  cursor: number
+): number => {
+  if (stream.text.startsWith(key, cursor)) {
+    return cursor;
+  }
+  // The next item sits right here: this one has no show op of its own.
+  if (nextKey && stream.text.startsWith(nextKey, cursor)) {
+    return -1;
+  }
+  const found = stream.text.indexOf(key, cursor);
+  return found !== -1 && found - cursor <= RESYNC_WINDOW ? found : -1;
+};
+
+/**
+ * Align items to show ops on their text. Items that cannot be placed, or
+ * whose ink is unsupported, fall back alone. Null when no item aligns.
+ */
+const zipPaintsByText = (
+  items: readonly ExtractableTextItem[],
+  paints: readonly (PdfTextPaint | null)[],
+  texts: readonly (string | null)[],
+  fallback: string
+): ZipPdfTextItemPaintsResult | null => {
+  const stream = toShowStream(texts);
+  if (stream.text === "") {
+    return null;
+  }
+  const keyed: { index: number; key: string }[] = [];
+  for (const [index, item] of items.entries()) {
+    const key = alignKey(item.str ?? "");
+    if (key !== "") {
+      keyed.push({ index, key });
+    }
+  }
+  const itemPaints = fallbackPaints(items.length, fallback);
+  let cursor = 0;
+  let placed = 0;
+  let settled = 0;
+  for (const [position, { index, key }] of keyed.entries()) {
+    const start = locateItem(stream, key, keyed[position + 1]?.key, cursor);
+    if (start === -1) {
+      continue;
+    }
+    placed += 1;
+    cursor = start + key.length;
+    const paint = itemPaint(stream, paints, start, cursor);
+    if (paint === MIXED_PAINT) {
+      continue;
+    }
+    settled += 1;
+    if (paint) {
+      itemPaints[index] = toItemPaint(paint, fallback);
+    }
+  }
+  if (placed === 0) {
+    return null;
+  }
+  return { aligned: settled === keyed.length, paints: itemPaints };
+};
+
+/**
+ * Zip showText paints onto getTextContent items. With show-op text (from
+ * `extractPdfTextPaints`) items align on text, so pdf.js splitting or
+ * joining runs costs nothing and a lost or unsupported run falls back
+ * alone; `aligned` is false when some item found no show op, or its ops
+ * disagree on ink. Without text,
+ * or when no item aligns, falls back to a count-only zip.
+ */
+export const zipPdfTextItemPaints = (
+  items: readonly ExtractableTextItem[],
+  paints: PdfTextPaints | readonly (PdfTextPaint | null)[],
+  fallback: string = DEFAULT_PDF_TEXT_COLOR
+): ZipPdfTextItemPaintsResult => {
+  const texts = "texts" in paints ? paints.texts : undefined;
+  const byText =
+    texts && texts.length === paints.length
+      ? zipPaintsByText(items, paints, texts, fallback)
+      : null;
+  return byText ?? zipPaintsByCount(items, paints, fallback);
 };
 
 /**

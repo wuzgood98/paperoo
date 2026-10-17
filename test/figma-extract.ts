@@ -12,6 +12,11 @@ import {
 } from "@/lib/pdf/extract-text";
 import type { PdfJsFontObjectStore } from "@/lib/pdf/extract-text";
 import {
+  extractPdfTextPaints,
+  toPdfTextColorOps,
+  zipPdfTextItemPaints,
+} from "@/lib/pdf/extract-text-colors";
+import {
   extractPdfVectorObjects,
   toPdfVectorOps,
 } from "@/lib/pdf/extract-vectors";
@@ -26,9 +31,10 @@ import { loadPdfJsDocument } from "./pdfjs-node";
 
 const TYPE3_METRIC_OPS = new Set([OPS.setCharWidth, OPS.setCharWidthAndBounds]);
 
-/** The PdfSession pipeline for page 1, minus paints and images. */
+/** The PdfSession pipeline for page 1, minus images (and paints unless asked). */
 export const extractFigmaPage = async (
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  { paints = false }: { paints?: boolean } = {}
 ): Promise<{
   page: EditorPage;
   runs: PdfTextObject[];
@@ -67,7 +73,17 @@ export const extractFigmaPage = async (
   const { runs, vectors } = attachRemovalTargets(
     index,
     linkTextInkOutlines(
-      extractPdfTextObjects(extractable, target, fontFaces),
+      extractPdfTextObjects(
+        extractable,
+        target,
+        fontFaces,
+        paints
+          ? zipPdfTextItemPaints(
+              extractable.items,
+              extractPdfTextPaints(operatorList, toPdfTextColorOps(OPS))
+            ).paints
+          : undefined
+      ),
       extracted
     ),
     extracted
