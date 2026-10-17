@@ -509,7 +509,7 @@ const PdfVectorLayerView = ({
                   handle,
                   kind: "resize",
                   object,
-                  start: toPage(event),
+                  origin: object,
                 };
               }}
               onRotatePointerDown={(event) => {
