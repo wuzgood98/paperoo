@@ -910,6 +910,38 @@ export const editorStore = {
 
   getState: (): EditorStoreState => internal.state,
 
+  /**
+   * Add objects on top of a page as one undo step (paste, duplicate) and
+   * select them with the Select tool.
+   */
+  insertObjects: (pageId: string, objects: readonly EditorObject[]): void => {
+    if (
+      objects.length === 0 ||
+      !findPage(internal.state.document.pages, pageId)
+    ) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: withPages(
+          mapPageObjects(internal.state.document.pages, pageId, (existing) => [
+            ...existing,
+            ...objects,
+          ])
+        ),
+        selectedObjectIds: objects.map((object) => object.id),
+        selectedOcrWordIds: [],
+        selectedPdfAnnotationId: null,
+        selectedPdfFormFieldId: null,
+        selectedPdfImageId: null,
+        selectedPdfTextId: null,
+        selectedPdfVectorId: null,
+        tool: "select",
+      };
+    }, true);
+  },
+
   /** True when an open document has edits since it was opened or exported. */
   isDirty: (): boolean =>
     internal.state.status === "ready" &&

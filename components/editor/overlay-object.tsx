@@ -13,8 +13,15 @@ import {
   ContextMenu,
   ContextMenuItem,
   ContextMenuPopup,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  copySelection,
+  duplicateSelection,
+  pasteClipboard,
+} from "@/lib/editor/clipboard";
 import { objectCenter, objectWrapperStyle } from "@/lib/editor/coordinates";
 import type { PageBounds } from "@/lib/editor/coordinates";
 import { editorStore } from "@/lib/editor/store";
@@ -23,6 +30,13 @@ import type { EditorObject, EditorTool, Point } from "@/lib/editor/types";
 interface RefBox<T> {
   current: T;
 }
+
+/** Act on the right-clicked object, or on the selection it belongs to. */
+const targetObject = (objectId: string): void => {
+  if (!editorStore.getState().selectedObjectIds.includes(objectId)) {
+    editorStore.selectObjects([objectId]);
+  }
+};
 
 const OverlayObjectView = ({
   boundsRef,
@@ -146,6 +160,44 @@ const OverlayObjectView = ({
         ) : null}
       </div>
       <ContextMenuPopup>
+        <ContextMenuItem
+          onClick={() => {
+            targetObject(object.id);
+            copySelection();
+          }}
+        >
+          Copy
+          <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            targetObject(object.id);
+            if (copySelection()) {
+              editorStore.deleteSelected();
+            }
+          }}
+        >
+          Cut
+          <ContextMenuShortcut>⌘X</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            pasteClipboard();
+          }}
+        >
+          Paste
+          <ContextMenuShortcut>⌘V</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            targetObject(object.id);
+            duplicateSelection();
+          }}
+        >
+          Duplicate
+          <ContextMenuShortcut>⌘D</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuItem
           onClick={() => {
             editorStore.selectObjects([object.id]);

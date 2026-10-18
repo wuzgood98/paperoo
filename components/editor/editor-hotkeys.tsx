@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 import { requestDeleteSelection } from "@/components/editor/large-delete";
 import { toastManager } from "@/components/ui/toast-manager";
+import { duplicateSelection } from "@/lib/editor/clipboard";
 import { pendingSignature } from "@/lib/editor/pending";
 import { editorStore } from "@/lib/editor/store";
 import { TOOL_KEYS } from "@/lib/editor/tool-keys";
@@ -115,6 +116,16 @@ export const EditorHotkeys = () => {
           shift: true,
         },
         { handler: () => editorStore.redo(), key: "y", meta: true },
+        {
+          // Also keeps ⌘D from opening the browser's bookmark dialog.
+          handler: () => {
+            if (editorStore.getState().status === "ready") {
+              duplicateSelection();
+            }
+          },
+          key: "d",
+          meta: true,
+        },
         {
           handler: requestDeleteSelection,
           key: "Delete",

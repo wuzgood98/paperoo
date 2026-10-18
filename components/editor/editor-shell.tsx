@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect } from "react";
 
+import { EditorClipboard } from "@/components/editor/editor-clipboard";
 import { EditorHotkeys } from "@/components/editor/editor-hotkeys";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { EmptyState } from "@/components/editor/empty-state";
@@ -56,6 +57,7 @@ export const EditorShell = () => {
   return (
     <div className="bg-background flex h-svh min-h-0 flex-col overflow-hidden pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] [--editor-page-sidebar:220px]">
       <EditorHotkeys />
+      <EditorClipboard />
       <UnsavedChangesGuard />
       <EditorToolbar />
       <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[var(--editor-page-sidebar)_minmax(0,1fr)_56px]">
