@@ -14,7 +14,7 @@ import {
 } from "@/lib/editor/types";
 import { bindHotkeys } from "@/lib/hotkeys";
 import type { HotkeyDefinition } from "@/lib/hotkeys";
-import { runPrint } from "@/lib/pdf/run-print";
+import { prewarmPdfOpen } from "@/lib/pdf/open-pdf";
 
 const printEditedPdf = async (): Promise<void> => {
   const state = editorStore.getState();
@@ -23,6 +23,7 @@ const printEditedPdf = async (): Promise<void> => {
   }
 
   try {
+    const { runPrint } = await import("@/lib/pdf/run-print");
     await runPrint();
   } catch (error) {
     toastManager.add({
@@ -171,6 +172,7 @@ export const EditorHotkeys = () => {
             document
               .querySelector<HTMLInputElement>("#editor-open-input")
               ?.click();
+            void prewarmPdfOpen();
           },
           key: "o",
           meta: true,

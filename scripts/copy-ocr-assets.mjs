@@ -35,7 +35,9 @@ await copyFile(
 const coreNames = await readdir(coreRoot);
 await Promise.all(
   coreNames
-    .filter((name) => name.includes("lstm"))
+    // With a core directory, tesseract.js loads only one `*-lstm.wasm.js`
+    // (WASM inlined); the separate .js/.wasm variants are never fetched.
+    .filter((name) => name.endsWith("-lstm.wasm.js"))
     .map((name) => cp(path.join(coreRoot, name), path.join(publicCore, name)))
 );
 

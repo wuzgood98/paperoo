@@ -13,7 +13,7 @@ import { ToolRail } from "@/components/editor/tool-rail";
 import { Spinner } from "@/components/ui/spinner";
 import { useEditorStore } from "@/lib/editor/store";
 import type { EditorStatus } from "@/lib/editor/types";
-import { ensurePdfjsWorker } from "@/lib/pdf/pdfjs";
+import { prewarmPdfOpen } from "@/lib/pdf/open-pdf";
 
 const EditorViewport = dynamic(
   async () => {
@@ -41,21 +41,14 @@ export const EditorShell = () => {
   const status = useEditorStore((state) => state.status);
 
   useEffect(() => {
-    // Warm the pdf.js worker off the critical path so the first file
-    // select skips worker spawn + script compile.
-    if (typeof window === "undefined") {
-      return;
-    }
-    if ("requestIdleCallback" in window) {
-      const id = window.requestIdleCallback(() => {
-        ensurePdfjsWorker();
-      });
-      return () => window.cancelIdleCallback(id);
-    }
-    const timer = globalThis.setTimeout(() => {
-      ensurePdfjsWorker();
-    }, 0);
-    return () => globalThis.clearTimeout(timer);
+    // A file dragged over the window is about to be dropped; open buttons
+    // prewarm on hover and focus themselves.
+    const onDragEnter = async (): Promise<void> => {
+      window.removeEventListener("dragenter", onDragEnter);
+      await prewarmPdfOpen();
+    };
+    window.addEventListener("dragenter", onDragEnter);
+    return () => window.removeEventListener("dragenter", onDragEnter);
   }, []);
 
   return (

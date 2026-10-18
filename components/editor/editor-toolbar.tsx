@@ -46,9 +46,7 @@ import {
 } from "@/lib/editor/store";
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP } from "@/lib/editor/types";
 import { useOcrSelector } from "@/lib/ocr/session";
-import { openPdfFromList } from "@/lib/pdf/open-pdf";
-import { runExport } from "@/lib/pdf/run-export";
-import { runPrint } from "@/lib/pdf/run-print";
+import { openPdfFromList, prewarmPdfOpen } from "@/lib/pdf/open-pdf";
 
 const openFile = async (files: FileList | null) => {
   await openPdfFromList(files);
@@ -56,6 +54,8 @@ const openFile = async (files: FileList | null) => {
 
 const exportPdf = async () => {
   try {
+    // The export runner pulls in pdf.js and the export worker; load it on use.
+    const { runExport } = await import("@/lib/pdf/run-export");
     await runExport();
     toastManager.add({ title: "Exported PDF", type: "success" });
   } catch (error) {
@@ -69,6 +69,7 @@ const exportPdf = async () => {
 
 const printPdf = async () => {
   try {
+    const { runPrint } = await import("@/lib/pdf/run-print");
     await runPrint();
   } catch (error) {
     toastManager.add({
@@ -158,6 +159,8 @@ export const EditorToolbar = () => {
           pressable
           aria-label="Open PDF"
           onClick={() => inputRef.current?.click()}
+          onFocus={prewarmPdfOpen}
+          onPointerEnter={prewarmPdfOpen}
           size="icon-sm"
           variant="ghost"
         >
