@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { PDFDocument, PDFName } from "pdf-lib";
 import { expect, test } from "vitest";
 
@@ -8,6 +11,7 @@ import type {
   EditorPage,
   PdfFormField,
 } from "@/lib/editor/types";
+import { FONT_FILES } from "@/lib/fonts/measure-text";
 import { exportDocument } from "@/lib/pdf/export-pdf";
 import { extractPdfForm } from "@/lib/pdf/extract-forms";
 
@@ -170,4 +174,32 @@ test("export copies XFA streams without calling getForm", async () => {
   });
   const exported = await PDFDocument.load(output);
   expect(exported.catalog.AcroForm()?.has(PDFName.of("XFA"))).toBe(true);
+});
+
+test("export fills a non-Latin form value with the embedded fallback font", async () => {
+  const bytes = await buildPdfFormFixture();
+  const base = await editorDocumentFromBytes(bytes);
+  const value = "Привет, мир";
+  const edited = mapDocumentFormFields(base, (field) =>
+    field.name === FORM_FIELD.name && field.kind === "text"
+      ? { ...field, value }
+      : field
+  );
+  const sans = new Uint8Array(
+    await readFile(
+      path.join(process.cwd(), "public/fonts/LiberationSans-Regular.ttf")
+    )
+  );
+
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document: edited,
+    fontBytes: { [FONT_FILES.sans[400]]: sans },
+  });
+
+  const exported = await PDFDocument.load(output);
+  expect(exported.getForm().getTextField(FORM_FIELD.name).getText()).toBe(
+    value
+  );
 });

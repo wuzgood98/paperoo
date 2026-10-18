@@ -1,3 +1,4 @@
+import fontkit from "@pdf-lib/fontkit";
 import {
   PDFCheckBox,
   PDFDropdown,
@@ -45,22 +46,34 @@ const withDisplaySelection = (
   }
 };
 
-export const resolveFormFieldFont = async (
+/** Resolves an appearance font for a field's text, embedding each face once. */
+export type FormFieldFonts = (text: string) => Promise<PDFFont>;
+
+export const createFormFieldFonts = (
   doc: PDFDocument,
-  text: string,
   fontBytes: Record<string, Uint8Array>
-): Promise<PDFFont> => {
-  const helvetica = await doc.embedFont(StandardFonts.Helvetica);
-  try {
-    helvetica.encodeText(text);
-    return helvetica;
-  } catch {
-    const bytes = fontBytes[FONT_FILES.sans[400]];
-    if (bytes) {
-      return doc.embedFont(bytes);
+): FormFieldFonts => {
+  let helvetica: Promise<PDFFont> | undefined;
+  let fallback: Promise<PDFFont> | undefined;
+  return async (text) => {
+    helvetica ??= doc.embedFont(StandardFonts.Helvetica);
+    const standard = await helvetica;
+    try {
+      standard.encodeText(text);
+      return standard;
+    } catch {
+      const bytes = fontBytes[FONT_FILES.sans[400]];
+      if (!bytes) {
+        return standard;
+      }
+      if (!fallback) {
+        // The source document is loaded, not created, so it has no fontkit.
+        doc.registerFontkit(fontkit);
+        fallback = doc.embedFont(bytes, { subset: true });
+      }
+      return await fallback;
     }
-    return helvetica;
-  }
+  };
 };
 
 const appearanceText = (field: PdfFormField): string => {
@@ -113,10 +126,9 @@ const applyChoiceValues = (
 
 // oxlint-disable-next-line eslint/complexity -- one write path per AcroForm field kind
 const applyField = async (
-  source: PDFDocument,
   form: PDFForm,
   field: PdfFormField,
-  fontBytes: Record<string, Uint8Array>
+  fonts: FormFieldFonts
 ): Promise<void> => {
   if (field.kind === "signature" || !isPdfFormFieldDirty(field)) {
     return;
@@ -128,11 +140,7 @@ const applyField = async (
   if (!pdfField) {
     return;
   }
-  const font = await resolveFormFieldFont(
-    source,
-    appearanceText(field),
-    fontBytes
-  );
+  const font = await fonts(appearanceText(field));
   if (field.kind === "text" && pdfField instanceof PDFTextField) {
     pdfField.setText(field.value.length > 0 ? field.value : undefined);
     pdfField.updateAppearances(font);
@@ -179,9 +187,10 @@ export const applyPdfFormEdits = async (
     return;
   }
   const form = source.getForm();
+  const fonts = createFormFieldFonts(source, fontBytes);
   for (const field of documentForm(document).fields) {
     // oxlint-disable-next-line react-doctor/async-await-in-loop eslint/no-await-in-loop -- appearances must apply in field order
-    await applyField(source, form, field, fontBytes);
+    await applyField(form, field, fonts);
   }
 };
 

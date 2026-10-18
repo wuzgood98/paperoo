@@ -71,17 +71,29 @@ const INVISIBLE_RENDER_MODES = new Set([3, 7]);
 /** Text rendering modes that add the glyphs to the clip path. */
 const CLIP_RENDER_MODES = new Set([4, 5, 6, 7]);
 
+/** Bytes per `String.fromCharCode` call, well under engine argument limits. */
+const LATIN1_CHUNK = 0x80_00;
+
 const latin1 = (bytes: Uint8Array): string => {
-  let text = "";
-  for (const byte of bytes) {
-    text += String.fromCodePoint(byte);
+  const parts: string[] = [];
+  for (let start = 0; start < bytes.length; start += LATIN1_CHUNK) {
+    parts.push(
+      // oxlint-disable-next-line unicorn/prefer-code-point -- bytes are code units 0-255, and fromCharCode takes them in bulk
+      String.fromCharCode(...bytes.subarray(start, start + LATIN1_CHUNK))
+    );
   }
-  return text;
+  return parts.join("");
 };
 
 /** Inverse of `latin1`: every char came from one byte, so fits in one. */
-const fromLatin1 = (text: string): Uint8Array =>
-  Uint8Array.from(text, (char) => char.codePointAt(0) ?? 0);
+const fromLatin1 = (text: string): Uint8Array => {
+  const bytes = new Uint8Array(text.length);
+  for (let index = 0; index < text.length; index += 1) {
+    // oxlint-disable-next-line unicorn/prefer-code-point -- every code unit is one latin1 byte
+    bytes[index] = text.charCodeAt(index);
+  }
+  return bytes;
+};
 
 /** The page's content streams decoded and joined, or null if any can't be. */
 const readPageContent = (page: PDFPage): string | null => {
