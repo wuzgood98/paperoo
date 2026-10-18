@@ -1,5 +1,4 @@
-import { createWorker, PSM } from "tesseract.js";
-import type { Worker as TesseractWorker } from "tesseract.js";
+import type { PSM, Worker as TesseractWorker } from "tesseract.js";
 
 import type { EngineOcrPage } from "@/lib/ocr/from-engine";
 import type { OcrEngine } from "@/lib/ocr/service";
@@ -10,12 +9,17 @@ const OCR_WORKER_PATH = "/ocr/worker.min.js";
 const OCR_CORE_PATH = "/ocr/core";
 const OCR_LANG_PATH = "/ocr";
 
+/** Tesseract page segmentation modes this app uses (values of its `PSM`). */
+export const PAGE_SEG_AUTO = "3" satisfies `${PSM}`;
+export const PAGE_SEG_SINGLE_BLOCK = "6" satisfies `${PSM}`;
+type PageSegMode = typeof PAGE_SEG_AUTO | typeof PAGE_SEG_SINGLE_BLOCK;
+
 /**
  * Tesseract in its own worker. Whole pages use automatic segmentation;
  * a single outline label is one block of text.
  */
 export const createTesseractEngine = (
-  pageSegMode: PSM = PSM.AUTO
+  pageSegMode: PageSegMode = PAGE_SEG_AUTO
 ): OcrEngine => {
   let language: string | null = null;
   let worker: TesseractWorker | null = null;
@@ -32,6 +36,8 @@ export const createTesseractEngine = (
       worker = null;
       language = null;
     }
+    // Loaded with the first recognition, not with the editor.
+    const { createWorker } = await import("tesseract.js");
     const next = await createWorker(nextLanguage, OEM_LSTM_ONLY, {
       corePath: OCR_CORE_PATH,
       langPath: OCR_LANG_PATH,
@@ -44,7 +50,11 @@ export const createTesseractEngine = (
       workerBlobURL: false,
       workerPath: OCR_WORKER_PATH,
     });
-    await next.setParameters({ tessedit_pageseg_mode: pageSegMode });
+    await next.setParameters({
+      // SAFETY: PageSegMode only holds values of tesseract.js's string enum
+      // PSM, which is not importable as a value without loading the library.
+      tessedit_pageseg_mode: pageSegMode as PSM,
+    });
     worker = next;
     language = nextLanguage;
     return next;

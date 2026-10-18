@@ -7,9 +7,9 @@ import {
   SquareStackIcon,
   Trash2Icon,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
-import { PageThumbnail } from "@/components/editor/page-thumbnail";
 import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,20 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage } from "@/lib/editor/types";
+
+// Thumbnails render through pdf.js; only load it once a document is open.
+const PageThumbnail = dynamic(
+  async () => {
+    const thumbnail = await import("@/components/editor/page-thumbnail");
+    return thumbnail.PageThumbnail;
+  },
+  {
+    loading: () => (
+      <div className="bg-muted border-border overflow-hidden rounded-md border shadow-xs" />
+    ),
+    ssr: false,
+  }
+);
 
 const moveCurrentPage = (
   pages: readonly EditorPage[],

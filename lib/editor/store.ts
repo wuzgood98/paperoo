@@ -178,8 +178,33 @@ const applySnapshot = (snapshot: HistorySnapshot): void => {
   };
 };
 
+/** The latest frame-batched preview edit, not yet applied. */
+let scheduledPreview: { edit: () => void; frame: number } | null = null;
+
+const applyPreviewEdit = (edit: () => void): void => {
+  internal.previewBase ??= getSnapshot();
+  internal.previewing = true;
+  try {
+    edit();
+  } finally {
+    internal.previewing = false;
+  }
+};
+
+/** Apply a scheduled preview edit now, so history sees its result. */
+const runScheduledPreview = (): void => {
+  const scheduled = scheduledPreview;
+  if (!scheduled) {
+    return;
+  }
+  scheduledPreview = null;
+  cancelAnimationFrame(scheduled.frame);
+  applyPreviewEdit(scheduled.edit);
+};
+
 /** Record pending preview edits as one undo step; returns true if one was pushed. */
 const flushPreview = (): boolean => {
+  runScheduledPreview();
   const base = internal.previewBase;
   if (!base) {
     return false;
@@ -276,10 +301,17 @@ const isPlaceholderForm = (form: PdfFormModel | undefined): boolean =>
 const patchHistoryDocuments = (
   patch: (document: EditorDocument) => EditorDocument
 ): void => {
-  const patchSnapshot = (snapshot: HistorySnapshot): HistorySnapshot => ({
-    ...snapshot,
-    document: patch(snapshot.document),
-  });
+  // Snapshots share documents (selection-only steps keep the same one), so
+  // patch each distinct document once.
+  const patched = new Map<EditorDocument, EditorDocument>();
+  const patchSnapshot = (snapshot: HistorySnapshot): HistorySnapshot => {
+    let document = patched.get(snapshot.document);
+    if (!document) {
+      document = patch(snapshot.document);
+      patched.set(snapshot.document, document);
+    }
+    return { ...snapshot, document };
+  };
   internal.history = {
     future: internal.history.future.map(patchSnapshot),
     past: internal.history.past.map(patchSnapshot),
@@ -389,16 +421,17 @@ export const editorStore = {
       currentPageId: internal.state.currentPageId ?? merged[0]?.id ?? null,
       document: { ...internal.state.document, pages: merged },
     };
-    patchHistoryDocuments((document) => ({
-      ...document,
-      pages: appendEmbeddedFontGlyphs(
-        document.pages,
-        pages.filter(
-          (page) => !document.pages.some((entry) => entry.id === page.id)
+    patchHistoryDocuments((document) => {
+      const loadedIds = new Set(document.pages.map((page) => page.id));
+      return {
+        ...document,
+        pages: appendEmbeddedFontGlyphs(
+          document.pages,
+          pages.filter((page) => !loadedIds.has(page.id)),
+          mergeHydratedPages
         ),
-        mergeHydratedPages
-      ),
-    }));
+      };
+    });
     emit();
   },
 
@@ -985,13 +1018,7 @@ export const editorStore = {
    * commitPreview(), the next recorded edit, or undo/redo.
    */
   previewEdit: (edit: () => void): void => {
-    internal.previewBase ??= getSnapshot();
-    internal.previewing = true;
-    try {
-      edit();
-    } finally {
-      internal.previewing = false;
-    }
+    applyPreviewEdit(edit);
   },
 
   recomputeFitZoom: (): void => {
@@ -1150,6 +1177,22 @@ export const editorStore = {
         ),
       };
     }, true);
+  },
+
+  /**
+   * previewEdit at most once per frame, keeping only the latest edit. Sliders
+   * and pickers report far more often than the page can repaint, and each
+   * preview re-renders every view of the document.
+   */
+  schedulePreviewEdit: (edit: () => void): void => {
+    if (scheduledPreview) {
+      scheduledPreview.edit = edit;
+      return;
+    }
+    scheduledPreview = {
+      edit,
+      frame: requestAnimationFrame(runScheduledPreview),
+    };
   },
 
   selectObjects: (objectIds: readonly string[]): void => {

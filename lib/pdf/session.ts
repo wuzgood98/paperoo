@@ -568,6 +568,12 @@ class PdfSession {
     if (this.#doc !== doc) {
       return false;
     }
+    // Two consumers can load the same uncached page at once (the canvas and
+    // its thumbnail). Keep the first entry: replacing it would drop the
+    // refs already taken, and the page could be evicted while still drawn.
+    if (this.#pages.has(sourceIndex)) {
+      return true;
+    }
     this.#pages.set(sourceIndex, { page, refs: 0 });
     this.#touchIdle(sourceIndex);
     this.#evictIdle();

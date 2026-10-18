@@ -10,9 +10,10 @@ const pointInWord = (point: Point, word: OcrTextObject): boolean =>
 export const visibleOcrWords = (
   words: readonly OcrTextObject[],
   suppressedIds: readonly string[] | undefined
-): OcrTextObject[] => {
+): readonly OcrTextObject[] => {
+  // Hover hit-tests call this every frame; don't copy when nothing is hidden.
   if (!suppressedIds || suppressedIds.length === 0) {
-    return [...words];
+    return words;
   }
   const skipped = new Set(suppressedIds);
   return words.filter((word) => !skipped.has(word.id));
@@ -22,8 +23,10 @@ export const hitTestOcrWord = (
   words: readonly OcrTextObject[],
   point: Point
 ): OcrTextObject | undefined => {
-  for (const word of words.toReversed()) {
-    if (pointInWord(point, word)) {
+  // Topmost first, without copying the list per pointer move.
+  for (let index = words.length - 1; index >= 0; index -= 1) {
+    const word = words[index];
+    if (word && pointInWord(point, word)) {
       return word;
     }
   }

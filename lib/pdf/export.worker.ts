@@ -17,6 +17,19 @@ type WorkerResponse =
 
 const toUint8 = (buffer: ArrayBuffer): Uint8Array => new Uint8Array(buffer);
 
+/** The bytes' own buffer when they fill it, so it can be transferred as is. */
+const ownedBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  const { buffer } = bytes;
+  if (
+    buffer instanceof ArrayBuffer &&
+    bytes.byteOffset === 0 &&
+    bytes.byteLength === buffer.byteLength
+  ) {
+    return buffer;
+  }
+  return new Uint8Array(bytes).buffer;
+};
+
 self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
   try {
     const assets: Record<string, ExportAsset> = {};
@@ -41,10 +54,12 @@ self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
     };
     const { bytes: result, coverOnlyRunIds } =
       await exportDocumentWithReport(input);
-    const copy = new ArrayBuffer(result.byteLength);
-    new Uint8Array(copy).set(result);
-    const response: WorkerResponse = { bytes: copy, coverOnlyRunIds, ok: true };
-    self.postMessage(response, { transfer: [copy] });
+    const response: WorkerResponse = {
+      bytes: ownedBuffer(result),
+      coverOnlyRunIds,
+      ok: true,
+    };
+    self.postMessage(response, { transfer: [response.bytes] });
   } catch (error) {
     const response: WorkerResponse = {
       error: error instanceof Error ? error.message : "Export failed.",

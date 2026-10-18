@@ -83,7 +83,8 @@ export const createPageCanvasCache = <TCanvas>({
 const renderContentCanvas = async (
   sourceIndex: number,
   scale: number,
-  rotation: number | undefined
+  rotation: number | undefined,
+  pixelRatio?: number
 ): Promise<HTMLCanvasElement | null> => {
   const page = await pdfSession.retainPage(sourceIndex);
   if (!page) {
@@ -93,6 +94,7 @@ const renderContentCanvas = async (
   try {
     await renderPdfPage(page, canvas, scale, {
       annotationMode: AnnotationMode.DISABLE,
+      pixelRatio,
       rotation,
     });
     return canvas;
@@ -101,9 +103,21 @@ const renderContentCanvas = async (
   }
 };
 
+/** Shown on screen under edited annotations, so at device resolution. */
 export const getPageContentCanvas = createPageCanvasCache({
   currentDocument: () => pdfSession.document,
-  render: renderContentCanvas,
+  render: (sourceIndex, scale, rotation) =>
+    renderContentCanvas(sourceIndex, scale, rotation),
+});
+
+/**
+ * Only read for colors, so at CSS resolution: a quarter of the pixels (and
+ * memory) on a 2x display. Samplers map rects by the canvas's own width.
+ */
+const getPageSampleCanvas = createPageCanvasCache({
+  currentDocument: () => pdfSession.document,
+  render: (sourceIndex, scale, rotation) =>
+    renderContentCanvas(sourceIndex, scale, rotation, 1),
 });
 
 /** Page content canvas in displayed space, so displayed rects map by scale only. */
@@ -112,3 +126,10 @@ export const getDisplayedPageContentCanvas = (
   scale: number
 ): Promise<HTMLCanvasElement | null> =>
   getPageContentCanvas(page.sourceIndex, scale, displayedCanvasRotation(page));
+
+/** Page content in displayed space at CSS resolution, for color sampling. */
+export const getDisplayedPageSampleCanvas = (
+  page: Pick<EditorPage, "sourceIndex" | "sourceRotate">,
+  scale: number
+): Promise<HTMLCanvasElement | null> =>
+  getPageSampleCanvas(page.sourceIndex, scale, displayedCanvasRotation(page));

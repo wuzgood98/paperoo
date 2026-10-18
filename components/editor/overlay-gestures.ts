@@ -62,7 +62,7 @@ export type Gesture =
     }
   | { kind: "draw"; points: Point[] }
   | { kind: "drag"; object: GestureTarget; start: Point; origin: Point }
-  | { kind: "rect"; start: Point }
+  | { end?: Point; kind: "rect"; start: Point }
   | {
       kind: "rotate";
       object: GestureTarget;
@@ -153,8 +153,8 @@ export const useOverlayGestures = ({
   );
   const draftFrameRef = useRef<number | null>(null);
 
-  /** Copy the stroke into React state at most once per frame. */
-  const scheduleDrawDraft = (): void => {
+  /** Copy the stroke or box into React state at most once per frame. */
+  const scheduleDraft = (): void => {
     if (draftFrameRef.current !== null) {
       return;
     }
@@ -164,6 +164,24 @@ export const useOverlayGestures = ({
       if (gesture?.kind === "draw") {
         setDraft({ kind: "draw", points: [...gesture.points] });
       }
+      if (gesture?.kind === "rect" && gesture.end) {
+        setDraft({ end: gesture.end, kind: "rect", start: gesture.start });
+      }
+    });
+  };
+
+  const previewFrameRef = useRef<number | null>(null);
+  const previewPointRef = useRef<Point | null>(null);
+
+  /** Move the signature preview at most once per frame. */
+  const schedulePreviewPoint = (point: Point): void => {
+    previewPointRef.current = point;
+    if (previewFrameRef.current !== null) {
+      return;
+    }
+    previewFrameRef.current = requestAnimationFrame(() => {
+      previewFrameRef.current = null;
+      setPreviewPoint(previewPointRef.current);
     });
   };
 
@@ -246,7 +264,7 @@ export const useOverlayGestures = ({
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>): void => {
     if (placingSignature) {
-      setPreviewPoint(toPage(event));
+      schedulePreviewPoint(toPage(event));
     }
     const gesture = gestureRef.current;
     if (!gesture) {
@@ -298,12 +316,13 @@ export const useOverlayGestures = ({
       for (const sample of samples) {
         gesture.points.push(toPage(sample));
       }
-      scheduleDrawDraft();
+      scheduleDraft();
       return;
     }
 
     if (gesture.kind === "rect") {
-      setDraft({ end: point, kind: "rect", start: gesture.start });
+      gesture.end = point;
+      scheduleDraft();
     }
   };
 

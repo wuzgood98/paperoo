@@ -14,7 +14,11 @@ import {
 } from "@/components/ui/empty";
 import { Kbd } from "@/components/ui/kbd";
 import { useEditorStore } from "@/lib/editor/store";
-import { openPdfFromList, openPdfFromUrl } from "@/lib/pdf/open-pdf";
+import {
+  openPdfFromList,
+  openPdfFromUrl,
+  prewarmPdfOpen,
+} from "@/lib/pdf/open-pdf";
 
 const onFiles = async (files: FileList | null) => {
   await openPdfFromList(files);
@@ -59,7 +63,12 @@ export const EmptyState = () => {
           type="file"
         />
         <div className="flex items-center justify-center gap-2">
-          <Button pressable onClick={() => inputRef.current?.click()}>
+          <Button
+            pressable
+            onClick={() => inputRef.current?.click()}
+            onFocus={prewarmPdfOpen}
+            onPointerEnter={prewarmPdfOpen}
+          >
             Choose PDF
           </Button>
           <Button
@@ -67,6 +76,8 @@ export const EmptyState = () => {
             onClick={async () => {
               await openPdfFromUrl("/sample.pdf", "sample.pdf");
             }}
+            onFocus={prewarmPdfOpen}
+            onPointerEnter={prewarmPdfOpen}
             variant="outline"
           >
             Open sample

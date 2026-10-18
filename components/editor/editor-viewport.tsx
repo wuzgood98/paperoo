@@ -1,7 +1,7 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EditorPageFrame } from "@/components/editor/editor-page-frame";
 import { InspectorBar } from "@/components/editor/inspector-bar";
@@ -37,6 +37,7 @@ export const EditorViewport = () => {
   const previewRef = useRef(zoom);
   const settleTimer = useRef<number>(0);
   const scrollRaf = useRef(0);
+  const zoomRaf = useRef(0);
 
   if (zoom !== trackedZoom) {
     setTrackedZoom(zoom);
@@ -44,6 +45,14 @@ export const EditorViewport = () => {
   }
 
   const displayZoom = previewZoom ?? zoom;
+  // Scroll and wheel listeners read these, so they are set up once instead
+  // of on every edit (each edit makes a new `pages` array) and zoom step.
+  const pagesRef = useRef(pages);
+  const displayZoomRef = useRef(displayZoom);
+  useEffect(() => {
+    pagesRef.current = pages;
+    displayZoomRef.current = displayZoom;
+  }, [displayZoom, pages]);
 
   // oxlint-disable-next-line react/incompatible-library -- TanStack Virtual is not React Compiler memo-safe
   const virtualizer = useVirtualizer({
@@ -69,9 +78,15 @@ export const EditorViewport = () => {
 
   const virtualItems = virtualizer.getVirtualItems();
 
-  const pagesMeasureKey = pages
-    .map((page) => `${page.id}:${page.rotation}:${page.width}:${page.height}`)
-    .join("\0");
+  const pagesMeasureKey = useMemo(
+    () =>
+      pages
+        .map(
+          (page) => `${page.id}:${page.rotation}:${page.width}:${page.height}`
+        )
+        .join("\0"),
+    [pages]
+  );
 
   useEffect(() => {
     virtualizer.measure();
@@ -103,9 +118,10 @@ export const EditorViewport = () => {
     }
   }, [pages, visiblePageKey]);
 
+  const hasPages = pages.length > 0;
   useEffect(() => {
     const node = scrollerRef.current;
-    if (!node) {
+    if (!(hasPages && node)) {
       return;
     }
 
@@ -140,7 +156,12 @@ export const EditorViewport = () => {
         MAX_ZOOM
       );
       previewRef.current = next;
-      setPreviewZoom(next);
+      // Trackpads send a wheel event per display frame or faster; render
+      // the preview at most once per frame.
+      window.cancelAnimationFrame(zoomRaf.current);
+      zoomRaf.current = window.requestAnimationFrame(() => {
+        setPreviewZoom(previewRef.current);
+      });
       window.clearTimeout(settleTimer.current);
       settleTimer.current = window.setTimeout(() => {
         editorStore.setZoom(next, "custom");
@@ -152,10 +173,10 @@ export const EditorViewport = () => {
         return;
       }
       const activeId = activePageIdFromScroll({
-        pages,
+        pages: pagesRef.current,
         scrollTop: node.scrollTop,
         viewportHeight: node.clientHeight,
-        zoom: displayZoom,
+        zoom: displayZoomRef.current,
       });
       if (!activeId || activeId === editorStore.getState().currentPageId) {
         return;
@@ -177,13 +198,13 @@ export const EditorViewport = () => {
       node.removeEventListener("scroll", onScroll);
       window.clearTimeout(settleTimer.current);
       window.cancelAnimationFrame(scrollRaf.current);
+      window.cancelAnimationFrame(zoomRaf.current);
     };
-  }, [displayZoom, pages]);
+  }, [hasPages]);
 
   // The inspector strip sits above the scroller, so mounting or resizing it
   // moves every page on screen. Shift scrollTop by the same amount to keep
   // the content still. Resize observers run before paint, so nothing jumps.
-  const hasPages = pages.length > 0;
   useEffect(() => {
     const strip = inspectorRef.current;
     const scroller = scrollerRef.current;
@@ -206,10 +227,10 @@ export const EditorViewport = () => {
     };
   }, [hasPages]);
 
-  const activatePage = (pageId: string): void => {
+  const activatePage = useCallback((pageId: string): void => {
     skipRevealRef.current = true;
     editorStore.setCurrentPage(pageId, { syncFitZoom: false });
-  };
+  }, []);
 
   useEffect(() => {
     if (!currentPageId) {
@@ -281,6 +302,7 @@ export const EditorViewport = () => {
                   displayZoom={displayZoom}
                   onActivate={activatePage}
                   page={page}
+                  pageCount={pages.length}
                   zoom={zoom}
                 />
               </div>

@@ -115,7 +115,7 @@ export const ColorField = ({
                   return;
                 }
                 // Preview while dragging; onValueCommitted records one undo step.
-                editorStore.previewEdit(() =>
+                editorStore.schedulePreviewEdit(() =>
                   emitHsl({ ...hsl, l: lightness })
                 );
               }}
@@ -133,7 +133,7 @@ export const ColorField = ({
               onBlur={commitPreview}
               // Preview while the picker drags; its change event records one undo step.
               onValueChange={(next) =>
-                editorStore.previewEdit(() => onChange(next ?? ""))
+                editorStore.schedulePreviewEdit(() => onChange(next ?? ""))
               }
               ref={commitOnNativeChange}
               type="color"

@@ -298,7 +298,7 @@ export const InspectorBar = () => {
             if (next === undefined) {
               return;
             }
-            editorStore.previewEdit(() =>
+            editorStore.schedulePreviewEdit(() =>
               editorStore.patchSelected((object) => ({
                 ...object,
                 opacity: next,

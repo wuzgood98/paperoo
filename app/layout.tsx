@@ -1,7 +1,7 @@
 /* oxlint-disable react/no-danger -- Next.js JSON-LD guide uses a script tag */
 
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist } from "next/font/google";
 
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -11,11 +11,6 @@ import { siteConfig } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
-
-const fontMono = Geist_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-});
 
 export const viewport: Viewport = {
   colorScheme: "light dark",
@@ -74,12 +69,7 @@ const RootLayout = ({
   <html
     lang="en"
     suppressHydrationWarning
-    className={cn(
-      "antialiased",
-      fontMono.variable,
-      "font-sans",
-      geist.variable
-    )}
+    className={cn("antialiased", "font-sans", geist.variable)}
     data-scroll-behavior="smooth"
   >
     <body>

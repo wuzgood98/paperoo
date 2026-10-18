@@ -289,17 +289,30 @@ const originMatches = (
  * Pick the run's show: same text, and either the same origin or the only
  * show and run with that text on the page. Anything ambiguous gets no target.
  */
+interface ShowGroup {
+  candidates: ShowRecord[];
+  /** Every candidate before this index is used; scans start here. */
+  firstUnused: number;
+}
+
 const matchShow = (
   run: PdfTextObject,
-  candidates: readonly ShowRecord[],
+  group: ShowGroup,
   used: ReadonlySet<number>,
   runsWithText: number
 ): ShowRecord | null => {
-  const byOrigin = candidates.find(
-    (show) => !used.has(show.ordinal) && originMatches(show, run)
-  );
-  if (byOrigin) {
-    return byOrigin;
+  const { candidates } = group;
+  while (
+    group.firstUnused < candidates.length &&
+    used.has(candidates[group.firstUnused]?.ordinal ?? -1)
+  ) {
+    group.firstUnused += 1;
+  }
+  for (let i = group.firstUnused; i < candidates.length; i += 1) {
+    const show = candidates[i];
+    if (show && !used.has(show.ordinal) && originMatches(show, run)) {
+      return show;
+    }
   }
   const [only] = candidates;
   const unique = candidates.length === 1 && runsWithText === 1;
@@ -308,11 +321,17 @@ const matchShow = (
 
 const groupShowsByText = (
   shows: readonly ShowRecord[]
-): Map<string, ShowRecord[]> => {
-  const groups = new Map<string, ShowRecord[]>();
+): Map<string, ShowGroup> => {
+  const groups = new Map<string, ShowGroup>();
   for (const show of shows) {
-    if (show.text !== "") {
-      groups.set(show.text, [...(groups.get(show.text) ?? []), show]);
+    if (show.text === "") {
+      continue;
+    }
+    const group = groups.get(show.text);
+    if (group) {
+      group.candidates.push(show);
+    } else {
+      groups.set(show.text, { candidates: [show], firstUnused: 0 });
     }
   }
   return groups;
@@ -338,9 +357,9 @@ export const attachRemovalTargets = (
   const used = new Set<number>();
   const targetedRuns = runs.map((run) => {
     const text = normalizeText(run.originalText);
-    const candidates = showsByText.get(text);
-    const show = candidates
-      ? matchShow(run, candidates, used, runTextCounts.get(text) ?? 0)
+    const group = showsByText.get(text);
+    const show = group
+      ? matchShow(run, group, used, runTextCounts.get(text) ?? 0)
       : null;
     if (!show) {
       return run;

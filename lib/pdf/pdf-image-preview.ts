@@ -1,7 +1,7 @@
 import { pageToCss } from "@/lib/editor/coordinates";
 import { isPdfImageDirty, pdfImageAssetId } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
-import type { PdfImageObject } from "@/lib/editor/types";
+import type { EditorDocument, PdfImageObject } from "@/lib/editor/types";
 import { AnnotationMode } from "@/lib/pdf/pdfjs";
 import type { PDFPageProxy } from "@/lib/pdf/pdfjs";
 import { pdfSession } from "@/lib/pdf/session";
@@ -333,11 +333,26 @@ export const capturePdfImagePreviewFromCanvas = (
   return asset.id;
 };
 
-const livePdfImage = (object: PdfImageObject): PdfImageObject =>
-  editorStore
-    .getState()
-    .document.pages.flatMap((page) => page.pdfImageObjects)
-    .find((item) => item.id === object.id) ?? object;
+/** id → image per document snapshot, so many lookups share one walk. */
+const imagesByDocument = new WeakMap<
+  EditorDocument,
+  Map<string, PdfImageObject>
+>();
+
+const livePdfImage = (object: PdfImageObject): PdfImageObject => {
+  const { document } = editorStore.getState();
+  let images = imagesByDocument.get(document);
+  if (!images) {
+    images = new Map();
+    for (const page of document.pages) {
+      for (const image of page.pdfImageObjects) {
+        images.set(image.id, image);
+      }
+    }
+    imagesByDocument.set(document, images);
+  }
+  return images.get(object.id) ?? object;
+};
 
 export const ensurePdfImagePreview = async (
   object: PdfImageObject,

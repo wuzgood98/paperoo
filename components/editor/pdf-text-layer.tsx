@@ -352,24 +352,29 @@ const PdfTextEditor = ({
   );
 };
 
-const PdfTextLayerView = ({
+/** Covers, redrawn text and the inline editor for edited runs only. */
+const PdfTextEditsView = ({
   editingId,
-  hoveredId,
   objects,
   onExitEdit,
   page,
-  selectedId,
   zoom,
 }: {
   editingId: string | null;
-  hoveredId: string | null;
   objects: readonly PdfTextObject[];
   onExitEdit: () => void;
   page: EditorPage;
-  selectedId: string | null;
   zoom: number;
 }) => {
-  const hasDirty = objects.some((object) => isPdfTextDirty(object));
+  // Most runs are untouched; skip them before any per-run lookups.
+  const edited = useMemo(
+    () =>
+      objects.filter(
+        (object) => object.id === editingId || isPdfTextDirty(object)
+      ),
+    [editingId, objects]
+  );
+  const hasDirty = edited.some((object) => isPdfTextDirty(object));
   const isEditing = editingId !== null;
   const [fontsReady, setFontsReady] = useState(false);
 
@@ -394,7 +399,7 @@ const PdfTextLayerView = ({
 
   return (
     <>
-      {objects.map((object) => {
+      {edited.map((object) => {
         const outline = pdfTextInkOutline(object, page);
         if (!(outline && (object.id === editingId || isPdfTextDirty(object)))) {
           return null;
@@ -410,7 +415,7 @@ const PdfTextLayerView = ({
           />
         );
       })}
-      {objects.map((object) => {
+      {edited.map((object) => {
         if (
           object.id === editingId ||
           !isPdfTextDirty(object) ||
@@ -440,7 +445,7 @@ const PdfTextLayerView = ({
           </div>
         );
       })}
-      {objects.map((object) => {
+      {edited.map((object) => {
         if (object.id === editingId) {
           return (
             <PdfTextEditor
@@ -522,31 +527,85 @@ const PdfTextLayerView = ({
           </div>
         );
       })}
-      {objects.map((object) => {
-        if (object.id === editingId) {
-          return null;
-        }
-        const hovered = object.id === hoveredId;
-        const selected = object.id === selectedId;
-        if (!hovered && !selected) {
-          return null;
-        }
-        return (
-          <div
-            className={cn(
-              "pointer-events-none absolute origin-center",
-              selected
-                ? "outline-primary outline"
-                : "outline-primary/40 outline"
-            )}
-            key={`chrome-${object.id}`}
-            style={pdfTextFrameStyle(object, overlayFrame(object), zoom)}
-          />
-        );
-      })}
     </>
   );
 };
+
+/** Memoized apart from the chrome, so hover never redraws edited runs. */
+const PdfTextEdits = memo(PdfTextEditsView);
+
+const PdfTextChrome = ({
+  editingId,
+  hoveredId,
+  objects,
+  selectedId,
+  zoom,
+}: {
+  editingId: string | null;
+  hoveredId: string | null;
+  objects: readonly PdfTextObject[];
+  selectedId: string | null;
+  zoom: number;
+}) => {
+  if (hoveredId === null && selectedId === null) {
+    return null;
+  }
+  return objects.map((object) => {
+    if (object.id === editingId) {
+      return null;
+    }
+    const hovered = object.id === hoveredId;
+    const selected = object.id === selectedId;
+    if (!hovered && !selected) {
+      return null;
+    }
+    return (
+      <div
+        className={cn(
+          "pointer-events-none absolute origin-center",
+          selected ? "outline-primary outline" : "outline-primary/40 outline"
+        )}
+        key={`chrome-${object.id}`}
+        style={pdfTextFrameStyle(object, overlayFrame(object), zoom)}
+      />
+    );
+  });
+};
+
+const PdfTextLayerView = ({
+  editingId,
+  hoveredId,
+  objects,
+  onExitEdit,
+  page,
+  selectedId,
+  zoom,
+}: {
+  editingId: string | null;
+  hoveredId: string | null;
+  objects: readonly PdfTextObject[];
+  onExitEdit: () => void;
+  page: EditorPage;
+  selectedId: string | null;
+  zoom: number;
+}) => (
+  <>
+    <PdfTextEdits
+      editingId={editingId}
+      objects={objects}
+      onExitEdit={onExitEdit}
+      page={page}
+      zoom={zoom}
+    />
+    <PdfTextChrome
+      editingId={editingId}
+      hoveredId={hoveredId}
+      objects={objects}
+      selectedId={selectedId}
+      zoom={zoom}
+    />
+  </>
+);
 
 /** Memoized: the overlay re-renders on hover and selection changes this layer may not use. */
 export const PdfTextLayer = memo(PdfTextLayerView);

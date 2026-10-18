@@ -9,7 +9,7 @@ import {
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject, Rect } from "@/lib/editor/types";
 import { displayedRectToCanvasPixels } from "@/lib/pdf/canvas-pixels";
-import { getDisplayedPageContentCanvas } from "@/lib/pdf/pdf-annotation-content-cache";
+import { getDisplayedPageSampleCanvas } from "@/lib/pdf/pdf-annotation-content-cache";
 import {
   COVER_SAMPLE_RING_PX,
   sampleBackground,
@@ -81,7 +81,7 @@ export interface PdfTextMeasureEnv {
 }
 
 const browserMeasureEnv: PdfTextMeasureEnv = {
-  loadPageCanvas: getDisplayedPageContentCanvas,
+  loadPageCanvas: getDisplayedPageSampleCanvas,
   probeFontGlyphs: async (sourceIndex, baseFontName) => {
     // Loaded on first edit so pdf-lib stays out of the initial bundle.
     const { probeReusableFontGlyphs } =

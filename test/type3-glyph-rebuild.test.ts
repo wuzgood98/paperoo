@@ -212,3 +212,19 @@ test("the inspector names missing glyphs or confirms the document's own", async 
     "The document's own glyphs can't be used here; using a substitute."
   );
 });
+
+test("an edit elsewhere keeps the resolved face instead of rebuilding it", async () => {
+  const page = await fixturePage();
+  const run = runWithText(page, FIGMA_HEADING.text);
+  const before = resolveGlyphFace([page], page.id, run);
+  // Edits copy the page and the pages array but keep the sliced glyphs.
+  const edited: EditorPage = { ...page, rotation: page.rotation };
+  const after = resolveGlyphFace([edited], edited.id, run);
+  const reSliced: EditorPage = {
+    ...page,
+    type3Glyphs: page.type3Glyphs && { ...page.type3Glyphs },
+  };
+
+  expect(after).toBe(before);
+  expect(resolveGlyphFace([reSliced], reSliced.id, run)).not.toBe(before);
+});

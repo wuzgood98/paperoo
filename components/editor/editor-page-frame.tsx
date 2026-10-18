@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { EditorOverlay } from "@/components/editor/editor-overlay";
 import { OcrPageBanner } from "@/components/editor/ocr-page-banner";
@@ -11,16 +11,18 @@ import { editorStore } from "@/lib/editor/store";
 import type { EditorPage } from "@/lib/editor/types";
 import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
 
-export const EditorPageFrame = ({
+const EditorPageFrameView = ({
   displayZoom,
   onActivate,
   page,
+  pageCount,
   zoom,
 }: {
   displayZoom: number;
   // Make this page current without scrolling it; it is already under the pointer.
   onActivate: (pageId: string) => void;
   page: EditorPage;
+  pageCount: number;
   zoom: number;
 }) => {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -109,7 +111,7 @@ export const EditorPageFrame = ({
           <EditorOverlay page={page} zoom={zoom} />
           <OcrPageBanner
             page={page}
-            pageCount={editorStore.getState().document.pages.length}
+            pageCount={pageCount}
             pageNumber={page.sourceIndex + 1}
           />
         </div>
@@ -117,3 +119,9 @@ export const EditorPageFrame = ({
     </div>
   );
 };
+
+/**
+ * Memoized: every edit makes a new `pages` array, but only the edited page
+ * gets a new `page`, so the other visible frames skip rendering.
+ */
+export const EditorPageFrame = memo(EditorPageFrameView);
