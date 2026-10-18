@@ -15,6 +15,7 @@ import { useRef, useState } from "react";
 
 import { LogoMark } from "@/components/brand/logo-mark";
 import { DocumentSearch } from "@/components/editor/document-search";
+import { exportPdfWithToast } from "@/components/editor/export-action";
 import { PageSheetButton } from "@/components/editor/page-sidebar";
 import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { Button } from "@/components/ui/button";
@@ -53,18 +54,7 @@ const openFile = async (files: FileList | null) => {
 };
 
 const exportPdf = async () => {
-  try {
-    // The export runner pulls in pdf.js and the export worker; load it on use.
-    const { runExport } = await import("@/lib/pdf/run-export");
-    await runExport();
-    toastManager.add({ title: "Exported PDF", type: "success" });
-  } catch (error) {
-    toastManager.add({
-      description: error instanceof Error ? error.message : "Export failed.",
-      title: "Export failed",
-      type: "error",
-    });
-  }
+  await exportPdfWithToast();
 };
 
 const printPdf = async () => {

@@ -108,6 +108,12 @@ export interface EditorStoreState {
 
 interface StoreInternal {
   assets: Map<string, ImageAsset>;
+  /**
+   * The document as last opened or exported. Updates are immutable, so the
+   * document is unsaved exactly when it is not this reference; undoing back
+   * to it makes it saved again.
+   */
+  cleanDocument: EditorDocument | null;
   history: HistoryState;
   listeners: Set<() => void>;
   /** Snapshot from before the first uncommitted preview edit, if any. */
@@ -144,6 +150,7 @@ const initialState = (): EditorStoreState => ({
 
 const internal: StoreInternal = {
   assets: new Map(),
+  cleanDocument: null,
   history: emptyHistory(),
   listeners: new Set(),
   previewBase: null,
@@ -319,6 +326,23 @@ const patchHistoryDocuments = (
   if (internal.previewBase) {
     internal.previewBase = patchSnapshot(internal.previewBase);
   }
+  // Keep the saved document the same reference as its history snapshot.
+  const clean = internal.cleanDocument;
+  if (clean && clean !== internal.state.document) {
+    internal.cleanDocument = patched.get(clean) ?? patch(clean);
+  }
+};
+
+/**
+ * Run an update that records a fact about the source PDF, not an edit: a
+ * saved document stays saved.
+ */
+const applyFact = (update: () => void): void => {
+  const wasClean = internal.cleanDocument === internal.state.document;
+  update();
+  if (wasClean) {
+    internal.cleanDocument = internal.state.document;
+  }
 };
 
 const mapPdfTextObject = (
@@ -416,21 +440,23 @@ export const editorStore = {
       fresh,
       mergeHydratedPages
     );
-    internal.state = {
-      ...internal.state,
-      currentPageId: internal.state.currentPageId ?? merged[0]?.id ?? null,
-      document: { ...internal.state.document, pages: merged },
-    };
-    patchHistoryDocuments((document) => {
-      const loadedIds = new Set(document.pages.map((page) => page.id));
-      return {
-        ...document,
-        pages: appendEmbeddedFontGlyphs(
-          document.pages,
-          pages.filter((page) => !loadedIds.has(page.id)),
-          mergeHydratedPages
-        ),
+    applyFact(() => {
+      internal.state = {
+        ...internal.state,
+        currentPageId: internal.state.currentPageId ?? merged[0]?.id ?? null,
+        document: { ...internal.state.document, pages: merged },
       };
+      patchHistoryDocuments((document) => {
+        const loadedIds = new Set(document.pages.map((page) => page.id));
+        return {
+          ...document,
+          pages: appendEmbeddedFontGlyphs(
+            document.pages,
+            pages.filter((page) => !loadedIds.has(page.id)),
+            mergeHydratedPages
+          ),
+        };
+      });
     });
     emit();
   },
@@ -473,10 +499,13 @@ export const editorStore = {
     const [first] = runs;
     const reselect =
       internal.state.selectedPdfVectorId === vectorId && first !== undefined;
-    internal.state = {
-      ...internal.state,
-      document: patch(internal.state.document),
-    };
+    applyFact(() => {
+      internal.state = {
+        ...internal.state,
+        document: patch(internal.state.document),
+      };
+      patchHistoryDocuments(patch);
+    });
     if (reselect) {
       // A click on the label selected its path; it is text now.
       internal.state = {
@@ -485,7 +514,6 @@ export const editorStore = {
         selectedPdfVectorId: null,
       };
     }
-    patchHistoryDocuments(patch);
     emit();
   },
 
@@ -514,11 +542,13 @@ export const editorStore = {
       ...document,
       pages: mapPdfTextObject(document.pages, pageId, objectId, fill),
     });
-    internal.state = {
-      ...internal.state,
-      document: patch(internal.state.document),
-    };
-    patchHistoryDocuments(patch);
+    applyFact(() => {
+      internal.state = {
+        ...internal.state,
+        document: patch(internal.state.document),
+      };
+      patchHistoryDocuments(patch);
+    });
     emit();
   },
 
@@ -530,6 +560,7 @@ export const editorStore = {
     editorStore.revokeAssets();
     internal.history = emptyHistory();
     internal.previewBase = null;
+    internal.cleanDocument = null;
     setState(initialState());
   },
 
@@ -850,6 +881,10 @@ export const editorStore = {
       };
     }, !addedLast);
     if (addedLast) {
+      // Discarding the box undoes adding it, saved state included.
+      if (previous.document === internal.cleanDocument) {
+        internal.cleanDocument = internal.state.document;
+      }
       internal.history = {
         future: [],
         past: internal.history.past.slice(0, -1),
@@ -875,8 +910,25 @@ export const editorStore = {
 
   getState: (): EditorStoreState => internal.state,
 
+  /** True when an open document has edits since it was opened or exported. */
+  isDirty: (): boolean =>
+    internal.state.status === "ready" &&
+    internal.state.document !== internal.cleanDocument,
+
   isProvisionalAsset: (assetId: string): boolean =>
     internal.assets.get(assetId)?.provisional === true,
+
+  /**
+   * Record `document` as saved, e.g. the one a full export wrote. Edits made
+   * while it exported keep the current document unsaved.
+   */
+  markClean: (document: EditorDocument = internal.state.document): void => {
+    if (internal.cleanDocument === document) {
+      return;
+    }
+    internal.cleanDocument = document;
+    emit();
+  },
 
   patchPdfAnnotation: (
     updater: (object: PdfAnnotationObject) => PdfAnnotationObject
@@ -1134,9 +1186,14 @@ export const editorStore = {
     editorStore.revokeAssets();
     internal.history = emptyHistory();
     internal.previewBase = null;
+    const document: EditorDocument = {
+      form,
+      pages: mergeEmbeddedFontGlyphs(pages),
+    };
+    internal.cleanDocument = document;
     setState({
       currentPageId: pages[0]?.id ?? null,
-      document: { form, pages: mergeEmbeddedFontGlyphs(pages) },
+      document,
       errorMessage: null,
       fileName,
       selectedObjectIds: [],
@@ -1340,13 +1397,15 @@ export const editorStore = {
   },
 
   setDocumentForm: (form: PdfFormModel): void => {
-    internal.state = {
-      ...internal.state,
-      document: { ...internal.state.document, form },
-    };
-    patchHistoryDocuments((document) =>
-      isPlaceholderForm(document.form) ? { ...document, form } : document
-    );
+    applyFact(() => {
+      internal.state = {
+        ...internal.state,
+        document: { ...internal.state.document, form },
+      };
+      patchHistoryDocuments((document) =>
+        isPlaceholderForm(document.form) ? { ...document, form } : document
+      );
+    });
     emit();
   },
 
@@ -1389,7 +1448,7 @@ export const editorStore = {
   },
 
   setPdfImagePreview: (objectId: string, previewAssetId: string): void => {
-    commit(() => {
+    applyFact(() => {
       internal.state = {
         ...internal.state,
         document: withPages(
@@ -1424,7 +1483,8 @@ export const editorStore = {
           })
         ),
       };
-    }, false);
+    });
+    emit();
   },
 
   setShapeStyle: (shapeStyle: Partial<ShapeStyleDefaults>): void => {
@@ -1535,6 +1595,13 @@ export const useCanUndo = (): boolean =>
     editorStore.subscribe,
     editorStore.canUndo,
     editorStore.canUndo
+  );
+
+export const useIsDirty = (): boolean =>
+  useSyncExternalStore(
+    editorStore.subscribe,
+    editorStore.isDirty,
+    editorStore.isDirty
   );
 
 export const useCanRedo = (): boolean =>

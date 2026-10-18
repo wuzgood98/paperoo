@@ -152,6 +152,7 @@ const warnCoverOnly = (count: number): void => {
 };
 
 export const runExport = async (): Promise<void> => {
+  const exported = editorStore.getState().document;
   const { bytes: result, coverOnlyRunIds } = await buildEditedPdfBytes();
   const state = editorStore.getState();
   const blob = new Blob([result], { type: "application/pdf" });
@@ -162,5 +163,6 @@ export const runExport = async (): Promise<void> => {
   link.download = `${baseName}-edited.pdf`;
   link.click();
   URL.revokeObjectURL(url);
+  editorStore.markClean(exported);
   warnCoverOnly(coverOnlyRunIds.length);
 };
