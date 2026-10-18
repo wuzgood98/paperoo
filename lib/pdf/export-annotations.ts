@@ -1,4 +1,4 @@
-import type { PDFDocument, PDFPage } from "pdf-lib";
+import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
 import { PDFDict, PDFName, PDFRef, PDFString, StandardFonts } from "pdf-lib";
 
 import { displayedToUserSpace } from "@/lib/editor/coordinates";
@@ -219,6 +219,7 @@ const escapePdfString = (value: string): string =>
 
 const setFreeTextAppearance = async (
   doc: PDFDocument,
+  helvetica: () => Promise<PDFFont>,
   dict: PDFDict,
   object: PdfFreeTextAnnotation,
   editorPage: EditorPage
@@ -231,7 +232,7 @@ const setFreeTextAppearance = async (
     PDFName.of("DA"),
     PDFString.of(`/Helv ${object.fontSize} Tf ${r} ${g} ${b} rg`)
   );
-  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const font = await helvetica();
   const { fontSize } = object;
   const lines = object.contents.split(/\r\n|\n|\r/u);
   const lineHeight = fontSize * 1.35;
@@ -263,6 +264,7 @@ const setFreeTextAppearance = async (
 // oxlint-disable-next-line eslint/complexity -- per-annotation-type export branches.
 const applyAnnotationEdit = async (
   doc: PDFDocument,
+  helvetica: () => Promise<PDFFont>,
   editorPage: EditorPage,
   page: PDFPage,
   object: PdfAnnotationObject
@@ -293,7 +295,7 @@ const applyAnnotationEdit = async (
       return;
     }
     case "pdf-free-text": {
-      await setFreeTextAppearance(doc, dict, object, editorPage);
+      await setFreeTextAppearance(doc, helvetica, dict, object, editorPage);
       return;
     }
     case "pdf-text-note": {
@@ -358,6 +360,12 @@ export const applyPdfAnnotationEdits = async (
   document: EditorDocument
 ): Promise<void> => {
   const pages = source.getPages();
+  // Every free-text appearance shares one Helvetica resource.
+  let embedded: Promise<PDFFont> | undefined;
+  const helvetica = (): Promise<PDFFont> => {
+    embedded ??= source.embedFont(StandardFonts.Helvetica);
+    return embedded;
+  };
   for (const editorPage of document.pages) {
     const dirty = editorPage.pdfAnnotationObjects.filter(isPdfAnnotationDirty);
     if (dirty.length === 0) {
@@ -369,7 +377,7 @@ export const applyPdfAnnotationEdits = async (
     }
     for (const object of dirty) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- sequential annot edits
-      await applyAnnotationEdit(source, editorPage, page, object);
+      await applyAnnotationEdit(source, helvetica, editorPage, page, object);
     }
   }
 };

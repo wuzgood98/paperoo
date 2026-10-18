@@ -1455,6 +1455,10 @@ export const exportDocumentWithReport = async (
   const indices = input.document.pages.map((page) => page.sourceIndex);
   const copied = await copyPagesWithAcroForm(source, output, indices);
 
+  // Shared by every page: a font is parsed and subset once, and an image
+  // placed on many pages is embedded once and referenced from each.
+  const fonts = new Map<string, PDFFont>();
+  const images = new Map<string, PDFImage>();
   for (const [index, page] of copied.entries()) {
     output.addPage(page);
     const editorPage = input.document.pages[index];
@@ -1468,8 +1472,6 @@ export const exportDocumentWithReport = async (
       page.setRotation(degrees(combined));
     }
 
-    const fonts = new Map<string, PDFFont>();
-    const images = new Map<string, PDFImage>();
     const ocrWords = input.ocrWordsByPage?.[editorPage.id];
     if (ocrWords && ocrWords.length > 0) {
       drawInvisibleOcrWords(

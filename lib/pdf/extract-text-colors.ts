@@ -626,8 +626,11 @@ const locateItem = (
   if (nextKey && stream.text.startsWith(nextKey, cursor)) {
     return -1;
   }
-  const found = stream.text.indexOf(key, cursor);
-  return found !== -1 && found - cursor <= RESYNC_WINDOW ? found : -1;
+  // Only the window can resync, so the search never scans the rest of the page.
+  const found = stream.text
+    .slice(cursor, cursor + RESYNC_WINDOW + key.length)
+    .indexOf(key);
+  return found === -1 ? -1 : cursor + found;
 };
 
 /**

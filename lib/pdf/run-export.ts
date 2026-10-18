@@ -16,6 +16,25 @@ const fetchBytes = async (url: string): Promise<ArrayBuffer> => {
   return response.arrayBuffer();
 };
 
+/** Bundled font files, fetched once per session; exports transfer copies. */
+const fontCache = new Map<string, Promise<ArrayBuffer>>();
+
+const cachedFontCopy = async (url: string): Promise<ArrayBuffer> => {
+  let pending = fontCache.get(url);
+  if (!pending) {
+    pending = fetchBytes(url);
+    fontCache.set(url, pending);
+  }
+  try {
+    const buffer = await pending;
+    return buffer.slice(0);
+  } catch (error) {
+    // A failed fetch is retried on the next export.
+    fontCache.delete(url);
+    throw error;
+  }
+};
+
 export interface EditedPdf {
   bytes: ArrayBuffer;
   /** Edited runs whose old text could only be covered, not removed. */
@@ -43,7 +62,9 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
         (weight) => FONT_FILES.inter[weight]
       ),
     ];
-    const buffers = await Promise.all(fontUrls.map((url) => fetchBytes(url)));
+    const buffers = await Promise.all(
+      fontUrls.map((url) => cachedFontCopy(url))
+    );
     for (const [index, url] of fontUrls.entries()) {
       const buffer = buffers[index];
       if (buffer) {
@@ -53,6 +74,7 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
 
     await ensureDirtyPdfImageAssets();
 
+    // The store keeps its asset bytes: copy each once and transfer the copy.
     const assets: Record<string, { buffer: ArrayBuffer; mimeType: string }> =
       {};
     for (const [id, asset] of editorStore.getAssets()) {
@@ -62,6 +84,10 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
         mimeType: asset.mimeType,
       };
     }
+    const transfer: ArrayBuffer[] = [
+      ...Object.values(assets).map((asset) => asset.buffer),
+      ...Object.values(fontBytes),
+    ];
 
     const worker = new Worker(new URL("export.worker.ts", import.meta.url), {
       type: "module",
@@ -103,7 +129,7 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
           fontBytes,
           ocrWordsByPage: ocrSession.wordsForExport(),
         },
-        { transfer: [exportBytes.buffer] }
+        { transfer: [exportBytes.buffer, ...transfer] }
       );
     });
   } finally {

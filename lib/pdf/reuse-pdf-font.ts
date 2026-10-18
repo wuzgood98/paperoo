@@ -458,11 +458,44 @@ const bytesToHex = (bytes: Uint8Array): string => {
   return hex;
 };
 
-interface ReusableFont {
+interface FontEncoding {
   mapping: UnicodeCodeMap;
-  match: FontMatch;
   widthOf: GlyphWidth;
 }
+
+interface ReusableFont extends FontEncoding {
+  match: FontMatch;
+}
+
+/**
+ * Inverted ToUnicode and widths per font dict. Every edited run in that font
+ * shares one inflate and parse; null marks a font that cannot be reused.
+ */
+const encodingCache = new WeakMap<PDFDict, FontEncoding | null>();
+
+const readFontEncoding = (dict: PDFDict): FontEncoding | null => {
+  const bytesPerCode = fontBytesPerCode(dict);
+  if (!bytesPerCode) {
+    return null;
+  }
+  const widthOf = glyphWidths(dict, bytesPerCode);
+  const cmap = readCMap(dict);
+  if (!(widthOf && cmap)) {
+    return null;
+  }
+  const mapping = invertToUnicodeCMap(cmap, bytesPerCode);
+  return mapping ? { mapping, widthOf } : null;
+};
+
+const fontEncoding = (dict: PDFDict): FontEncoding | null => {
+  const cached = encodingCache.get(dict);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const encoding = readFontEncoding(dict);
+  encodingCache.set(dict, encoding);
+  return encoding;
+};
 
 /** The font resource, its inverted ToUnicode and widths; null when any is unusable. */
 const loadReusableFont = (
@@ -473,17 +506,8 @@ const loadReusableFont = (
   if (!match) {
     return null;
   }
-  const bytesPerCode = fontBytesPerCode(match.dict);
-  if (!bytesPerCode) {
-    return null;
-  }
-  const widthOf = glyphWidths(match.dict, bytesPerCode);
-  const cmap = readCMap(match.dict);
-  if (!(widthOf && cmap)) {
-    return null;
-  }
-  const mapping = invertToUnicodeCMap(cmap, bytesPerCode);
-  return mapping ? { mapping, match, widthOf } : null;
+  const encoding = fontEncoding(match.dict);
+  return encoding ? { ...encoding, match } : null;
 };
 
 /**
