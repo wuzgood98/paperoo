@@ -1,5 +1,6 @@
 import { editorStore } from "@/lib/editor/store";
 import { EMPTY_PDF_FORM } from "@/lib/editor/types";
+import type { EditorPage, PdfFormModel } from "@/lib/editor/types";
 import { outlineTextSession } from "@/lib/ocr/outline-session";
 import { ocrSession } from "@/lib/ocr/session";
 import { isPdfBytes, pdfSession, readFileBytes } from "@/lib/pdf/session";
@@ -67,6 +68,7 @@ export const loadPdfFile = async (file: File): Promise<void> => {
     if (!firstPainted) {
       throw new Error("This PDF has no pages.");
     }
+    editorStore.markHydrated();
   } catch (error) {
     if (isStale()) {
       return;
@@ -77,6 +79,38 @@ export const loadPdfFile = async (file: File): Promise<void> => {
       error instanceof Error ? error.message : "Could not open this PDF.";
     editorStore.clearDocument();
     editorStore.setStatus("error", message);
+    throw error;
+  }
+};
+
+/**
+ * Open saved PDF bytes for a restored session and extract every page in
+ * full; the caller replaces the fresh pages with the saved ones. Null when
+ * a newer open superseded this one.
+ */
+export const openRestoredPdf = async (
+  bytes: Uint8Array,
+  fileName: string
+): Promise<{ form: PdfFormModel; pages: EditorPage[] } | null> => {
+  loadGeneration += 1;
+  const generation = loadGeneration;
+  const isStale = (): boolean => generation !== loadGeneration;
+
+  editorStore.setStatus("loading");
+  editorStore.setFileName(fileName);
+  try {
+    await Promise.all([ocrSession.reset(), outlineTextSession.reset()]);
+    if (isStale()) {
+      return null;
+    }
+    const opened = await pdfSession.open(bytes);
+    return isStale() ? null : opened;
+  } catch (error) {
+    if (isStale()) {
+      return null;
+    }
+    await pdfSession.close();
+    editorStore.clearDocument();
     throw error;
   }
 };

@@ -186,6 +186,12 @@ export const createOcrController = (deps: OcrControllerDeps) => {
       enqueuePage(page, options, false);
     },
     getState: (): OcrControllerState => state,
+    /** Bring back words recognized in a restored session. */
+    hydrate: (
+      wordsByPage: Readonly<Record<string, readonly OcrTextObject[]>>
+    ): void => {
+      setState({ wordsByPage });
+    },
     reset: async (): Promise<void> => {
       generation += 1;
       queue.length = 0;

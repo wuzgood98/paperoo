@@ -40,8 +40,25 @@ const EditorMain = ({ status }: { status: EditorStatus }) => {
   return <EmptyState />;
 };
 
+/** Autosave loads once a document is open; visitors who never open one skip it. */
+const loadAutosave = () => import("@/lib/session/browser-autosave");
+
+const startAutosave = async (): Promise<void> => {
+  const autosave = await loadAutosave();
+  autosave.startAutosave();
+};
+
+const useAutosave = (status: EditorStatus): void => {
+  useEffect(() => {
+    if (status === "ready") {
+      void startAutosave();
+    }
+  }, [status]);
+};
+
 export const EditorShell = () => {
   const status = useEditorStore((state) => state.status);
+  useAutosave(status);
 
   useEffect(() => {
     // A file dragged over the window is about to be dropped; open buttons
