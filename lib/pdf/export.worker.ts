@@ -9,6 +9,7 @@ interface WorkerRequest {
   document: EditorDocument;
   fontBytes: Record<string, ArrayBuffer>;
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
+  pageIds?: readonly string[];
   sources?: Record<string, ArrayBuffer>;
 }
 
@@ -52,6 +53,7 @@ self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
       document: event.data.document,
       fontBytes,
       ocrWordsByPage: event.data.ocrWordsByPage,
+      pageIds: event.data.pageIds,
       sources: Object.fromEntries(
         Object.entries(event.data.sources ?? {}).map(([docId, buffer]) => [
           docId,

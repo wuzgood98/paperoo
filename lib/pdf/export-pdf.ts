@@ -102,6 +102,7 @@ import { embeddedFontCanDraw } from "@/lib/pdf/embedded-font";
 import {
   applyPageAnnotationEdits,
   copiedAnnotRefs,
+  dropLinksToMissingPages,
   helveticaFor,
 } from "@/lib/pdf/export-annotations";
 import {
@@ -129,6 +130,11 @@ export interface ExportInput {
   bytes: Uint8Array;
   /** Other source documents the pages come from, by docId. */
   sources?: Readonly<Record<string, Uint8Array>>;
+  /**
+   * Export only these pages, in document order (extracting pages). The rest
+   * of the document still informs lookups such as shared glyph faces.
+   */
+  pageIds?: readonly string[];
   document: EditorDocument;
   fontBytes: Record<string, Uint8Array>;
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
@@ -1458,15 +1464,26 @@ const loadSourcePdf = async (bytes: Uint8Array): Promise<PDFDocument> => {
   }
 };
 
+/** The pages to write: all of them, or the extracted ones in order. */
+const outputPagesOf = (input: ExportInput): EditorPage[] => {
+  if (!input.pageIds) {
+    return input.document.pages;
+  }
+  const wanted = new Set(input.pageIds);
+  const pages = input.document.pages.filter((page) => wanted.has(page.id));
+  if (pages.length === 0) {
+    throw new Error("Choose at least one page to export.");
+  }
+  return pages;
+};
+
 /** Each source document the pages use, parsed once, opened file first. */
 const loadSources = async (
-  input: ExportInput
+  input: ExportInput,
+  outputPages: readonly EditorPage[]
 ): Promise<Map<string, { doc: PDFDocument; pages: PDFPage[] }>> => {
   const docIds = [
-    ...new Set([
-      PRIMARY_DOC_ID,
-      ...input.document.pages.map((page) => pageDocId(page)),
-    ]),
+    ...new Set([PRIMARY_DOC_ID, ...outputPages.map((page) => pageDocId(page))]),
   ];
   const entries = await Promise.all(
     docIds.map(async (docId) => {
@@ -1491,10 +1508,13 @@ export const exportDocumentWithReport = async (
   input: ExportInput
 ): Promise<ExportReport> => {
   const coverOnlyRunIds: string[] = [];
+  const outputPages = outputPagesOf(input);
   const [sources, output] = await Promise.all([
-    loadSources(input),
+    loadSources(input, outputPages),
     PDFDocument.create(),
   ]);
+  // A link to a page left out would pull that page in as a hidden copy.
+  dropLinksToMissingPages(sources, outputPages);
   output.registerFontkit(fontkit);
   const helvetica = helveticaFor(output);
 
@@ -1516,7 +1536,7 @@ export const exportDocumentWithReport = async (
   // placed on many pages is embedded once and referenced from each.
   const fonts = new Map<string, PDFFont>();
   const images = new Map<string, PDFImage>();
-  for (const editorPage of input.document.pages) {
+  for (const editorPage of outputPages) {
     const docId = pageDocId(editorPage);
     const source = sources.get(docId);
     const sourcePage = source?.pages[editorPage.sourceIndex];

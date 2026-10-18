@@ -1,12 +1,21 @@
 import { toastManager } from "@/components/ui/toast-manager";
+import type { ExportOptions } from "@/lib/pdf/run-export";
 
-/** Export the edited PDF and report the outcome; true when it downloaded. */
-export const exportPdfWithToast = async (): Promise<boolean> => {
+/**
+ * Export the edited PDF, or only `options.pageIds` (extract), and report
+ * the outcome; true when it downloaded.
+ */
+export const exportPdfWithToast = async (
+  options: ExportOptions = {}
+): Promise<boolean> => {
   try {
     // The export runner pulls in pdf.js and the export worker; load it on use.
     const { runExport } = await import("@/lib/pdf/run-export");
-    await runExport();
-    toastManager.add({ title: "Exported PDF", type: "success" });
+    await runExport(options);
+    toastManager.add({
+      title: options.pageIds ? "Extracted pages" : "Exported PDF",
+      type: "success",
+    });
     return true;
   } catch (error) {
     toastManager.add({
