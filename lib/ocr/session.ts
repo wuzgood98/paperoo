@@ -38,3 +38,14 @@ export const useOcrSession = (): OcrControllerState =>
     ocrSession.getState,
     ocrSession.getState
   );
+
+/**
+ * One derived value of the OCR state; the component re-renders only when it
+ * changes. `select` must return a primitive or a reference held by the state.
+ */
+export const useOcrSelector = <T>(
+  select: (state: OcrControllerState) => T
+): T => {
+  const read = (): T => select(ocrSession.getState());
+  return useSyncExternalStore(ocrSession.subscribe, read, read);
+};

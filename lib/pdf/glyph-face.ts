@@ -3,6 +3,7 @@ import type {
   PdfGlyphShape,
   PdfGlyphShow,
   PdfTextObject,
+  PdfType3Glyphs,
 } from "@/lib/editor/types";
 
 /** The glyphs of one face, gathered from every Figma text block that uses it. */
@@ -65,26 +66,26 @@ const faceShows = (
   pages: readonly EditorPage[],
   seed: LocatedShow
 ): LocatedShow[] => {
-  const all: LocatedShow[] = pages.flatMap((page) =>
-    (page.type3Glyphs?.shows ?? []).map((show) => ({ page, show }))
+  const all = pages.flatMap((page) =>
+    (page.type3Glyphs?.shows ?? []).map((show) => ({
+      ink: inkKeys(page, show),
+      located: { page, show },
+    }))
   );
   const keys = new Set(inkKeys(seed.page, seed.show));
   const included = new Set<LocatedShow>();
   let grew = true;
   while (grew) {
     grew = false;
-    for (const located of all) {
+    for (const { ink, located } of all) {
       if (included.has(located)) {
         continue;
       }
-      const shared =
-        located === seed ||
-        inkKeys(located.page, located.show).some((key) => keys.has(key));
-      if (!shared) {
+      if (!ink.some((key) => keys.has(key))) {
         continue;
       }
       included.add(located);
-      for (const key of inkKeys(located.page, located.show)) {
+      for (const key of ink) {
         keys.add(key);
       }
       grew = true;
@@ -118,7 +119,12 @@ const collectFace = (shows: readonly LocatedShow[]): GlyphFace => {
       const adjustment = show.kerning[index] ?? 0;
       if (previous) {
         const key = pairKey(previous.unicode, shape.unicode);
-        pairSamples.set(key, [...(pairSamples.get(key) ?? []), adjustment]);
+        const samples = pairSamples.get(key);
+        if (samples) {
+          samples.push(adjustment);
+        } else {
+          pairSamples.set(key, [adjustment]);
+        }
         spacing.push(adjustment);
       }
     }
@@ -130,10 +136,50 @@ const collectFace = (shows: readonly LocatedShow[]): GlyphFace => {
   return { glyphs, pairs, tracking: median(spacing) };
 };
 
-const faceCache = new WeakMap<
-  readonly EditorPage[],
-  Map<string, GlyphFace | null>
->();
+interface FaceCacheEntry {
+  faces: Map<string, GlyphFace | null>;
+  glyphSets: readonly (PdfType3Glyphs | undefined)[];
+  ids: readonly string[];
+}
+
+const faceCache = new WeakMap<readonly EditorPage[], FaceCacheEntry>();
+let lastFaceEntry: FaceCacheEntry | null = null;
+
+const sameGlyphSource = (
+  entry: FaceCacheEntry,
+  pages: readonly EditorPage[]
+): boolean =>
+  entry.ids.length === pages.length &&
+  pages.every(
+    (page, index) =>
+      page.id === entry.ids[index] &&
+      page.type3Glyphs === entry.glyphSets[index]
+  );
+
+/**
+ * Faces depend only on page order and each page's sliced glyphs, which edits
+ * never touch. Every edit makes a new `pages` array, so carry the last
+ * document's faces over when its glyph sources are unchanged.
+ */
+const facesFor = (
+  pages: readonly EditorPage[]
+): Map<string, GlyphFace | null> => {
+  const known = faceCache.get(pages);
+  if (known) {
+    return known.faces;
+  }
+  const entry =
+    lastFaceEntry && sameGlyphSource(lastFaceEntry, pages)
+      ? lastFaceEntry
+      : {
+          faces: new Map<string, GlyphFace | null>(),
+          glyphSets: pages.map((page) => page.type3Glyphs),
+          ids: pages.map((page) => page.id),
+        };
+  faceCache.set(pages, entry);
+  lastFaceEntry = entry;
+  return entry.faces;
+};
 
 /**
  * The face a Figma run was set in, rebuilt from glyphs cut from the
@@ -152,8 +198,7 @@ export const resolveGlyphFace = (
     return null;
   }
   const cacheKey = `${pageId}:${showOrdinal}`;
-  const cache = faceCache.get(pages) ?? new Map<string, GlyphFace | null>();
-  faceCache.set(pages, cache);
+  const cache = facesFor(pages);
   const cached = cache.get(cacheKey);
   if (cached !== undefined) {
     return cached;

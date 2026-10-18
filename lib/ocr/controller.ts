@@ -52,6 +52,17 @@ export const createOcrController = (deps: OcrControllerDeps) => {
   };
 
   const setState = (partial: Partial<OcrControllerState>): void => {
+    // Tesseract reports progress many times per page; only a real change
+    // should re-render subscribers.
+    const changed =
+      // SAFETY: `partial` is a Partial<OcrControllerState>, so its own keys
+      // are state keys.
+      (Object.keys(partial) as (keyof OcrControllerState)[]).some(
+        (key) => !Object.is(partial[key], state[key])
+      );
+    if (!changed) {
+      return;
+    }
     state = { ...state, ...partial };
     emit();
   };

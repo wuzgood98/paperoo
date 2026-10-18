@@ -15,7 +15,7 @@ import { editorStore, useEditorStore } from "@/lib/editor/store";
 import { outlineTextSession } from "@/lib/ocr/outline-session";
 import type { DocumentSearchHit } from "@/lib/ocr/search";
 import { searchDocumentText } from "@/lib/ocr/search";
-import { useOcrSession } from "@/lib/ocr/session";
+import { useOcrSelector } from "@/lib/ocr/session";
 import { cn } from "@/lib/utils";
 
 const hitValue = (hit: DocumentSearchHit): string =>
@@ -42,12 +42,12 @@ export const DocumentSearch = ({
   onGoToHit?: () => void;
 }) => {
   const pages = useEditorStore((state) => state.document.pages);
-  const ocr = useOcrSession();
+  const ocrWordsByPage = useOcrSelector((state) => state.wordsByPage);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const hits = useMemo(
-    () => searchDocumentText(pages, ocr.wordsByPage, query),
-    [ocr.wordsByPage, pages, query]
+    () => searchDocumentText(pages, ocrWordsByPage, query),
+    [ocrWordsByPage, pages, query]
   );
   const items = useMemo(
     () =>

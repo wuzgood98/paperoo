@@ -129,3 +129,35 @@ test("does not auto-enqueue a page the user cancelled", async () => {
   expect(controller.getState().runningPageId).toBeNull();
   expect(controller.getState().wordsByPage["page-1"]).toBeUndefined();
 });
+
+interface ProgressProbe {
+  report?: (progress: { progress: number; status: string }) => void;
+}
+
+test("repeated progress reports do not notify subscribers", async () => {
+  const engine: ProgressProbe = {};
+  const pending = Promise.withResolvers<EngineOcrPage>();
+  const controller = createOcrController({
+    createService: () =>
+      createOcrService({
+        recognize: (_image, _options, onProgress) => {
+          engine.report = onProgress;
+          return pending.promise;
+        },
+        terminate: () => Promise.resolve(),
+      }),
+    renderPage: () => Promise.resolve({ image: new Blob(), scale: 2 }),
+  });
+  controller.start(page(), { pageCount: 1, pageNumber: 1 });
+  await vi.waitFor(() => {
+    expect(engine.report).toBeDefined();
+  });
+  const listener = vi.fn();
+  controller.subscribe(listener);
+  for (let tick = 0; tick < 5; tick += 1) {
+    engine.report?.({ progress: tick / 5, status: "recognizing text" });
+  }
+
+  expect(listener).not.toHaveBeenCalled();
+  pending.resolve(enginePage());
+});

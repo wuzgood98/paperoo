@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, TextObject } from "@/lib/editor/types";
@@ -104,4 +104,26 @@ test("a drag that ends on the starting value records nothing", () => {
 
   editorStore.undo();
   expect(editorStore.getState().document.pages[0]?.objects).toHaveLength(0);
+});
+
+test("frame-batched previews apply the latest value once committed", () => {
+  const requestFrame = vi.fn(() => 1);
+  vi.stubGlobal("requestAnimationFrame", requestFrame);
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  try {
+    for (const value of DRAG_VALUES) {
+      editorStore.schedulePreviewEdit(() =>
+        editorStore.patchSelected((object) => ({ ...object, opacity: value }))
+      );
+    }
+
+    expect(requestFrame).toHaveBeenCalledOnce();
+    expect(opacity()).toBe(1);
+    editorStore.commitPreview();
+    expect(opacity()).toBe(DRAG_VALUES.at(-1));
+    editorStore.undo();
+    expect(opacity()).toBe(1);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

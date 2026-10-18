@@ -1559,6 +1559,30 @@ export const pdfVectorSubpaths = (
  * the run's original ink, so covering the path hides the old text without
  * touching neighbouring artwork.
  */
+const vectorIndexCache = new WeakMap<
+  readonly PdfVectorObject[],
+  ReadonlyMap<string, PdfVectorObject>
+>();
+
+/** Vectors by id, built once per page vector list (runs look theirs up per render). */
+const vectorsById = (
+  vectors: readonly PdfVectorObject[]
+): ReadonlyMap<string, PdfVectorObject> => {
+  const cached = vectorIndexCache.get(vectors);
+  if (cached) {
+    return cached;
+  }
+  const index = new Map<string, PdfVectorObject>();
+  for (const vector of vectors) {
+    // First match wins, as a linear find would.
+    if (!index.has(vector.id)) {
+      index.set(vector.id, vector);
+    }
+  }
+  vectorIndexCache.set(vectors, index);
+  return index;
+};
+
 export const pdfTextInkOutline = (
   object: Pick<PdfTextObject, "inkShared" | "inkSubpaths" | "inkVectorId">,
   page: Pick<EditorPage, "pdfVectorObjects">
@@ -1569,9 +1593,7 @@ export const pdfTextInkOutline = (
   if (object.inkShared === true && !object.inkSubpaths) {
     return null;
   }
-  const outline = page.pdfVectorObjects.find(
-    (vector) => vector.id === object.inkVectorId
-  );
+  const outline = vectorsById(page.pdfVectorObjects).get(object.inkVectorId);
   if (!outline) {
     return null;
   }

@@ -55,7 +55,7 @@ const MarkupInspector = ({ object }: { object: PdfMarkupAnnotation }) => (
             if (next === undefined) {
               return;
             }
-            editorStore.previewEdit(() =>
+            editorStore.schedulePreviewEdit(() =>
               editorStore.patchPdfAnnotation((current) =>
                 current.id === object.id && current.type === "pdf-highlight"
                   ? { ...current, opacity: next }

@@ -45,7 +45,7 @@ import {
   useEditorStore,
 } from "@/lib/editor/store";
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP } from "@/lib/editor/types";
-import { useOcrSession } from "@/lib/ocr/session";
+import { useOcrSelector } from "@/lib/ocr/session";
 import { openPdfFromList } from "@/lib/pdf/open-pdf";
 import { runExport } from "@/lib/pdf/run-export";
 import { runPrint } from "@/lib/pdf/run-print";
@@ -123,9 +123,8 @@ export const EditorToolbar = () => {
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
   const ready = status === "ready";
-  const ocr = useOcrSession();
-  const hasOcrWords = Object.values(ocr.wordsByPage).some(
-    (words) => words.length > 0
+  const hasOcrWords = useOcrSelector((state) =>
+    Object.values(state.wordsByPage).some((words) => words.length > 0)
   );
 
   return (

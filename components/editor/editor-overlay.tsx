@@ -49,7 +49,7 @@ import {
   ocrWordRangeIds,
   visibleOcrWords,
 } from "@/lib/ocr/hit";
-import { useOcrSession } from "@/lib/ocr/session";
+import { useOcrSelector } from "@/lib/ocr/session";
 import type { OcrTextObject } from "@/lib/ocr/types";
 import { ensurePdfImagePreview } from "@/lib/pdf/pdf-image-preview";
 import { cn } from "@/lib/utils";
@@ -111,8 +111,9 @@ export const EditorOverlay = ({
     pendingSignature.get,
     pendingSignature.get
   );
-  const ocr = useOcrSession();
-  const ocrWords = ocr.wordsByPage[page.id] ?? NO_OCR_WORDS;
+  const ocrWords = useOcrSelector(
+    (state) => state.wordsByPage[page.id] ?? NO_OCR_WORDS
+  );
   const rootRef = useRef<HTMLDivElement>(null);
   const boundsRef = useRef<PageBounds | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
@@ -132,7 +133,14 @@ export const EditorOverlay = ({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imagePointRef = useRef<Point | null>(null);
   const ocrDragAnchorRef = useRef<string | null>(null);
-  const selectedIds = new Set(selectedObjectIds);
+  const selectedIds = useMemo(
+    () => new Set(selectedObjectIds),
+    [selectedObjectIds]
+  );
+  const visibleWords = useMemo(
+    () => visibleOcrWords(ocrWords, page.suppressedOcrWordIds),
+    [ocrWords, page.suppressedOcrWordIds]
+  );
   const selectedOcrIds = useMemo(
     () => new Set(selectedOcrWordIds),
     [selectedOcrWordIds]
@@ -143,9 +151,11 @@ export const EditorOverlay = ({
     tool === "highlight" ||
     tool === "shape" ||
     placingSignature;
-  const pendingScaled = pending
-    ? scaleSignaturePoints(pending, SIGNATURE_PLACE_SIZE)
-    : null;
+  const pendingScaled = useMemo(
+    () =>
+      pending ? scaleSignaturePoints(pending, SIGNATURE_PLACE_SIZE) : null,
+    [pending]
+  );
   const { onPointerMove, onPointerUp, placeImage, toPage } = useOverlayGestures(
     {
       boundsRef,
@@ -375,12 +385,20 @@ export const EditorOverlay = ({
         }
         const anchor = ocrDragAnchorRef.current;
         if (anchor) {
-          const visible = visibleOcrWords(ocrWords, page.suppressedOcrWordIds);
-          const over = hitTestOcrWord(visible, toPage(event));
-          if (over) {
-            editorStore.selectOcrWords(
-              ocrWordRangeIds(visible, anchor, over.id)
-            );
+          const over = hitTestOcrWord(visibleWords, toPage(event));
+          if (!over) {
+            return;
+          }
+          const range = ocrWordRangeIds(visibleWords, anchor, over.id);
+          // Ranges are contiguous, so equal ends mean an equal selection;
+          // most moves stay on the same word.
+          const current = editorStore.getState().selectedOcrWordIds;
+          const unchanged =
+            current.length === range.length &&
+            current[0] === range[0] &&
+            current.at(-1) === range.at(-1);
+          if (!unchanged) {
+            editorStore.selectOcrWords(range);
           }
           return;
         }
