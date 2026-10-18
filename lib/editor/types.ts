@@ -88,6 +88,8 @@ export type ShapeObject = BaseObject & {
   shape: ShapeKind;
   /** Line only: runs bottom-left to top-right instead of top-left to bottom-right. */
   flip?: boolean;
+  /** Line only: drawn with a dash pattern scaled to the stroke width. */
+  dashed?: boolean;
   fill: string | null;
   stroke: string;
   strokeWidth: number;
@@ -668,6 +670,8 @@ export interface DrawStyleDefaults {
 
 export interface ShapeStyleDefaults {
   shape: ShapeKind;
+  /** Line only. */
+  dashed: boolean;
   fill: string | null;
   stroke: string;
   strokeWidth: number;
@@ -688,6 +692,7 @@ export const DEFAULT_DRAW_STYLE: DrawStyleDefaults = {
 };
 
 export const DEFAULT_SHAPE_STYLE: ShapeStyleDefaults = {
+  dashed: false,
   fill: null,
   shape: "rect",
   stroke: "#111827",

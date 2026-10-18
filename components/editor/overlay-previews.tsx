@@ -23,6 +23,7 @@ const ShapeDraft = ({
   return (
     <ShapeSvg
       className="pointer-events-none absolute"
+      dashed={shapeStyle.dashed}
       fill={shapeStyle.fill}
       flip={isRisingDrag(draft.start, draft.end)}
       height={height}

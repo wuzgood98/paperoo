@@ -2196,7 +2196,19 @@ export const createShapeObject = (
   if (style.shape === "line" && flip) {
     shape.flip = true;
   }
+  if (style.shape === "line" && style.dashed) {
+    shape.dashed = true;
+  }
   return shape;
+};
+
+const LINE_DASH_LENGTH = 4;
+const LINE_DASH_GAP = 3;
+
+/** Dash and gap lengths in page units, so screen and export share one pattern. */
+export const lineDashArray = (strokeWidth: number): [number, number] => {
+  const unit = Math.max(1, strokeWidth);
+  return [unit * LINE_DASH_LENGTH, unit * LINE_DASH_GAP];
 };
 
 // Kept above zero: SVG skips a rect or ellipse with a zero size, stroke and all.

@@ -160,6 +160,7 @@ export const ObjectView = ({
       return (
         <ShapeSvg
           className="h-full w-full"
+          dashed={object.dashed}
           fill={object.fill}
           flip={object.flip}
           height={object.height}

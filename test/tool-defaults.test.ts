@@ -92,6 +92,20 @@ test("new shapes take the current shape style", () => {
     stroke: "#7c3aed",
     strokeWidth: 8,
   };
-  const shape = createShapeObject({ height: 10, width: 10, x: 0, y: 0 }, style);
+  const shape = createShapeObject(
+    { height: 10, width: 10, x: 0, y: 0 },
+    { ...DEFAULT_SHAPE_STYLE, ...style }
+  );
   expect(shape).toMatchObject(style);
+});
+
+test("dashed style only marks lines", () => {
+  const rect = { height: 10, width: 10, x: 0, y: 0 };
+  const dashed = { ...DEFAULT_SHAPE_STYLE, dashed: true };
+  expect(createShapeObject(rect, { ...dashed, shape: "line" }).dashed).toBe(
+    true
+  );
+  expect(
+    createShapeObject(rect, { ...dashed, shape: "rect" })
+  ).not.toHaveProperty("dashed");
 });
