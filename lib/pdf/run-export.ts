@@ -1,5 +1,6 @@
 import { toastManager } from "@/components/ui/toast-manager";
 import { isPdfTextDirty } from "@/lib/editor/object-utils";
+import { pageRangeLabel } from "@/lib/editor/page-range";
 import { pageDocId } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
 import { PRIMARY_DOC_ID } from "@/lib/editor/types";
@@ -43,7 +44,14 @@ export interface EditedPdf {
   coverOnlyRunIds: string[];
 }
 
-export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
+export interface ExportOptions {
+  /** Export only these pages (extract); all pages when unset. */
+  pageIds?: readonly string[];
+}
+
+export const buildEditedPdfBytes = async ({
+  pageIds,
+}: ExportOptions = {}): Promise<EditedPdf> => {
   const state = editorStore.getState();
   const bytes = pdfSession.bytesOf(PRIMARY_DOC_ID);
   if (!bytes || state.document.pages.length === 0) {
@@ -139,6 +147,7 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
           document: state.document,
           fontBytes,
           ocrWordsByPage: ocrSession.wordsForExport(),
+          pageIds,
           sources,
         },
         {
@@ -169,18 +178,37 @@ const warnCoverOnly = (count: number): void => {
   });
 };
 
-export const runExport = async (): Promise<void> => {
+const exportFileName = (
+  fileName: string | null,
+  pageIds: readonly string[] | undefined
+): string => {
+  const baseName = fileName?.replace(/\.pdf$/iu, "") ?? "document";
+  if (!pageIds) {
+    return `${baseName}-edited.pdf`;
+  }
+  const wanted = new Set(pageIds);
+  const positions = editorStore
+    .getState()
+    .document.pages.flatMap((page, index) =>
+      wanted.has(page.id) ? [index + 1] : []
+    );
+  return `${baseName}-pages-${pageRangeLabel(positions)}.pdf`;
+};
+
+export const runExport = async (options: ExportOptions = {}): Promise<void> => {
   const exported = editorStore.getState().document;
-  const { bytes: result, coverOnlyRunIds } = await buildEditedPdfBytes();
+  const { bytes: result, coverOnlyRunIds } = await buildEditedPdfBytes(options);
   const state = editorStore.getState();
   const blob = new Blob([result], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const baseName = state.fileName?.replace(/\.pdf$/iu, "") ?? "document";
   link.href = url;
-  link.download = `${baseName}-edited.pdf`;
+  link.download = exportFileName(state.fileName, options.pageIds);
   link.click();
   URL.revokeObjectURL(url);
-  editorStore.markClean(exported);
+  // Extracted pages are a new file; the document itself is still unsaved.
+  if (!options.pageIds) {
+    editorStore.markClean(exported);
+  }
   warnCoverOnly(coverOnlyRunIds.length);
 };

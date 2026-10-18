@@ -93,6 +93,8 @@ export interface EditorStoreState {
   isExporting: boolean;
   selectedObjectIds: readonly string[];
   selectedOcrWordIds: readonly string[];
+  /** Pages picked in the page list for a bulk action; not part of undo. */
+  selectedPageIds: readonly string[];
   selectedPdfFormFieldId: string | null;
   selectedPdfImageId: string | null;
   selectedPdfTextId: string | null;
@@ -136,6 +138,7 @@ const initialState = (): EditorStoreState => ({
   isExporting: false,
   selectedObjectIds: [],
   selectedOcrWordIds: [],
+  selectedPageIds: [],
   selectedPdfAnnotationId: null,
   selectedPdfFormFieldId: null,
   selectedPdfImageId: null,
@@ -179,14 +182,34 @@ const getSnapshot = (): HistorySnapshot => ({
   selectedObjectIds: internal.state.selectedObjectIds,
 });
 
+/** Page selection limited to pages that still exist. */
+const existingPageIds = (
+  ids: readonly string[],
+  pages: readonly EditorPage[]
+): readonly string[] => {
+  if (ids.length === 0) {
+    return ids;
+  }
+  const present = new Set(pages.map((page) => page.id));
+  const kept = ids.filter((id) => present.has(id));
+  return kept.length === ids.length ? ids : kept;
+};
+
 const applySnapshot = (snapshot: HistorySnapshot): void => {
   internal.state = {
     ...internal.state,
     currentPageId: snapshot.currentPageId,
     document: snapshot.document,
     selectedObjectIds: snapshot.selectedObjectIds,
+    selectedPageIds: existingPageIds(
+      internal.state.selectedPageIds,
+      snapshot.document.pages
+    ),
   };
 };
+
+/** Where a Shift-click range starts: the last page toggled. */
+let pageSelectionAnchor: string | null = null;
 
 /** The latest frame-batched preview edit, not yet applied. */
 let scheduledPreview: { edit: () => void; frame: number } | null = null;
@@ -567,6 +590,13 @@ export const editorStore = {
     setState(initialState());
   },
 
+  clearPageSelection: (): void => {
+    pageSelectionAnchor = null;
+    if (internal.state.selectedPageIds.length > 0) {
+      setState({ selectedPageIds: [] });
+    }
+  },
+
   clearSelection: (): void => {
     setState({
       selectedObjectIds: [],
@@ -772,6 +802,22 @@ export const editorStore = {
     if (flushPreview()) {
       emit();
     }
+  },
+
+  /** Delete pages as one undo step; the last page always stays. */
+  deletePages: (pageIds: readonly string[]): boolean => {
+    const doomed = new Set(pageIds);
+    const next = internal.state.document.pages.filter(
+      (page) => !doomed.has(page.id)
+    );
+    if (
+      next.length === 0 ||
+      next.length === internal.state.document.pages.length
+    ) {
+      return false;
+    }
+    editorStore.setPages(next);
+    return true;
   },
 
   deleteSelected: (): void => {
@@ -1271,6 +1317,7 @@ export const editorStore = {
       hydrated: false,
       selectedObjectIds: [],
       selectedOcrWordIds: [],
+      selectedPageIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -1330,6 +1377,7 @@ export const editorStore = {
       hydrated: true,
       selectedObjectIds: [],
       selectedOcrWordIds: [],
+      selectedPageIds: [],
       selectedPdfAnnotationId: null,
       selectedPdfFormFieldId: null,
       selectedPdfImageId: null,
@@ -1362,6 +1410,26 @@ export const editorStore = {
         document: withPages(
           internal.state.document.pages.map((item) =>
             item.id === page.id ? { ...item, rotation: nextRotation } : item
+          )
+        ),
+      };
+    }, true);
+  },
+
+  /** Rotate several pages by `delta` as one undo step. */
+  rotatePages: (pageIds: readonly string[], delta: PageRotation): void => {
+    const turning = new Set(pageIds);
+    if (!internal.state.document.pages.some((page) => turning.has(page.id))) {
+      return;
+    }
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: withPages(
+          internal.state.document.pages.map((page) =>
+            turning.has(page.id)
+              ? { ...page, rotation: normalizeRotation(page.rotation + delta) }
+              : page
           )
         ),
       };
@@ -1407,6 +1475,22 @@ export const editorStore = {
       selectedPdfTextId: null,
       selectedPdfVectorId: null,
       tool: "select",
+    });
+  },
+
+  /** Shift-click: select every page from the last toggled one to `pageId`. */
+  selectPageRange: (pageId: string): void => {
+    const { pages } = internal.state.document;
+    const anchorId = pageSelectionAnchor ?? internal.state.currentPageId;
+    const from = pages.findIndex((page) => page.id === anchorId);
+    const to = pages.findIndex((page) => page.id === pageId);
+    if (to === -1) {
+      return;
+    }
+    const [start, end] =
+      from === -1 ? [to, to] : [Math.min(from, to), Math.max(from, to)];
+    setState({
+      selectedPageIds: pages.slice(start, end + 1).map((page) => page.id),
     });
   },
 
@@ -1570,6 +1654,7 @@ export const editorStore = {
         document: withPages(pages),
         selectedObjectIds: [],
         selectedOcrWordIds: [],
+        selectedPageIds: existingPageIds(internal.state.selectedPageIds, pages),
         selectedPdfAnnotationId: null,
         selectedPdfFormFieldId: null,
         selectedPdfImageId: null,
@@ -1695,6 +1780,17 @@ export const editorStore = {
     return () => {
       internal.listeners.delete(listener);
     };
+  },
+
+  /** Ctrl/⌘-click: add `pageId` to the page selection or take it out. */
+  togglePageSelection: (pageId: string): void => {
+    const selected = internal.state.selectedPageIds;
+    pageSelectionAnchor = pageId;
+    setState({
+      selectedPageIds: selected.includes(pageId)
+        ? selected.filter((id) => id !== pageId)
+        : [...selected, pageId],
+    });
   },
 
   undo: (): void => {

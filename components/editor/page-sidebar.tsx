@@ -1,18 +1,27 @@
 "use client";
 
 import {
+  CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   CopyIcon,
+  FileOutputIcon,
+  ListChecksIcon,
   FilePlusIcon,
   PlusIcon,
   RotateCwIcon,
   SquareStackIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
+import { exportPdfWithToast } from "@/components/editor/export-action";
+import {
+  setPageSelectMode,
+  usePageSelectMode,
+} from "@/components/editor/page-select-mode";
 import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,6 +44,7 @@ import { toastManager } from "@/components/ui/toast-manager";
 import { pdfFormWidgetsOnPage } from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage } from "@/lib/editor/types";
+import { cn } from "@/lib/utils";
 
 // Thumbnails render through pdf.js; only load it once a document is open.
 const PageThumbnail = dynamic(
@@ -144,6 +154,123 @@ const AddPageMenu = ({ pageId }: { pageId: string | null }) => {
   );
 };
 
+const SelectPagesToggle = () => {
+  const selecting = usePageSelectMode();
+  const label = selecting ? "Stop selecting pages" : "Select pages";
+  return (
+    <ToolbarTip label={label}>
+      <Button
+        pressable
+        aria-label={label}
+        aria-pressed={selecting}
+        onClick={() => setPageSelectMode(!selecting)}
+        size="icon-xs"
+        variant={selecting ? "secondary" : "ghost"}
+      >
+        <ListChecksIcon />
+      </Button>
+    </ToolbarTip>
+  );
+};
+
+/** Bulk actions for the pages picked in the list. */
+const PageSelectionBar = () => {
+  const selected = useEditorStore((state) => state.selectedPageIds);
+  const pageCount = useEditorStore((state) => state.document.pages.length);
+  const isExporting = useEditorStore((state) => state.isExporting);
+  if (selected.length === 0) {
+    return null;
+  }
+  const canDelete = selected.length < pageCount;
+  return (
+    <div
+      aria-label="Selected pages"
+      className="border-border bg-muted/60 mx-3 mb-2 flex items-center gap-1 rounded-md border px-2 py-1"
+      role="toolbar"
+    >
+      <span className="text-muted-foreground mr-auto text-xs tabular-nums">
+        {selected.length} selected
+      </span>
+      <ToolbarTip label="Extract as a new PDF">
+        <Button
+          pressable
+          aria-label="Extract selected pages as a new PDF"
+          disabled={isExporting}
+          onClick={async () => {
+            await exportPdfWithToast({ pageIds: selected });
+          }}
+          size="icon-xs"
+          variant="ghost"
+        >
+          <FileOutputIcon />
+        </Button>
+      </ToolbarTip>
+      <ToolbarTip label="Rotate selected pages">
+        <Button
+          pressable
+          aria-label="Rotate selected pages"
+          onClick={() => editorStore.rotatePages(selected, 90)}
+          size="icon-xs"
+          variant="ghost"
+        >
+          <RotateCwIcon />
+        </Button>
+      </ToolbarTip>
+      <ToolbarTip
+        label={canDelete ? "Delete selected pages" : "Can't delete every page"}
+      >
+        <Button
+          pressable
+          aria-label="Delete selected pages"
+          disabled={!canDelete}
+          onClick={() => {
+            if (editorStore.deletePages(selected)) {
+              editorStore.clearPageSelection();
+            }
+          }}
+          size="icon-xs"
+          variant="ghost"
+        >
+          <Trash2Icon />
+        </Button>
+      </ToolbarTip>
+      <ToolbarTip label="Clear selection">
+        <Button
+          pressable
+          aria-label="Clear page selection"
+          onClick={() => setPageSelectMode(false)}
+          size="icon-xs"
+          variant="ghost"
+        >
+          <XIcon />
+        </Button>
+      </ToolbarTip>
+    </div>
+  );
+};
+
+/**
+ * A click on a page in the list: Ctrl/⌘ (or select mode) toggles it, Shift
+ * selects a range, and a plain click opens it and drops the selection.
+ */
+const clickPage = (
+  pageId: string,
+  event: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
+  selecting: boolean
+): boolean => {
+  if (event.shiftKey) {
+    editorStore.selectPageRange(pageId);
+    return false;
+  }
+  if (selecting || event.ctrlKey || event.metaKey) {
+    editorStore.togglePageSelection(pageId);
+    return false;
+  }
+  editorStore.clearPageSelection();
+  editorStore.setCurrentPage(pageId);
+  return true;
+};
+
 const moveCurrentPage = (
   pages: readonly EditorPage[],
   currentPageId: string | null,
@@ -173,6 +300,7 @@ const PageActions = () => {
 
   return (
     <div className="flex gap-1">
+      <SelectPagesToggle />
       <AddPageMenu pageId={currentPageId} />
       <ToolbarTip label="Move current page up">
         <Button
@@ -245,6 +373,7 @@ const movePage = (from: number, to: number): void => {
 };
 
 const PageThumbnailItemView = ({
+  checked,
   index,
   onDragStartAt,
   onDropAt,
@@ -252,27 +381,37 @@ const PageThumbnailItemView = ({
   page,
   registerItem,
   selected,
+  selecting,
 }: {
+  /** Picked for a bulk action. */
+  checked: boolean;
   index: number;
   onDragStartAt: (index: number) => void;
   onDropAt: (index: number) => void;
   onPageSelect?: () => void;
   page: EditorPage;
   registerItem: (pageId: string, node: HTMLButtonElement | null) => void;
+  /** The current page. */
   selected: boolean;
+  selecting: boolean;
 }) => (
-  <li className="flex flex-col gap-1">
+  <li className="relative flex flex-col gap-1">
     <ContextMenu>
       <ContextMenuTrigger
         render={
           <button
             aria-current={selected ? "page" : undefined}
             aria-label={`Page ${index + 1}`}
-            className="editor-pressable focus-visible:ring-ring rounded-md text-left outline-none focus-visible:ring-2"
+            aria-pressed={selecting || checked ? checked : undefined}
+            className={cn(
+              "editor-pressable focus-visible:ring-ring rounded-md text-left outline-none focus-visible:ring-2",
+              checked && "ring-primary ring-2 ring-offset-1"
+            )}
             draggable
-            onClick={() => {
-              editorStore.setCurrentPage(page.id);
-              onPageSelect?.();
+            onClick={(event) => {
+              if (clickPage(page.id, event, selecting)) {
+                onPageSelect?.();
+              }
             }}
             onDragOver={(event) => {
               event.preventDefault();
@@ -285,6 +424,14 @@ const PageThumbnailItemView = ({
         }
       >
         <PageThumbnail page={page} selected={selected} />
+        {checked ? (
+          <span
+            aria-hidden
+            className="bg-primary text-primary-foreground absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-full shadow-xs"
+          >
+            <CheckIcon className="size-3.5" />
+          </span>
+        ) : null}
       </ContextMenuTrigger>
       <ContextMenuPopup>
         <ContextMenuItem
@@ -334,6 +481,9 @@ const PageThumbnailItem = memo(PageThumbnailItemView);
 const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
   const pages = useEditorStore((state) => state.document.pages);
   const currentPageId = useEditorStore((state) => state.currentPageId);
+  const selectedPageIds = useEditorStore((state) => state.selectedPageIds);
+  const selecting = usePageSelectMode();
+  const checkedIds = new Set(selectedPageIds);
   const dragIndex = useRef<number | null>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -372,6 +522,7 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
     <ol className="flex flex-col gap-3 pb-3">
       {pages.map((page, index) => (
         <PageThumbnailItem
+          checked={checkedIds.has(page.id)}
           index={index}
           key={page.id}
           onDragStartAt={onDragStartAt}
@@ -380,6 +531,7 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
           page={page}
           registerItem={registerItem}
           selected={page.id === currentPageId}
+          selecting={selecting}
         />
       ))}
     </ol>
@@ -412,6 +564,7 @@ export const PageSheetButton = () => {
               <PageActions />
             </div>
           </DialogHeader>
+          <PageSelectionBar />
           <DialogPanel>
             <PageThumbnails onPageSelect={closeSheet} />
           </DialogPanel>
@@ -440,6 +593,7 @@ export const PageSidebar = () => {
         </p>
         <PageActions />
       </div>
+      <PageSelectionBar />
       <ScrollArea className="min-h-0 flex-1" overscrollContain>
         <div className="px-3">
           <PageThumbnails />

@@ -1,11 +1,19 @@
-import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import { PDFDict, PDFName, PDFRef, PDFString, StandardFonts } from "pdf-lib";
+import type { PDFDocument, PDFFont, PDFObject, PDFPage } from "pdf-lib";
+import {
+  PDFArray,
+  PDFDict,
+  PDFName,
+  PDFRef,
+  PDFString,
+  StandardFonts,
+} from "pdf-lib";
 
 import { displayedToUserSpace } from "@/lib/editor/coordinates";
 import {
   isPdfAnnotationDirty,
   pdfLinkActionsEqual,
 } from "@/lib/editor/object-utils";
+import { pageKeyOf, pageKeyString } from "@/lib/editor/page-source";
 import type {
   EditorPage,
   PdfAnnotationObject,
@@ -375,6 +383,79 @@ const applyAnnotationEdit = async (
     }
     default: {
       break;
+    }
+  }
+};
+
+/** The page an explicit destination array points at, if it names one by ref. */
+const destinationRef = (
+  doc: PDFDocument,
+  dest: PDFObject | undefined
+): PDFRef | null => {
+  const resolved = dest instanceof PDFRef ? doc.context.lookup(dest) : dest;
+  if (!(resolved instanceof PDFArray)) {
+    return null;
+  }
+  const target = resolved.get(0);
+  return target instanceof PDFRef ? target : null;
+};
+
+/**
+ * Remove the destination of every internal link on an output page whose
+ * target page is not in the output (deleted, or left out of an extract), so
+ * the link goes nowhere instead of dragging that page in. Edits the parsed
+ * sources, which exist only for this export.
+ */
+export const dropLinksToMissingPages = (
+  sources: ReadonlyMap<string, { doc: PDFDocument; pages: PDFPage[] }>,
+  outputPages: readonly EditorPage[]
+): void => {
+  const kept = new Set(
+    outputPages.map((page) => pageKeyString(pageKeyOf(page)))
+  );
+  for (const [docId, { doc, pages }] of sources) {
+    const indexByRef = new Map(
+      pages.map((page, index) => [
+        refKey(page.ref.objectNumber, page.ref.generationNumber),
+        index,
+      ])
+    );
+    const isMissing = (ref: PDFRef | null): boolean => {
+      if (!ref) {
+        return false;
+      }
+      const index = indexByRef.get(
+        refKey(ref.objectNumber, ref.generationNumber)
+      );
+      return (
+        index === undefined ||
+        !kept.has(pageKeyString({ docId, sourceIndex: index }))
+      );
+    };
+    for (const [index, page] of pages.entries()) {
+      if (!kept.has(pageKeyString({ docId, sourceIndex: index }))) {
+        continue;
+      }
+      for (const entry of page.node.Annots()?.asArray() ?? []) {
+        const dict = doc.context.lookup(entry);
+        if (
+          !(dict instanceof PDFDict) ||
+          dict.get(PDFName.of("Subtype")) !== PDFName.of("Link")
+        ) {
+          continue;
+        }
+        if (isMissing(destinationRef(doc, dict.get(PDFName.of("Dest"))))) {
+          dict.delete(PDFName.of("Dest"));
+        }
+        const action = doc.context.lookup(dict.get(PDFName.of("A")));
+        if (
+          action instanceof PDFDict &&
+          action.get(PDFName.of("S")) === PDFName.of("GoTo") &&
+          isMissing(destinationRef(doc, action.get(PDFName.of("D"))))
+        ) {
+          dict.delete(PDFName.of("A"));
+        }
+      }
     }
   }
 };
