@@ -12,7 +12,13 @@ import {
   PDFTextField,
   StandardFonts,
 } from "pdf-lib";
-import type { PDFDocument, PDFFont, PDFForm, PDFObjectCopier } from "pdf-lib";
+import type {
+  PDFDocument,
+  PDFFont,
+  PDFForm,
+  PDFObjectCopier,
+  PDFPage,
+} from "pdf-lib";
 
 import { documentForm, isPdfFormFieldDirty } from "@/lib/editor/object-utils";
 import type {
@@ -197,6 +203,22 @@ export const applyPdfFormEdits = async (
 
 const refKey = (ref: PDFRef): string =>
   `${ref.objectNumber}R${ref.generationNumber}`;
+
+/** Take the form widgets off a copied page (a duplicate keeps no fields). */
+export const stripFormWidgets = (output: PDFDocument, page: PDFPage): void => {
+  const annots = page.node.Annots();
+  if (!annots) {
+    return;
+  }
+  const kept = annots.asArray().filter((entry) => {
+    const dict = output.context.lookup(entry);
+    return !(
+      dict instanceof PDFDict &&
+      dict.get(PDFName.of("Subtype")) === PDFName.of("Widget")
+    );
+  });
+  page.node.set(PDFName.of("Annots"), output.context.obj(kept));
+};
 
 /** Every annotation ref on the output's pages. */
 export const outputAnnotRefKeys = (output: PDFDocument): Set<string> => {

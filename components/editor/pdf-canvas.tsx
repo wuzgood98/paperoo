@@ -3,17 +3,21 @@
 import { useEffect, useRef } from "react";
 
 import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
+import { AnnotationMode } from "@/lib/pdf/pdfjs";
 import { releaseCanvas, renderPdfPage } from "@/lib/pdf/render-page";
 import type { PdfPaintTask } from "@/lib/pdf/render-page";
 import { pdfSession } from "@/lib/pdf/session";
 
 export const PdfCanvas = ({
   docId,
+  omitFormWidgets = false,
   rotation,
   scale,
   sourceIndex,
 }: {
   docId: string;
+  /** Leave form widgets unpainted (a duplicated page has no fields). */
+  omitFormWidgets?: boolean;
   rotation?: number;
   scale: number;
   sourceIndex: number;
@@ -46,6 +50,9 @@ export const PdfCanvas = ({
         return;
       }
       const task = await renderPdfPage(page, canvasRef.current, scale, {
+        annotationMode: omitFormWidgets
+          ? AnnotationMode.ENABLE_FORMS
+          : AnnotationMode.ENABLE,
         pixelRatio,
         previous: taskRef.current,
         rotation,
@@ -67,7 +74,7 @@ export const PdfCanvas = ({
         pdfSession.releasePageRef(key);
       }
     };
-  }, [docId, pixelRatio, rotation, scale, sourceIndex]);
+  }, [docId, omitFormWidgets, pixelRatio, rotation, scale, sourceIndex]);
 
   // White under the backing store: a resized canvas is transparent black until
   // pdf.js paints its first chunk.

@@ -945,6 +945,37 @@ export const editorStore = {
     }, true);
   },
 
+  /**
+   * Insert pages at `atIndex` as one undo step and make the first current.
+   * Waits for every page to load: hydration places pages by source order.
+   */
+  insertPages: (atIndex: number, pages: readonly EditorPage[]): boolean => {
+    const { document, hydrated, status } = internal.state;
+    if (status !== "ready" || !hydrated || pages.length === 0) {
+      return false;
+    }
+    const index = clamp(Math.round(atIndex), 0, document.pages.length);
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        currentPageId: pages[0]?.id ?? internal.state.currentPageId,
+        document: withPages([
+          ...document.pages.slice(0, index),
+          ...pages,
+          ...document.pages.slice(index),
+        ]),
+        selectedObjectIds: [],
+        selectedOcrWordIds: [],
+        selectedPdfAnnotationId: null,
+        selectedPdfFormFieldId: null,
+        selectedPdfImageId: null,
+        selectedPdfTextId: null,
+        selectedPdfVectorId: null,
+      };
+    }, true);
+    return true;
+  },
+
   /** True when an open document has edits since it was opened or exported. */
   isDirty: (): boolean =>
     internal.state.status === "ready" &&

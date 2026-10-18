@@ -1,3 +1,4 @@
+import { createId } from "@/lib/editor/ids";
 import type { EditorPage } from "@/lib/editor/types";
 import { classifyPageForOcr } from "@/lib/ocr/classify-page";
 import type { OcrService } from "@/lib/ocr/service";
@@ -181,6 +182,24 @@ export const createOcrController = (deps: OcrControllerDeps) => {
         status: "idle",
       });
       await active?.terminate();
+    },
+    /**
+     * Copy a page's recognized words to its duplicate `toPageId`; returns
+     * each word's copy id by original id.
+     */
+    clonePage: (fromPageId: string, toPageId: string): Map<string, string> => {
+      const ids = new Map<string, string>();
+      const words = state.wordsByPage[fromPageId];
+      if (!words) {
+        return ids;
+      }
+      const copies = words.map((word) => {
+        const id = createId();
+        ids.set(word.id, id);
+        return { ...word, id, pageId: toPageId };
+      });
+      setState({ wordsByPage: { ...state.wordsByPage, [toPageId]: copies } });
+      return ids;
     },
     enqueueVisible: (page: EditorPage, options: OcrEnqueueOptions): void => {
       enqueuePage(page, options, false);

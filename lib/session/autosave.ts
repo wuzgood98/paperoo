@@ -1,4 +1,5 @@
 import { createId } from "@/lib/editor/ids";
+import { pageDocId } from "@/lib/editor/page-source";
 import type { EditorStoreState } from "@/lib/editor/store";
 import type {
   EditorDocument,
@@ -7,9 +8,11 @@ import type {
 } from "@/lib/editor/types";
 import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { OcrTextObject } from "@/lib/ocr/types";
+import { blankDocSize } from "@/lib/pdf/blank-pdf";
 import { SESSION_SCHEMA_VERSION } from "@/lib/session/schema";
 import type {
   PersistedAsset,
+  PersistedSource,
   SessionStorage,
   SessionWrite,
 } from "@/lib/session/schema";
@@ -58,6 +61,18 @@ export const referencedAssetIds = (document: EditorDocument): Set<string> => {
     }
   }
   return ids;
+};
+
+/** The blank page sources the document uses; restore rebuilds them by id. */
+const blankSources = (document: EditorDocument): PersistedSource[] => {
+  const ids = new Set<string>();
+  for (const page of document.pages) {
+    const docId = pageDocId(page);
+    if (blankDocSize(docId)) {
+      ids.add(docId);
+    }
+  }
+  return [...ids].map((docId) => ({ byteLength: 0, docId, kind: "blank" }));
 };
 
 /** A page as saved: preview images are provisional and rebuilt on restore. */
@@ -200,6 +215,7 @@ export const createAutosave = (deps: AutosaveDeps) => {
             docId: PRIMARY_DOC_ID,
             kind: "file",
           },
+          ...blankSources(document),
         ],
       },
       putAssets,

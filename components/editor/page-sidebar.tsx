@@ -3,6 +3,9 @@
 import {
   ChevronDownIcon,
   ChevronUpIcon,
+  CopyIcon,
+  FilePlusIcon,
+  PlusIcon,
   RotateCwIcon,
   SquareStackIcon,
   Trash2Icon,
@@ -13,13 +16,23 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   Dialog,
   DialogHeader,
   DialogPanel,
   DialogPopup,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "@/components/ui/menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { toastManager } from "@/components/ui/toast-manager";
+import { pdfFormWidgetsOnPage } from "@/lib/editor/object-utils";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage } from "@/lib/editor/types";
 
@@ -36,6 +49,100 @@ const PageThumbnail = dynamic(
     ssr: false,
   }
 );
+
+// Page insertion opens pdf.js sources; load it only when a page is added.
+const loadPageActions = () => import("@/lib/editor/page-actions");
+
+const PAGES_LOADING = "Wait for every page to load, then try again.";
+
+const duplicatePageWithNotice = async (pageId: string): Promise<void> => {
+  const { duplicatePage } = await loadPageActions();
+  const hasFields =
+    pdfFormWidgetsOnPage(editorStore.getState().document, pageId).length > 0;
+  if (!duplicatePage(pageId)) {
+    toastManager.add({ title: PAGES_LOADING, type: "info" });
+    return;
+  }
+  if (hasFields) {
+    toastManager.add({
+      description: "The copy keeps the page's content but not its form fields.",
+      title: "Form fields aren't duplicated",
+      type: "info",
+    });
+  }
+};
+
+const insertBlankPageWithNotice = async (pageId: string): Promise<void> => {
+  const { insertBlankPageAfter } = await loadPageActions();
+  try {
+    if (!(await insertBlankPageAfter(pageId))) {
+      toastManager.add({ title: PAGES_LOADING, type: "info" });
+    }
+  } catch (error) {
+    toastManager.add({
+      description:
+        error instanceof Error ? error.message : "Could not add a page.",
+      title: "Page not added",
+      type: "error",
+    });
+  }
+};
+
+const deletePage = (pageId: string): void => {
+  const next = editorStore
+    .getState()
+    .document.pages.filter((page) => page.id !== pageId);
+  if (next.length > 0) {
+    editorStore.setPages(next);
+  }
+};
+
+const AddPageMenu = ({ pageId }: { pageId: string | null }) => {
+  const hydrated = useEditorStore((state) => state.hydrated);
+  const disabled = !(hydrated && pageId);
+  return (
+    <Menu>
+      <ToolbarTip label={hydrated ? "Add page" : "Pages are still loading"}>
+        <MenuTrigger
+          aria-label="Add page"
+          disabled={disabled}
+          render={
+            <Button
+              pressable
+              disabled={disabled}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <PlusIcon />
+            </Button>
+          }
+        />
+      </ToolbarTip>
+      <MenuPopup align="start">
+        <MenuItem
+          onClick={async () => {
+            if (pageId) {
+              await insertBlankPageWithNotice(pageId);
+            }
+          }}
+        >
+          <FilePlusIcon />
+          Blank page after current
+        </MenuItem>
+        <MenuItem
+          onClick={async () => {
+            if (pageId) {
+              await duplicatePageWithNotice(pageId);
+            }
+          }}
+        >
+          <CopyIcon />
+          Duplicate current page
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+};
 
 const moveCurrentPage = (
   pages: readonly EditorPage[],
@@ -66,6 +173,7 @@ const PageActions = () => {
 
   return (
     <div className="flex gap-1">
+      <AddPageMenu pageId={currentPageId} />
       <ToolbarTip label="Move current page up">
         <Button
           pressable
@@ -110,11 +218,9 @@ const PageActions = () => {
           pressable
           disabled={!canDeletePage}
           onClick={() => {
-            const next = pages.filter((page) => page.id !== currentPageId);
-            if (next.length === 0) {
-              return;
+            if (currentPageId) {
+              deletePage(currentPageId);
             }
-            editorStore.setPages(next);
           }}
           size="icon-xs"
           variant="ghost"
@@ -156,25 +262,66 @@ const PageThumbnailItemView = ({
   selected: boolean;
 }) => (
   <li className="flex flex-col gap-1">
-    <button
-      aria-current={selected ? "page" : undefined}
-      aria-label={`Page ${index + 1}`}
-      className="editor-pressable focus-visible:ring-ring rounded-md text-left outline-none focus-visible:ring-2"
-      draggable
-      onClick={() => {
-        editorStore.setCurrentPage(page.id);
-        onPageSelect?.();
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-      }}
-      onDragStart={() => onDragStartAt(index)}
-      onDrop={() => onDropAt(index)}
-      ref={(node) => registerItem(page.id, node)}
-      type="button"
-    >
-      <PageThumbnail page={page} selected={selected} />
-    </button>
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={
+          <button
+            aria-current={selected ? "page" : undefined}
+            aria-label={`Page ${index + 1}`}
+            className="editor-pressable focus-visible:ring-ring rounded-md text-left outline-none focus-visible:ring-2"
+            draggable
+            onClick={() => {
+              editorStore.setCurrentPage(page.id);
+              onPageSelect?.();
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+            }}
+            onDragStart={() => onDragStartAt(index)}
+            onDrop={() => onDropAt(index)}
+            ref={(node) => registerItem(page.id, node)}
+            type="button"
+          />
+        }
+      >
+        <PageThumbnail page={page} selected={selected} />
+      </ContextMenuTrigger>
+      <ContextMenuPopup>
+        <ContextMenuItem
+          onClick={async () => {
+            await duplicatePageWithNotice(page.id);
+          }}
+        >
+          <CopyIcon />
+          Duplicate
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={async () => {
+            await insertBlankPageWithNotice(page.id);
+          }}
+        >
+          <FilePlusIcon />
+          Insert blank page after
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            editorStore.setCurrentPage(page.id);
+            editorStore.rotateCurrentPage(90);
+          }}
+        >
+          <RotateCwIcon />
+          Rotate
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onClick={() => deletePage(page.id)}
+          variant="destructive"
+        >
+          <Trash2Icon />
+          Delete
+        </ContextMenuItem>
+      </ContextMenuPopup>
+    </ContextMenu>
     <span className="text-muted-foreground text-center text-xs">
       {index + 1}
     </span>

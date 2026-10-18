@@ -1,3 +1,5 @@
+import { pageDocId } from "@/lib/editor/page-source";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type {
   EditorPage,
   PdfImageObject,
@@ -33,6 +35,9 @@ export const rebindRuntimeIds = (
   const imageIds = new Map<string, string>();
 
   for (const page of saved) {
+    if (pageDocId(page) !== PRIMARY_DOC_ID) {
+      continue;
+    }
     const match = freshBySource.get(page.sourceIndex);
     if (!match) {
       return null;

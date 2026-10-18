@@ -1,9 +1,12 @@
 import { toastManager } from "@/components/ui/toast-manager";
+import { pageDocId } from "@/lib/editor/page-source";
 import { rebindRuntimeIds } from "@/lib/editor/session-rebind";
 import { editorStore } from "@/lib/editor/store";
 import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { EditorPage } from "@/lib/editor/types";
 import { ocrSession } from "@/lib/ocr/session";
+import { blankDocSize } from "@/lib/pdf/blank-pdf";
+import { ensureBlankSource } from "@/lib/pdf/blank-source";
 import { openRestoredPdf } from "@/lib/pdf/load-pdf";
 import { pdfSession } from "@/lib/pdf/session";
 import { indexedDbSessionStorage } from "@/lib/session/idb";
@@ -72,6 +75,14 @@ const restore = async (): Promise<boolean> => {
   if (!pages) {
     throw new Error("The saved pages don't match the PDF.");
   }
+  // Blank pages come from generated sources; reopen each size they use.
+  const otherSources = [
+    ...new Set(pages.map((page) => pageDocId(page))),
+  ].filter((docId) => docId !== PRIMARY_DOC_ID);
+  if (otherSources.some((docId) => !blankDocSize(docId))) {
+    throw new Error("A saved page comes from a PDF that wasn't saved.");
+  }
+  await Promise.all(otherSources.map((docId) => ensureBlankSource(docId)));
   editorStore.revokeAssets();
   for (const asset of snapshot.assets) {
     editorStore.restoreAsset(asset.id, asset.bytes, asset.mimeType);
