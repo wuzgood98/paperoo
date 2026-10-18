@@ -17,3 +17,7 @@ A browser PDF editor that lets users change text, images, and vectors already on
 **Cover**: A patch painted over original ink to hide it when removal is not possible. _Avoid_: Mask, white box, whiteout
 
 **Outline-only text**: Text a PDF draws only as filled glyph outlines, with no text layer; Paperoo recognizes it with OCR and turns each line into a run whose original ink is its part of the outline. _Avoid_: Vector text, shape text
+
+## Documents and pages
+
+**Source document**: A PDF file whose pages appear in the document: the opened file, a file whose pages were inserted, or a generated blank page. Each page records its source document (`docId`) and its index there (`sourceIndex`). _Avoid_: Source id (that is a pdf.js image id), input file

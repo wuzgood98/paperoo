@@ -1,10 +1,17 @@
 import { normalizeRotation } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
-import type { EditorPage, PdfFormModel } from "@/lib/editor/types";
+import { pageKeyString } from "@/lib/editor/page-source";
+import type { PageKey } from "@/lib/editor/page-source";
+import type {
+  EditorPage,
+  PdfAnnotationObject,
+  PdfFormModel,
+} from "@/lib/editor/types";
 import {
   DEFAULT_PDF_TEXT_COLOR,
   MAX_PDF_BYTES,
   MAX_PDF_PAGES,
+  PRIMARY_DOC_ID,
 } from "@/lib/editor/types";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
 import { extractPdfAnnotationObjects } from "@/lib/pdf/extract-annotations";
@@ -181,6 +188,59 @@ const formFromBuilt = (
   });
 };
 
+/* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof -- pdf.js link destination I/O */
+/** The page a destination names, as a 0-based index; null when unknown. */
+const destinationPageIndex = async (
+  doc: PDFDocumentProxy,
+  dest: unknown
+): Promise<number | null> => {
+  try {
+    const explicit =
+      typeof dest === "string" ? await doc.getDestination(dest) : dest;
+    if (!Array.isArray(explicit)) {
+      return null;
+    }
+    const [target] = explicit;
+    if (typeof target === "number") {
+      return target;
+    }
+    if (
+      target &&
+      typeof target === "object" &&
+      "num" in target &&
+      "gen" in target
+    ) {
+      // SAFETY: pdf.js encodes explicit destination pages as { num, gen } refs.
+      return await doc.getPageIndex(target as { gen: number; num: number });
+    }
+  } catch {
+    // A broken destination simply goes nowhere.
+  }
+  return null;
+};
+
+/* oxlint-enable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof */
+
+/**
+ * Resolve each internal link's target to a page index within its document,
+ * so navigation does not depend on pdf.js object numbers.
+ */
+const resolveLinkTargets = async (
+  doc: PDFDocumentProxy,
+  objects: PdfAnnotationObject[]
+): Promise<PdfAnnotationObject[]> =>
+  await Promise.all(
+    objects.map(async (object) => {
+      if (object.type !== "pdf-link" || object.action.kind !== "goto") {
+        return object;
+      }
+      const pageIndex = await destinationPageIndex(doc, object.action.dest);
+      return pageIndex === null
+        ? object
+        : { ...object, action: { ...object.action, pageIndex } };
+    })
+  );
+
 /** Destroy `loadingTask` once `previous` settles; never rejects. */
 const destroyAfter = async (
   previous: Promise<void>,
@@ -194,26 +254,52 @@ const destroyAfter = async (
   }
 };
 
+interface SourceEntry {
+  bytes: Uint8Array;
+  doc: PDFDocumentProxy | null;
+  loadingTask: PDFDocumentLoadingTask;
+}
+
 class PdfSession {
-  bytes: Uint8Array | null = null;
-  #doc: PDFDocumentProxy | null = null;
-  #loadingTask: PDFDocumentLoadingTask | null = null;
-  #pages = new Map<number, PageCacheEntry>();
-  /** Idle (refs === 0) source indexes, oldest first. */
-  #idleOrder: number[] = [];
+  /** Open source documents by id; the opened file is PRIMARY_DOC_ID. */
+  #sources = new Map<string, SourceEntry>();
+  /** Cached pages by `pageKeyString`. */
+  #pages = new Map<string, PageCacheEntry>();
+  /** Idle (refs === 0) page keys, oldest first. */
+  #idleOrder: string[] = [];
   #idleBudget = DEFAULT_PAGE_IDLE_CACHE;
   /**
-   * First-paint indexes kept out of LRU until `retainPage` takes a live ref.
+   * First-paint keys kept out of LRU until `retainPage` takes a live ref.
    * Hydration would otherwise evict them before the viewport chunk loads.
    */
-  #pinned = new Set<number>();
+  #pinned = new Set<string>();
   /** Settles once every closed document has finished tearing down. */
   #teardown: Promise<void> = Promise.resolve();
-  /** Bumped per open so a superseded open stops before loading. */
+  /** Bumped per primary open so a superseded open stops before loading. */
   #openGeneration = 0;
+  /** Bumped whenever the set of open documents changes; keys caches. */
+  #generation = 0;
 
-  get document(): PDFDocumentProxy | null {
-    return this.#doc;
+  get generation(): number {
+    return this.#generation;
+  }
+
+  /** The bytes a source document was opened from, if it is open. */
+  bytesOf(docId: string): Uint8Array | null {
+    return this.#sources.get(docId)?.bytes ?? null;
+  }
+
+  documentOf(docId: string): PDFDocumentProxy | null {
+    return this.#sources.get(docId)?.doc ?? null;
+  }
+
+  /** Ids of the open source documents. */
+  docIds(): string[] {
+    return [...this.#sources.keys()];
+  }
+
+  #isCurrent(docId: string, doc: PDFDocumentProxy): boolean {
+    return this.#sources.get(docId)?.doc === doc;
   }
 
   /** Cap idle retained pages ≈ PDF.js `max(10, 2 * visible + 1)`. */
@@ -225,17 +311,22 @@ class PdfSession {
   async open(
     bytes: Uint8Array
   ): Promise<{ form: PdfFormModel; pages: EditorPage[] }> {
-    const doc = await this.#openDocument(bytes);
+    const doc = await this.#openPrimary(bytes);
     // Doc-level probes are page-independent: start them before the page loop
     // so worker round-trips overlap page extraction instead of tailing it.
     const formProbes = startFormProbes(doc);
     observeRejection(formProbes);
-    const built = await this.#loadPageRange(0, doc.numPages);
-    if (this.#doc !== doc) {
+    const built = await this.#loadPageRange(
+      PRIMARY_DOC_ID,
+      doc,
+      0,
+      doc.numPages
+    );
+    if (!this.#isCurrent(PRIMARY_DOC_ID, doc)) {
       throw new Error("This PDF is no longer open.");
     }
     const probes = await formProbes;
-    if (this.#doc !== doc) {
+    if (!this.#isCurrent(PRIMARY_DOC_ID, doc)) {
       throw new Error("This PDF is no longer open.");
     }
     return {
@@ -255,8 +346,10 @@ class PdfSession {
     bytes: Uint8Array,
     handlers: ProgressiveOpenHandlers
   ): Promise<{ pageCount: number }> {
-    const doc = await this.#openDocument(bytes);
+    const doc = await this.#openPrimary(bytes);
     const cancelled = handlers.isCancelled ?? ((): boolean => false);
+    const isGone = (): boolean =>
+      cancelled() || !this.#isCurrent(PRIMARY_DOC_ID, doc);
     const formProbes = startFormProbes(doc);
     observeRejection(formProbes);
     const totalPages = doc.numPages;
@@ -264,8 +357,8 @@ class PdfSession {
       throw new Error("This PDF has no pages.");
     }
     const firstCount = Math.min(FIRST_PAINT_PAGES, totalPages);
-    const first = await this.#loadPageRange(0, firstCount);
-    if (cancelled() || this.#doc !== doc) {
+    const first = await this.#loadPageRange(PRIMARY_DOC_ID, doc, 0, firstCount);
+    if (isGone()) {
       return { pageCount: totalPages };
     }
     if (first.length === 0) {
@@ -283,29 +376,63 @@ class PdfSession {
       doc,
       cancelled
     );
-    if (!hydrated || cancelled() || this.#doc !== doc) {
+    if (!hydrated || isGone()) {
       return { pageCount: totalPages };
     }
     const probes = await formProbes;
-    if (cancelled() || this.#doc !== doc) {
+    if (isGone()) {
       return { pageCount: totalPages };
     }
     handlers.onForm(formFromBuilt(doc, allBuilt, probes));
     return { pageCount: totalPages };
   }
 
-  async #openDocument(bytes: Uint8Array): Promise<PDFDocumentProxy> {
+  /**
+   * Open another source document beside the open ones (a merged file, a
+   * blank page) and extract all of its pages, stamped with `docId`.
+   */
+  async addDocument(
+    bytes: Uint8Array,
+    docId: string
+  ): Promise<{ form: PdfFormModel; pages: EditorPage[] }> {
+    if (this.#sources.has(docId)) {
+      throw new Error(`Source document ${docId} is already open.`);
+    }
+    const doc = await this.#openSource(bytes, docId);
+    const formProbes = startFormProbes(doc);
+    observeRejection(formProbes);
+    const built = await this.#loadPageRange(docId, doc, 0, doc.numPages);
+    const probes = await formProbes;
+    if (!this.#isCurrent(docId, doc)) {
+      throw new Error("This PDF is no longer open.");
+    }
+    return {
+      form: formFromBuilt(doc, built, probes),
+      pages: built.map((entry) => entry.editorPage),
+    };
+  }
+
+  /** Close every open document, then open `bytes` as the opened file. */
+  async #openPrimary(bytes: Uint8Array): Promise<PDFDocumentProxy> {
     this.#openGeneration += 1;
     const generation = this.#openGeneration;
     await this.close();
     if (generation !== this.#openGeneration) {
       throw new Error("This PDF is no longer open.");
     }
+    return this.#openSource(bytes, PRIMARY_DOC_ID);
+  }
+
+  async #openSource(
+    bytes: Uint8Array,
+    docId: string
+  ): Promise<PDFDocumentProxy> {
     if (bytes.byteLength > MAX_PDF_BYTES) {
       throw new Error("This PDF is larger than the 80 MB limit.");
     }
     ensurePdfjsWorker();
-    this.bytes = clonePdfBytes(bytes);
+    // pdf.js takes ownership of `bytes`; the session keeps its own copy.
+    const kept = clonePdfBytes(bytes);
     const loadingTask = getDocument({
       cMapPacked: true,
       cMapUrl: PDFJS_CMAP_URL,
@@ -317,15 +444,17 @@ class PdfSession {
       useSystemFonts: false,
       wasmUrl: PDFJS_WASM_URL,
     });
-    this.#loadingTask = loadingTask;
+    const entry: SourceEntry = { bytes: kept, doc: null, loadingTask };
+    this.#sources.set(docId, entry);
+    this.#generation += 1;
 
     let doc: PDFDocumentProxy;
     try {
       doc = await loadingTask.promise;
     } catch (error) {
       // A newer open may already own the session; only tear down our own task.
-      if (this.#loadingTask === loadingTask) {
-        await this.close();
+      if (this.#sources.get(docId) === entry) {
+        await this.#closeSource(docId);
       }
       if (error instanceof PasswordException) {
         throw new TypeError("This PDF is encrypted and cannot be opened.", {
@@ -334,13 +463,13 @@ class PdfSession {
       }
       throw error;
     }
-    if (this.#loadingTask !== loadingTask) {
+    if (this.#sources.get(docId) !== entry) {
       throw new Error("This PDF is no longer open.");
     }
 
-    this.#doc = doc;
+    entry.doc = doc;
     if (doc.numPages > MAX_PDF_PAGES) {
-      await this.close();
+      await this.#closeSource(docId);
       throw new Error(`This PDF has more than ${MAX_PDF_PAGES} pages.`);
     }
     return doc;
@@ -349,8 +478,9 @@ class PdfSession {
   /** Keep the first window resident until a canvas retains it. */
   #pinFirstWindow(count: number): void {
     for (let index = 0; index < count; index += 1) {
-      if (this.#pages.has(index)) {
-        this.#pinned.add(index);
+      const key = pageKeyString({ docId: PRIMARY_DOC_ID, sourceIndex: index });
+      if (this.#pages.has(key)) {
+        this.#pinned.add(key);
       }
     }
   }
@@ -368,7 +498,9 @@ class PdfSession {
     doc: PDFDocumentProxy,
     cancelled: () => boolean
   ): Promise<boolean> {
-    if (this.#doc !== doc) {
+    const isGone = (): boolean =>
+      cancelled() || !this.#isCurrent(PRIMARY_DOC_ID, doc);
+    if (!this.#isCurrent(PRIMARY_DOC_ID, doc)) {
       return false;
     }
     if (firstCount >= totalPages) {
@@ -381,13 +513,13 @@ class PdfSession {
       start < totalPages;
       start += OPEN_PAGE_CONCURRENCY
     ) {
-      if (cancelled() || this.#doc !== doc) {
+      if (isGone()) {
         return false;
       }
       const end = Math.min(start + OPEN_PAGE_CONCURRENCY, totalPages);
       // oxlint-disable-next-line eslint/no-await-in-loop -- bounded sequential hydration chunks keep the UI responsive
-      const chunk = await this.#loadPageRange(start, end);
-      if (cancelled() || this.#doc !== doc) {
+      const chunk = await this.#loadPageRange(PRIMARY_DOC_ID, doc, start, end);
+      if (isGone()) {
         return false;
       }
       allBuilt.push(...chunk);
@@ -396,11 +528,16 @@ class PdfSession {
       // oxlint-disable-next-line eslint/no-await-in-loop -- bounded sequential hydration chunks keep the UI responsive
       await yieldToUI();
     }
-    return !(cancelled() || this.#doc !== doc);
+    return !isGone();
   }
 
   /** Extract [start, end) with bounded concurrency, preserving order. */
-  async #loadPageRange(start: number, end: number): Promise<BuiltPage[]> {
+  async #loadPageRange(
+    docId: string,
+    doc: PDFDocumentProxy,
+    start: number,
+    end: number
+  ): Promise<BuiltPage[]> {
     const results = Array.from(
       { length: end - start },
       (): BuiltPage | null => null
@@ -414,7 +551,7 @@ class PdfSession {
       // oxlint-disable-next-line eslint/no-await-in-loop -- bounded concurrency: one chunk of pages at a time
       const chunk = await Promise.all(
         Array.from({ length: chunkEnd - chunkStart }, (_, offset) =>
-          this.#loadPage(chunkStart + offset)
+          this.#loadPage(docId, doc, chunkStart + offset)
         )
       );
       for (const [offset, entry] of chunk.entries()) {
@@ -425,9 +562,12 @@ class PdfSession {
   }
 
   /** Fetch, extract, and cache a single page for later render reuse. */
-  async #loadPage(sourceIndex: number): Promise<BuiltPage | null> {
-    const doc = this.#doc;
-    if (!doc) {
+  async #loadPage(
+    docId: string,
+    doc: PDFDocumentProxy,
+    sourceIndex: number
+  ): Promise<BuiltPage | null> {
+    if (!this.#isCurrent(docId, doc)) {
       return null;
     }
     let page: PDFPageProxy;
@@ -436,7 +576,7 @@ class PdfSession {
     } catch {
       return null;
     }
-    if (!this.#cachePage(doc, sourceIndex, page)) {
+    if (!this.#cachePage(docId, doc, sourceIndex, page)) {
       return null;
     }
 
@@ -452,12 +592,12 @@ class PdfSession {
         page.getAnnotations({ intent: "display" }),
       ]);
     } catch (error) {
-      if (this.#doc !== doc) {
+      if (!this.#isCurrent(docId, doc)) {
         return null;
       }
       throw error;
     }
-    if (this.#doc !== doc) {
+    if (!this.#isCurrent(docId, doc)) {
       return null;
     }
     const cropBox = {
@@ -473,8 +613,15 @@ class PdfSession {
       id,
       sourceRotate,
     };
-    const { objects: pdfAnnotationObjects, skippedSubtypes } =
+    const { objects: extractedAnnotations, skippedSubtypes } =
       extractPdfAnnotationObjects(rawAnnotations, extractPage);
+    const pdfAnnotationObjects = await resolveLinkTargets(
+      doc,
+      extractedAnnotations
+    );
+    if (!this.#isCurrent(docId, doc)) {
+      return null;
+    }
     const extractableText = toExtractableTextContent(textContent);
     // SAFETY: commonObjs uses the same PDFObjects.get contract as page.objs.
     const fontFaces = await collectPdfFontFaces(
@@ -482,7 +629,7 @@ class PdfSession {
       extractableText.items,
       TYPE3_METRIC_OPS
     );
-    if (this.#doc !== doc) {
+    if (!this.#isCurrent(docId, doc)) {
       return null;
     }
     const textPaints = extractPdfTextPaints(
@@ -515,7 +662,7 @@ class PdfSession {
         ),
         extractedVectors
       );
-    const editorPage = {
+    const editorPage: EditorPage = {
       contentOpCounts: removalIndex.counts,
       cropBox,
       height: viewport.height,
@@ -535,128 +682,162 @@ class PdfSession {
       sourceRotate,
       type3Glyphs: sliceType3Glyphs(operatorList, OPS, fontFaces),
       width: viewport.width,
-    } satisfies EditorPage;
+    };
+    // Pages of the opened file leave it unset, as saved sessions did.
+    if (docId !== PRIMARY_DOC_ID) {
+      editorPage.docId = docId;
+    }
     page.cleanup();
     return { editorPage, rawAnnotations };
   }
 
-  async getPage(sourceIndex: number): Promise<PDFPageProxy | null> {
-    const cached = this.#pages.get(sourceIndex);
+  async getPage(key: PageKey): Promise<PDFPageProxy | null> {
+    const cached = this.#pages.get(pageKeyString(key));
     if (cached) {
       return cached.page;
     }
-    const doc = this.#doc;
+    const doc = this.documentOf(key.docId);
     if (!doc) {
       return null;
     }
-    const page = await doc.getPage(sourceIndex + 1);
-    if (!this.#cachePage(doc, sourceIndex, page)) {
+    const page = await doc.getPage(key.sourceIndex + 1);
+    if (!this.#cachePage(key.docId, doc, key.sourceIndex, page)) {
       return null;
     }
     return page;
   }
 
   /**
-   * Cache `page` only while `doc` is still the open document.
+   * Cache `page` only while `doc` is still open under `docId`.
    * A superseded open's continuation must not put a destroyed proxy back.
    */
   #cachePage(
+    docId: string,
     doc: PDFDocumentProxy,
     sourceIndex: number,
     page: PDFPageProxy
   ): boolean {
-    if (this.#doc !== doc) {
+    if (!this.#isCurrent(docId, doc)) {
       return false;
     }
+    const key = pageKeyString({ docId, sourceIndex });
     // Two consumers can load the same uncached page at once (the canvas and
     // its thumbnail). Keep the first entry: replacing it would drop the
     // refs already taken, and the page could be evicted while still drawn.
-    if (this.#pages.has(sourceIndex)) {
+    if (this.#pages.has(key)) {
       return true;
     }
-    this.#pages.set(sourceIndex, { page, refs: 0 });
-    this.#touchIdle(sourceIndex);
+    this.#pages.set(key, { page, refs: 0 });
+    this.#touchIdle(key);
     this.#evictIdle();
     return true;
   }
 
   /** Load (or reuse) a page and increment its live consumer count. */
-  async retainPage(sourceIndex: number): Promise<PDFPageProxy | null> {
-    const page = await this.getPage(sourceIndex);
+  async retainPage(key: PageKey): Promise<PDFPageProxy | null> {
+    const page = await this.getPage(key);
     if (!page) {
       return null;
     }
-    const entry = this.#pages.get(sourceIndex);
+    const cacheKey = pageKeyString(key);
+    const entry = this.#pages.get(cacheKey);
     if (!entry) {
       return null;
     }
     entry.refs += 1;
-    this.#pinned.delete(sourceIndex);
-    this.#removeIdle(sourceIndex);
+    this.#pinned.delete(cacheKey);
+    this.#removeIdle(cacheKey);
     return page;
   }
 
   /** Decrement live consumers; idle pages stay until LRU budget eviction. */
-  releasePageRef(sourceIndex: number): void {
-    const entry = this.#pages.get(sourceIndex);
+  releasePageRef(key: PageKey): void {
+    const cacheKey = pageKeyString(key);
+    const entry = this.#pages.get(cacheKey);
     if (!entry) {
       return;
     }
     entry.refs = Math.max(0, entry.refs - 1);
     if (entry.refs === 0) {
-      this.#touchIdle(sourceIndex);
+      this.#touchIdle(cacheKey);
       this.#evictIdle();
     }
   }
 
   /** Force-evict a page (used by close / tests). */
-  releasePage(sourceIndex: number): void {
-    const entry = this.#pages.get(sourceIndex);
+  releasePage(key: PageKey): void {
+    this.#dropPage(pageKeyString(key));
+  }
+
+  #dropPage(cacheKey: string): void {
+    const entry = this.#pages.get(cacheKey);
     if (!entry) {
       return;
     }
     entry.page.cleanup();
-    this.#pages.delete(sourceIndex);
-    this.#pinned.delete(sourceIndex);
-    this.#removeIdle(sourceIndex);
+    this.#pages.delete(cacheKey);
+    this.#pinned.delete(cacheKey);
+    this.#removeIdle(cacheKey);
   }
 
-  /** Test/helper: current retained page indexes. */
-  cachedPageIndexes(): number[] {
-    return [...this.#pages.keys()];
+  /** Test/helper: retained page indexes of one source document. */
+  cachedPageIndexes(docId: string = PRIMARY_DOC_ID): number[] {
+    const prefix = `${docId}#`;
+    const indexes: number[] = [];
+    for (const key of this.#pages.keys()) {
+      if (key.startsWith(prefix)) {
+        indexes.push(Number(key.slice(prefix.length)));
+      }
+    }
+    return indexes;
+  }
+
+  /** Detach one source document and destroy it once earlier teardowns finish. */
+  #closeSource(docId: string): Promise<void> {
+    const entry = this.#sources.get(docId);
+    if (!entry) {
+      return this.#teardown;
+    }
+    const prefix = `${docId}#`;
+    for (const key of this.#pages.keys()) {
+      if (key.startsWith(prefix)) {
+        this.#dropPage(key);
+      }
+    }
+    this.#sources.delete(docId);
+    this.#generation += 1;
+    // destroy() cancels renders still in flight; doc.cleanup() would throw
+    // "Page N is currently rendering" on them instead. A failed teardown of
+    // the old document must never fail the open that replaces it.
+    this.#teardown = destroyAfter(this.#teardown, entry.loadingTask);
+    return this.#teardown;
   }
 
   /**
-   * Detach the open document synchronously, then destroy it. Every close
+   * Detach every open document synchronously, then destroy them. Every close
    * joins one teardown chain, so a concurrent open waits for the previous
-   * document to finish tearing down before it touches the shared worker.
+   * documents to finish tearing down before it touches the shared worker.
    */
   close(): Promise<void> {
-    const cachedIndexes = [...this.#pages.keys()];
-    for (const sourceIndex of cachedIndexes) {
-      this.releasePage(sourceIndex);
+    for (const docId of this.#sources.keys()) {
+      void this.#closeSource(docId);
+    }
+    for (const key of this.#pages.keys()) {
+      this.#dropPage(key);
     }
     this.#idleOrder = [];
     this.#idleBudget = DEFAULT_PAGE_IDLE_CACHE;
     this.#pinned.clear();
-    const loadingTask = this.#loadingTask;
-    this.#doc = null;
-    this.#loadingTask = null;
-    this.bytes = null;
-    // destroy() cancels renders still in flight; doc.cleanup() would throw
-    // "Page N is currently rendering" on them instead. A failed teardown of
-    // the old document must never fail the open that replaces it.
-    this.#teardown = destroyAfter(this.#teardown, loadingTask);
     return this.#teardown;
   }
 
-  #touchIdle(sourceIndex: number): void {
-    this.#removeIdle(sourceIndex);
-    this.#idleOrder.push(sourceIndex);
+  #touchIdle(cacheKey: string): void {
+    this.#removeIdle(cacheKey);
+    this.#idleOrder.push(cacheKey);
   }
 
-  #removeIdle(sourceIndex: number): void {
-    const index = this.#idleOrder.indexOf(sourceIndex);
+  #removeIdle(cacheKey: string): void {
+    const index = this.#idleOrder.indexOf(cacheKey);
     if (index !== -1) {
       this.#idleOrder.splice(index, 1);
     }

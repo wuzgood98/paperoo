@@ -1,5 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 
+import { pageKeyString } from "@/lib/editor/page-source";
+import type { PageKey } from "@/lib/editor/page-source";
 import { probeFontGlyphs } from "@/lib/pdf/probe-font-glyphs";
 import type {
   ProbeFontRequest,
@@ -19,7 +21,8 @@ interface ProbeCache {
   results: Map<string, Promise<string>>;
 }
 
-let cache: ProbeCache | null = null;
+/** One parsed copy per open source document, by docId. */
+const caches = new Map<string, ProbeCache>();
 
 /** Fallback without workers (tests, old browsers): parse on this thread. */
 const inThreadProber = (bytes: Uint8Array): Omit<ProbeCache, "results"> => {
@@ -102,14 +105,23 @@ const workerProber = (bytes: Uint8Array): Omit<ProbeCache, "results"> => {
   };
 };
 
-const sessionCache = (bytes: Uint8Array): ProbeCache => {
-  if (cache?.bytes !== bytes) {
-    cache?.dispose();
+const sessionCache = (docId: string, bytes: Uint8Array): ProbeCache => {
+  // Drop parsers of documents that closed or were reopened.
+  const open = new Set(pdfSession.docIds());
+  for (const [id, entry] of caches) {
+    if (!open.has(id) || (id === docId && entry.bytes !== bytes)) {
+      entry.dispose();
+      caches.delete(id);
+    }
+  }
+  let cache = caches.get(docId);
+  if (!cache) {
     const prober =
       typeof Worker === "undefined"
         ? inThreadProber(bytes)
         : workerProber(bytes);
     cache = { ...prober, results: new Map() };
+    caches.set(docId, cache);
   }
   return cache;
 };
@@ -120,20 +132,20 @@ const sessionCache = (bytes: Uint8Array): ProbeCache => {
  * when the font cannot be reused at all.
  */
 export const probeReusableFontGlyphs = async (
-  sourceIndex: number,
+  page: PageKey,
   baseFontName: string | undefined
 ): Promise<string> => {
-  const { bytes } = pdfSession;
+  const bytes = pdfSession.bytesOf(page.docId);
   if (!(bytes && baseFontName)) {
     return "";
   }
-  const session = sessionCache(bytes);
-  const key = `${sourceIndex}:${baseFontName}`;
+  const session = sessionCache(page.docId, bytes);
+  const key = `${pageKeyString(page)}:${baseFontName}`;
   const known = session.results.get(key);
   if (known) {
     return await known;
   }
-  const result = session.probe(sourceIndex, baseFontName);
+  const result = session.probe(page.sourceIndex, baseFontName);
   session.results.set(key, result);
   try {
     return await result;

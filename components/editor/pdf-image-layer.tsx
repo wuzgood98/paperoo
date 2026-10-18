@@ -67,6 +67,7 @@ const PdfImageLayerView = ({
   nodeRefs,
   objects,
   onTransformStart,
+  pageDocId,
   pageSourceIndex,
   rootRef,
   selectedId,
@@ -80,6 +81,7 @@ const PdfImageLayerView = ({
   nodeRefs: RefBox<Map<string, HTMLDivElement>>;
   objects: readonly PdfImageObject[];
   onTransformStart: (objectId: string) => void;
+  pageDocId: string;
   pageSourceIndex: number;
   rootRef: RefObject<HTMLDivElement | null>;
   selectedId: string | null;
@@ -133,7 +135,10 @@ const PdfImageLayerView = ({
               rootRef.current?.setPointerCapture(event.pointerId);
               editorStore.selectPdfImage(object.id);
               capturePdfImagePreviewFromCanvas(object, rootRef.current, zoom);
-              void ensurePdfImagePreview(object, pageSourceIndex);
+              void ensurePdfImagePreview(object, {
+                docId: pageDocId,
+                sourceIndex: pageSourceIndex,
+              });
               onTransformStart(object.id);
               gestureRef.current = {
                 kind: "drag",
@@ -162,7 +167,10 @@ const PdfImageLayerView = ({
                 );
                 rootRef.current?.setPointerCapture(event.pointerId);
                 capturePdfImagePreviewFromCanvas(object, rootRef.current, zoom);
-                void ensurePdfImagePreview(object, pageSourceIndex);
+                void ensurePdfImagePreview(object, {
+                  docId: pageDocId,
+                  sourceIndex: pageSourceIndex,
+                });
                 onTransformStart(object.id);
                 gestureRef.current = {
                   handle,
@@ -178,7 +186,10 @@ const PdfImageLayerView = ({
                 );
                 rootRef.current?.setPointerCapture(event.pointerId);
                 capturePdfImagePreviewFromCanvas(object, rootRef.current, zoom);
-                void ensurePdfImagePreview(object, pageSourceIndex);
+                void ensurePdfImagePreview(object, {
+                  docId: pageDocId,
+                  sourceIndex: pageSourceIndex,
+                });
                 onTransformStart(object.id);
                 const center = objectCenter(object);
                 const point = toPage(event);

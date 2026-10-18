@@ -1,9 +1,17 @@
 import { PDFDocument } from "pdf-lib";
 import { afterEach, expect, test } from "vitest";
 
+import type { PageKey } from "@/lib/editor/page-source";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import { DEFAULT_PAGE_IDLE_CACHE, pdfSession } from "@/lib/pdf/session";
 
 import "./pdfjs-node";
+
+/** A page of the opened file. */
+const primary = (sourceIndex: number): PageKey => ({
+  docId: PRIMARY_DOC_ID,
+  sourceIndex,
+});
 
 afterEach(async () => {
   await pdfSession.close();
@@ -24,25 +32,25 @@ const churnIdlePages = async (
   if (fromIndex >= toIndexExclusive) {
     return;
   }
-  const page = await pdfSession.retainPage(fromIndex);
+  const page = await pdfSession.retainPage(primary(fromIndex));
   expect(page).toBeTruthy();
-  pdfSession.releasePageRef(fromIndex);
+  pdfSession.releasePageRef(primary(fromIndex));
   await churnIdlePages(fromIndex + 1, toIndexExclusive);
 };
 
 test("retainPage keeps proxy until all consumers release", async () => {
   await pdfSession.open(await multiPagePdf(2));
 
-  const first = await pdfSession.retainPage(0);
-  const second = await pdfSession.retainPage(0);
+  const first = await pdfSession.retainPage(primary(0));
+  const second = await pdfSession.retainPage(primary(0));
   expect(first).toBeTruthy();
   expect(second).toBe(first);
   expect(pdfSession.cachedPageIndexes()).toContain(0);
 
-  pdfSession.releasePageRef(0);
+  pdfSession.releasePageRef(primary(0));
   expect(pdfSession.cachedPageIndexes()).toContain(0);
 
-  pdfSession.releasePageRef(0);
+  pdfSession.releasePageRef(primary(0));
   expect(pdfSession.cachedPageIndexes()).toContain(0);
 });
 
@@ -65,10 +73,10 @@ test("live retained pages are not evicted", async () => {
   await pdfSession.open(await multiPagePdf(pageCount));
   pdfSession.setIdleCacheBudget(0);
 
-  await pdfSession.retainPage(0);
+  await pdfSession.retainPage(primary(0));
   await churnIdlePages(1, pageCount);
 
   expect(pdfSession.cachedPageIndexes()).toContain(0);
   expect(pdfSession.cachedPageIndexes()).not.toContain(1);
-  pdfSession.releasePageRef(0);
+  pdfSession.releasePageRef(primary(0));
 });

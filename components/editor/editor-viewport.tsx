@@ -303,6 +303,7 @@ export const EditorViewport = () => {
                   onActivate={activatePage}
                   page={page}
                   pageCount={pages.length}
+                  pageNumber={item.index + 1}
                   zoom={zoom}
                 />
               </div>

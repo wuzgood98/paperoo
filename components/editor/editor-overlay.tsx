@@ -41,6 +41,7 @@ import {
   scaleSignaturePoints,
   SIGNATURE_PLACE_SIZE,
 } from "@/lib/editor/object-utils";
+import { pageDocId, pageKeyOf } from "@/lib/editor/page-source";
 import { pendingSignature } from "@/lib/editor/pending";
 import { editorStore, useEditorStore } from "@/lib/editor/store";
 import type { EditorPage, Point } from "@/lib/editor/types";
@@ -235,7 +236,7 @@ export const EditorOverlay = ({
           (item) => item.id === hover.imageId
         );
         if (image) {
-          void ensurePdfImagePreview(image, page.sourceIndex);
+          void ensurePdfImagePreview(image, pageKeyOf(page));
         }
       }
       applyPdfHover(hover);
@@ -463,6 +464,7 @@ export const EditorOverlay = ({
         nodeRefs={nodeRefs}
         objects={page.pdfImageObjects}
         onTransformStart={setTransformingId}
+        pageDocId={pageDocId(page)}
         pageSourceIndex={page.sourceIndex}
         rootRef={rootRef}
         selectedId={selectedPdfImageId}

@@ -1,8 +1,9 @@
 import { PDFDocument } from "pdf-lib";
 import { afterEach, expect, test } from "vitest";
 
+import type { PageKey } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
-import { EMPTY_PDF_FORM } from "@/lib/editor/types";
+import { EMPTY_PDF_FORM, PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { EditorPage, TextObject } from "@/lib/editor/types";
 import {
   DEFAULT_PAGE_IDLE_CACHE,
@@ -12,6 +13,12 @@ import {
 import type { ProgressiveOpenHandlers } from "@/lib/pdf/session";
 
 import "./pdfjs-node";
+
+/** A page of the opened file. */
+const primary = (sourceIndex: number): PageKey => ({
+  docId: PRIMARY_DOC_ID,
+  sourceIndex,
+});
 
 afterEach(async () => {
   await pdfSession.close();
@@ -203,12 +210,12 @@ test("a retained first-window page can be evicted after release", async () => {
     quietHandlers()
   );
 
-  expect(await pdfSession.retainPage(0)).toBeTruthy();
-  pdfSession.releasePageRef(0);
+  expect(await pdfSession.retainPage(primary(0))).toBeTruthy();
+  pdfSession.releasePageRef(primary(0));
   for (let index = FIRST_PAINT_PAGES; index < pageCount; index += 1) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- retain then release, in order, is what walks the LRU
-    expect(await pdfSession.retainPage(index)).toBeTruthy();
-    pdfSession.releasePageRef(index);
+    expect(await pdfSession.retainPage(primary(index))).toBeTruthy();
+    pdfSession.releasePageRef(primary(index));
   }
 
   const cached = pdfSession.cachedPageIndexes();
@@ -237,7 +244,7 @@ test("a newer progressive open drops the first file's cached pages", async () =>
 
   await first;
   await second;
-  expect(pdfSession.document?.numPages).toBe(1);
+  expect(pdfSession.documentOf(PRIMARY_DOC_ID)?.numPages).toBe(1);
   expect(pdfSession.cachedPageIndexes()).toEqual([0]);
 });
 

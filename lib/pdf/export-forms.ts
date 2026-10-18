@@ -1,17 +1,18 @@
 import fontkit from "@pdf-lib/fontkit";
 import {
+  PDFArray,
   PDFCheckBox,
+  PDFDict,
   PDFDropdown,
   PDFHexString,
   PDFName,
-  PDFObjectCopier,
   PDFOptionList,
-  PDFPage,
   PDFRadioGroup,
+  PDFRef,
   PDFTextField,
   StandardFonts,
 } from "pdf-lib";
-import type { PDFFont, PDFDocument, PDFForm } from "pdf-lib";
+import type { PDFDocument, PDFFont, PDFForm, PDFObjectCopier } from "pdf-lib";
 
 import { documentForm, isPdfFormFieldDirty } from "@/lib/editor/object-utils";
 import type {
@@ -194,27 +195,92 @@ export const applyPdfFormEdits = async (
   }
 };
 
-export const copyPagesWithAcroForm = async (
-  source: PDFDocument,
-  output: PDFDocument,
-  indices: readonly number[]
-): Promise<PDFPage[]> => {
-  await source.flush();
-  const copier = PDFObjectCopier.for(source.context, output.context);
-  const sourcePages = source.getPages();
-  const copied: PDFPage[] = [];
-  for (const index of indices) {
-    const srcPage = sourcePages[index];
-    if (!srcPage) {
+const refKey = (ref: PDFRef): string =>
+  `${ref.objectNumber}R${ref.generationNumber}`;
+
+/** Every annotation ref on the output's pages. */
+export const outputAnnotRefKeys = (output: PDFDocument): Set<string> => {
+  const keys = new Set<string>();
+  for (const page of output.getPages()) {
+    const annots = page.node.Annots();
+    if (!annots) {
       continue;
     }
-    const node = copier.copy(srcPage.node);
-    const ref = output.context.register(node);
-    copied.push(PDFPage.of(node, ref, output));
+    for (let index = 0; index < annots.size(); index += 1) {
+      const entry = annots.get(index);
+      if (entry instanceof PDFRef) {
+        keys.add(refKey(entry));
+      }
+    }
   }
-  const acroForm = source.catalog.get(PDFName.of("AcroForm"));
-  if (acroForm) {
-    output.catalog.set(PDFName.of("AcroForm"), copier.copy(acroForm));
+  return keys;
+};
+
+/**
+ * Keep a field node when it still shows somewhere: a widget on an output
+ * page, or a field whose kids keep one. Fields that never had widgets stay.
+ */
+const pruneFieldRef = (
+  output: PDFDocument,
+  ref: PDFRef,
+  onPage: ReadonlySet<string>
+): boolean => {
+  const dict = output.context.lookup(ref);
+  if (!(dict instanceof PDFDict)) {
+    return false;
   }
-  return copied;
+  if (dict.get(PDFName.of("Subtype")) === PDFName.of("Widget")) {
+    return onPage.has(refKey(ref));
+  }
+  const kids = dict.lookup(PDFName.of("Kids"));
+  if (!(kids instanceof PDFArray) || kids.size() === 0) {
+    return true;
+  }
+  const kept = kids
+    .asArray()
+    .filter(
+      (kid): kid is PDFRef =>
+        kid instanceof PDFRef && pruneFieldRef(output, kid, onPage)
+    );
+  dict.set(PDFName.of("Kids"), output.context.obj(kept));
+  return kept.length > 0;
+};
+
+/**
+ * Give the output one AcroForm: each source's form, copied with the copier
+ * its pages used so widget refs line up, keeping only fields that still
+ * have a widget on an output page (pages may have been deleted or split off).
+ */
+export const writeOutputAcroForm = (
+  output: PDFDocument,
+  sources: readonly { copier: PDFObjectCopier; source: PDFDocument }[]
+): void => {
+  const onPage = outputAnnotRefKeys(output);
+  let merged: PDFDict | null = null;
+  const fields: PDFRef[] = [];
+  for (const { copier, source } of sources) {
+    const acroForm = source.catalog.get(PDFName.of("AcroForm"));
+    if (!acroForm) {
+      continue;
+    }
+    const copied = output.context.lookup(copier.copy(acroForm));
+    if (!(copied instanceof PDFDict)) {
+      continue;
+    }
+    merged ??= copied;
+    const sourceFields = copied.lookup(PDFName.of("Fields"));
+    if (!(sourceFields instanceof PDFArray)) {
+      continue;
+    }
+    for (const field of sourceFields.asArray()) {
+      if (field instanceof PDFRef && pruneFieldRef(output, field, onPage)) {
+        fields.push(field);
+      }
+    }
+  }
+  if (!merged) {
+    return;
+  }
+  merged.set(PDFName.of("Fields"), output.context.obj(fields));
+  output.catalog.set(PDFName.of("AcroForm"), output.context.register(merged));
 };

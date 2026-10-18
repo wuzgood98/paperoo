@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { pageDocId } from "@/lib/editor/page-source";
 import type { EditorPage } from "@/lib/editor/types";
 import { AnnotationMode } from "@/lib/pdf/pdfjs";
 import {
@@ -23,6 +24,8 @@ export const PageThumbnail = ({
   const rootRef = useRef<HTMLDivElement>(null);
   const taskRef = useRef<Awaited<ReturnType<typeof renderPdfPage>>>(null);
   const [visible, setVisible] = useState(selected);
+  const docId = pageDocId(page);
+  const { sourceIndex, width } = page;
 
   useEffect(() => {
     const node = rootRef.current;
@@ -51,17 +54,19 @@ export const PageThumbnail = ({
 
     let retained = false;
 
+    const key = { docId, sourceIndex };
+
     const draw = async () => {
-      const pdfPage = await pdfSession.retainPage(page.sourceIndex);
+      const pdfPage = await pdfSession.retainPage(key);
       if (!pdfPage) {
         return;
       }
       if (controller.signal.aborted) {
-        pdfSession.releasePageRef(page.sourceIndex);
+        pdfSession.releasePageRef(key);
         return;
       }
       retained = true;
-      task = await renderPdfPage(pdfPage, canvas, thumbnailScale(page.width), {
+      task = await renderPdfPage(pdfPage, canvas, thumbnailScale(width), {
         annotationMode: AnnotationMode.DISABLE,
         previous: task,
         signal: controller.signal,
@@ -77,10 +82,10 @@ export const PageThumbnail = ({
       task?.cancel();
       releaseCanvas(canvas);
       if (retained) {
-        pdfSession.releasePageRef(page.sourceIndex);
+        pdfSession.releasePageRef(key);
       }
     };
-  }, [page.sourceIndex, page.width, visible]);
+  }, [docId, sourceIndex, visible, width]);
 
   return (
     <div

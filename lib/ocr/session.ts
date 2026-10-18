@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 
+import { pageKeyOf } from "@/lib/editor/page-source";
 import type { EditorPage } from "@/lib/editor/types";
 import { createOcrController } from "@/lib/ocr/controller";
 import type { OcrController, OcrControllerState } from "@/lib/ocr/controller";
@@ -15,7 +16,8 @@ const renderEditorPage = async (page: EditorPage) => {
     import("@/lib/pdf/session"),
     import("@/lib/ocr/render-page"),
   ]);
-  const pdfPage = await pdfSession.retainPage(page.sourceIndex);
+  const key = pageKeyOf(page);
+  const pdfPage = await pdfSession.retainPage(key);
   if (!pdfPage) {
     throw new Error("This page is not open.");
   }
@@ -27,7 +29,7 @@ const renderEditorPage = async (page: EditorPage) => {
       page.height
     );
   } finally {
-    pdfSession.releasePageRef(page.sourceIndex);
+    pdfSession.releasePageRef(key);
   }
 };
 

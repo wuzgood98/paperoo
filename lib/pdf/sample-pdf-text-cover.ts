@@ -6,6 +6,8 @@ import {
   rectsIntersect,
   unionRects,
 } from "@/lib/editor/object-utils";
+import { pageKeyOf } from "@/lib/editor/page-source";
+import type { PageKey } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject, Rect } from "@/lib/editor/types";
 import { displayedRectToCanvasPixels } from "@/lib/pdf/canvas-pixels";
@@ -75,18 +77,18 @@ export interface PdfTextMeasureEnv {
   ) => Promise<HTMLCanvasElement | null>;
   /** Characters the export can encode in this font; see `probe-pdf-font`. */
   probeFontGlyphs: (
-    sourceIndex: number,
+    page: PageKey,
     baseFontName: string | undefined
   ) => Promise<string>;
 }
 
 const browserMeasureEnv: PdfTextMeasureEnv = {
   loadPageCanvas: getDisplayedPageSampleCanvas,
-  probeFontGlyphs: async (sourceIndex, baseFontName) => {
+  probeFontGlyphs: async (page, baseFontName) => {
     // Loaded on first edit so pdf-lib stays out of the initial bundle.
     const { probeReusableFontGlyphs } =
       await import("@/lib/pdf/probe-pdf-font");
-    return await probeReusableFontGlyphs(sourceIndex, baseFontName);
+    return await probeReusableFontGlyphs(page, baseFontName);
   },
 };
 
@@ -173,7 +175,7 @@ const probeFontSafely = async (
 ): Promise<string> => {
   try {
     // The run's own sourceIndex is its text item; the font lives on the page.
-    return await env.probeFontGlyphs(page.sourceIndex, object.baseFontName);
+    return await env.probeFontGlyphs(pageKeyOf(page), object.baseFontName);
   } catch {
     return "";
   }
