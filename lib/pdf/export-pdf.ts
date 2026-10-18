@@ -104,7 +104,11 @@ import {
   copiedAnnotRefs,
   helveticaFor,
 } from "@/lib/pdf/export-annotations";
-import { applyPdfFormEdits, writeOutputAcroForm } from "@/lib/pdf/export-forms";
+import {
+  applyPdfFormEdits,
+  stripFormWidgets,
+  writeOutputAcroForm,
+} from "@/lib/pdf/export-forms";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
 import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
 import type { InterWeight } from "@/lib/pdf/figma-fallback";
@@ -1535,6 +1539,9 @@ export const exportDocumentWithReport = async (
       page,
       copiedAnnotRefs(sourcePage, page)
     );
+    if (editorPage.omitFormWidgets) {
+      stripFormWidgets(output, page);
+    }
 
     const combined = normalizeRotation(
       editorPage.sourceRotate + editorPage.rotation

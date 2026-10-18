@@ -632,6 +632,11 @@ export interface EditorPage {
   pdfImageObjects: PdfImageObject[];
   pdfTextObjects: PdfTextObject[];
   pdfVectorObjects: PdfVectorObject[];
+  /**
+   * A duplicated page: form fields stay on the original, so the copy is
+   * drawn and exported without the source page's widgets.
+   */
+  omitFormWidgets?: true;
   skippedPdfAnnotationSubtypes: string[];
   suppressedOcrWordIds?: readonly string[];
   /** Figma pages only: glyphs cut from text outlines, for rebuilding the face. */

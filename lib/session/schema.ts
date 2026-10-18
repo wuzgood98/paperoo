@@ -14,10 +14,11 @@ export const SESSION_SCHEMA_VERSION = 1;
 /** Saved sessions older than this are not offered. */
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
+/** A source document; blank ones are rebuilt from their id, not stored. */
 export interface PersistedSource {
   byteLength: number;
   docId: string;
-  kind: "file";
+  kind: "blank" | "file";
 }
 
 export interface PersistedMeta {

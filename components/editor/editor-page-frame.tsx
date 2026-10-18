@@ -108,6 +108,7 @@ const EditorPageFrameView = ({
       >
         <PdfCanvas
           docId={pageDocId(page)}
+          omitFormWidgets={page.omitFormWidgets === true}
           rotation={canvasRotation}
           scale={zoom}
           sourceIndex={page.sourceIndex}
