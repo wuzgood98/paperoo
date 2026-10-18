@@ -88,6 +88,8 @@ export interface EditorStoreState {
   errorMessage: string | null;
   fileName: string | null;
   highlightColor: string;
+  /** Every page of the open PDF has loaded (hydration finished). */
+  hydrated: boolean;
   isExporting: boolean;
   selectedObjectIds: readonly string[];
   selectedOcrWordIds: readonly string[];
@@ -130,6 +132,7 @@ const initialState = (): EditorStoreState => ({
   errorMessage: null,
   fileName: null,
   highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+  hydrated: false,
   isExporting: false,
   selectedObjectIds: [],
   selectedOcrWordIds: [],
@@ -962,6 +965,12 @@ export const editorStore = {
     emit();
   },
 
+  markHydrated: (): void => {
+    if (!internal.state.hydrated) {
+      setState({ hydrated: true });
+    }
+  },
+
   patchPdfAnnotation: (
     updater: (object: PdfAnnotationObject) => PdfAnnotationObject
   ): void => {
@@ -1228,6 +1237,66 @@ export const editorStore = {
       document,
       errorMessage: null,
       fileName,
+      hydrated: false,
+      selectedObjectIds: [],
+      selectedOcrWordIds: [],
+      selectedPdfAnnotationId: null,
+      selectedPdfFormFieldId: null,
+      selectedPdfImageId: null,
+      selectedPdfTextId: null,
+      selectedPdfVectorId: null,
+      showOcrRegions: false,
+      status: "ready",
+      tool: "select",
+      zoomMode: "fit-page",
+    });
+    editorStore.recomputeFitZoom();
+  },
+
+  /** Re-add a saved image under its saved id, so restored objects find it. */
+  restoreAsset: (
+    id: string,
+    bytes: Uint8Array,
+    mimeType: ImageMimeType
+  ): ImageAsset => {
+    // Own a plain ArrayBuffer copy, as addAsset does.
+    const copy = new Uint8Array(bytes);
+    const blob = new Blob([copy], { type: mimeType });
+    const asset: ImageAsset = {
+      bytes: copy,
+      id,
+      mimeType,
+      objectUrl: URL.createObjectURL(blob),
+    };
+    internal.assets.set(id, asset);
+    return asset;
+  },
+
+  /**
+   * Open a restored session: its pages are fully loaded, and its edits are
+   * unsaved because nothing was exported since. Restore assets first.
+   */
+  restoreDocument: (
+    document: EditorDocument,
+    fileName: string,
+    currentPageId: string | null
+  ): void => {
+    internal.history = emptyHistory();
+    internal.previewBase = null;
+    internal.cleanDocument = null;
+    const restored: EditorDocument = {
+      ...document,
+      pages: mergeEmbeddedFontGlyphs(document.pages),
+    };
+    const hasCurrent = restored.pages.some((page) => page.id === currentPageId);
+    setState({
+      currentPageId: hasCurrent
+        ? currentPageId
+        : (restored.pages[0]?.id ?? null),
+      document: restored,
+      errorMessage: null,
+      fileName,
+      hydrated: true,
       selectedObjectIds: [],
       selectedOcrWordIds: [],
       selectedPdfAnnotationId: null,

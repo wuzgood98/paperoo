@@ -3,6 +3,7 @@
 import { FileUpIcon } from "lucide-react";
 import { useRef } from "react";
 
+import { RestoreSessionBanner } from "@/components/editor/restore-session-banner";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -52,6 +53,7 @@ export const EmptyState = () => {
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
+        <RestoreSessionBanner />
         <input
           accept="application/pdf"
           className="sr-only"
