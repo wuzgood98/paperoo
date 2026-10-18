@@ -22,11 +22,11 @@ const CONTROL_INPUT_TYPES = new Set([
   "submit",
 ]);
 
-type TargetKind = "control" | "none" | "text";
+export type TargetKind = "control" | "none" | "text";
 
 // "text" swallows every hotkey; "control" (range, color, checkbox, select…)
 // only swallows unmodified keys, since those controls have no native ⌘Z/⌘Y.
-const getTargetKind = (target: EventTarget | null): TargetKind => {
+export const getTargetKind = (target: EventTarget | null): TargetKind => {
   if (!(target instanceof HTMLElement)) {
     return "none";
   }

@@ -1,3 +1,5 @@
+import { exportPdfWithToast } from "@/components/editor/export-action";
+import { confirmReplaceDocument } from "@/components/editor/replace-document";
 import { toastManager } from "@/components/ui/toast-manager";
 
 // pdf.js, page extraction and OCR load on demand, not with the empty page.
@@ -35,11 +37,20 @@ const fail = (message: string): void => {
   });
 };
 
+/** False when the user keeps the open document instead. */
+const mayReplaceDocument = async (): Promise<boolean> => {
+  const choice = await confirmReplaceDocument();
+  if (choice === "export") {
+    return exportPdfWithToast();
+  }
+  return choice === "discard";
+};
+
 export const openPdfFromList = async (
   files: FileList | null | undefined
 ): Promise<void> => {
   const file = files?.[0];
-  if (!file) {
+  if (!file || !(await mayReplaceDocument())) {
     return;
   }
   try {
@@ -53,6 +64,9 @@ export const openPdfFromUrl = async (
   url: string,
   fileName: string
 ): Promise<void> => {
+  if (!(await mayReplaceDocument())) {
+    return;
+  }
   try {
     const response = await fetch(url);
     if (!response.ok) {

@@ -8,8 +8,10 @@ import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { EmptyState } from "@/components/editor/empty-state";
 import { LargeDeleteDialog } from "@/components/editor/large-delete-dialog";
 import { PageSidebar } from "@/components/editor/page-sidebar";
+import { ReplaceDocumentDialog } from "@/components/editor/replace-document-dialog";
 import { SignatureDialog } from "@/components/editor/signature-dialog";
 import { ToolRail } from "@/components/editor/tool-rail";
+import { UnsavedChangesGuard } from "@/components/editor/unsaved-changes-guard";
 import { Spinner } from "@/components/ui/spinner";
 import { useEditorStore } from "@/lib/editor/store";
 import type { EditorStatus } from "@/lib/editor/types";
@@ -54,6 +56,7 @@ export const EditorShell = () => {
   return (
     <div className="bg-background flex h-svh min-h-0 flex-col overflow-hidden pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] [--editor-page-sidebar:220px]">
       <EditorHotkeys />
+      <UnsavedChangesGuard />
       <EditorToolbar />
       <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[var(--editor-page-sidebar)_minmax(0,1fr)_56px]">
         <PageSidebar />
@@ -64,6 +67,7 @@ export const EditorShell = () => {
       </div>
       <SignatureDialog />
       <LargeDeleteDialog />
+      <ReplaceDocumentDialog />
     </div>
   );
 };
