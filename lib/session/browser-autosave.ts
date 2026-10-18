@@ -1,5 +1,6 @@
 import { toastManager } from "@/components/ui/toast-manager";
 import { editorStore } from "@/lib/editor/store";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import { ocrSession } from "@/lib/ocr/session";
 import { pdfSession } from "@/lib/pdf/session";
 import { createAutosave } from "@/lib/session/autosave";
@@ -46,7 +47,7 @@ export const startAutosave = (): void => {
     ocrWords: ocrSession.wordsForExport,
     onDisabled,
     releaseSlot,
-    sourceBytes: () => pdfSession.bytes,
+    sourceBytes: () => pdfSession.bytesOf(PRIMARY_DOC_ID),
     storage: indexedDbSessionStorage,
     subscribe: editorStore.subscribe,
   });

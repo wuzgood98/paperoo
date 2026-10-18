@@ -156,7 +156,10 @@ test("the font probe reads the run's page, not its text item index", async () =>
 
   await ensurePdfTextMeasured(editorPage, target, 1, env);
 
-  expect(probe).toHaveBeenCalledWith(1, "ABCDEF+TestSans");
+  expect(probe).toHaveBeenCalledWith(
+    { docId: "primary", sourceIndex: 1 },
+    "ABCDEF+TestSans"
+  );
 });
 
 test("a failed font probe still stores the cover and no reuse", async () => {

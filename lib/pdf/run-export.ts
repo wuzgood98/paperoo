@@ -1,6 +1,8 @@
 import { toastManager } from "@/components/ui/toast-manager";
 import { isPdfTextDirty } from "@/lib/editor/object-utils";
+import { pageDocId } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import { FONT_FILES } from "@/lib/fonts/measure-text";
 import { ocrSession } from "@/lib/ocr/session";
 import { clonePdfBytes } from "@/lib/pdf/bytes";
@@ -43,7 +45,7 @@ export interface EditedPdf {
 
 export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
   const state = editorStore.getState();
-  const { bytes } = pdfSession;
+  const bytes = pdfSession.bytesOf(PRIMARY_DOC_ID);
   if (!bytes || state.document.pages.length === 0) {
     throw new Error("Open a PDF before exporting.");
   }
@@ -121,6 +123,15 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
         reject(new Error("The export worker crashed."));
       });
       const exportBytes = clonePdfBytes(bytes);
+      // Every other source document a page comes from (blank pages, merges).
+      const sources: Record<string, ArrayBuffer> = {};
+      for (const page of state.document.pages) {
+        const docId = pageDocId(page);
+        const source = pdfSession.bytesOf(docId);
+        if (docId !== PRIMARY_DOC_ID && source && !(docId in sources)) {
+          sources[docId] = new Uint8Array(source).buffer;
+        }
+      }
       worker.postMessage(
         {
           assets,
@@ -128,8 +139,15 @@ export const buildEditedPdfBytes = async (): Promise<EditedPdf> => {
           document: state.document,
           fontBytes,
           ocrWordsByPage: ocrSession.wordsForExport(),
+          sources,
         },
-        { transfer: [exportBytes.buffer, ...transfer] }
+        {
+          transfer: [
+            exportBytes.buffer,
+            ...Object.values(sources),
+            ...transfer,
+          ],
+        }
       );
     });
   } finally {

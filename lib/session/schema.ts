@@ -14,9 +14,6 @@ export const SESSION_SCHEMA_VERSION = 1;
 /** Saved sessions older than this are not offered. */
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
-/** Id of the opened file among the saved sources (one until merging lands). */
-export const PRIMARY_SOURCE_ID = "primary";
-
 export interface PersistedSource {
   byteLength: number;
   docId: string;

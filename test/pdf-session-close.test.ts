@@ -1,9 +1,17 @@
 import { PDFDocument } from "pdf-lib";
 import { afterEach, expect, test } from "vitest";
 
+import type { PageKey } from "@/lib/editor/page-source";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import { pdfSession } from "@/lib/pdf/session";
 
 import "./pdfjs-node";
+
+/** A page of the opened file. */
+const primary = (sourceIndex: number): PageKey => ({
+  docId: PRIMARY_DOC_ID,
+  sourceIndex,
+});
 
 afterEach(async () => {
   await pdfSession.close();
@@ -20,7 +28,7 @@ const multiPagePdf = async (pageCount: number): Promise<Uint8Array> => {
 test("opening a new PDF while a page of the old one is still rendering succeeds", async () => {
   const nextBytes = await multiPagePdf(2);
   await pdfSession.open(await multiPagePdf(3));
-  const page = await pdfSession.retainPage(0);
+  const page = await pdfSession.retainPage(primary(0));
   expect(page).toBeTruthy();
   // An operator list still streaming keeps the page "currently rendering",
   // which makes PDFDocumentProxy.cleanup() throw.
@@ -30,16 +38,16 @@ test("opening a new PDF while a page of the old one is still rendering succeeds"
   const next = await pdfSession.open(nextBytes);
 
   expect(next.pages).toHaveLength(2);
-  expect(pdfSession.document?.numPages).toBe(2);
+  expect(pdfSession.documentOf(PRIMARY_DOC_ID)?.numPages).toBe(2);
 });
 
 test("closing while a page is still rendering releases the document", async () => {
   await pdfSession.open(await multiPagePdf(2));
-  const page = await pdfSession.retainPage(1);
+  const page = await pdfSession.retainPage(primary(1));
   page?.getOperatorList().catch(() => null);
 
   await expect(pdfSession.close()).resolves.toBeUndefined();
-  expect(pdfSession.document).toBeNull();
+  expect(pdfSession.documentOf(PRIMARY_DOC_ID)).toBeNull();
   expect(pdfSession.cachedPageIndexes()).toEqual([]);
 });
 
@@ -56,5 +64,5 @@ test("two opens in quick succession leave the newer PDF open", async () => {
   await expect(newer).resolves.toMatchObject({
     pages: expect.arrayContaining([expect.anything()]),
   });
-  expect(pdfSession.document?.numPages).toBe(2);
+  expect(pdfSession.documentOf(PRIMARY_DOC_ID)?.numPages).toBe(2);
 });

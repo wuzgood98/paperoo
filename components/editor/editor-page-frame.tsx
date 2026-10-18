@@ -7,6 +7,7 @@ import { OcrPageBanner } from "@/components/editor/ocr-page-banner";
 import { PdfCanvas } from "@/components/editor/pdf-canvas";
 import { normalizeRotation, pixelSnapOffset } from "@/lib/editor/coordinates";
 import { pageFrameCssSize } from "@/lib/editor/page-frame-size";
+import { pageDocId } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage } from "@/lib/editor/types";
 import { useDevicePixelRatio } from "@/lib/pdf/device-pixel-ratio";
@@ -16,6 +17,7 @@ const EditorPageFrameView = ({
   onActivate,
   page,
   pageCount,
+  pageNumber,
   zoom,
 }: {
   displayZoom: number;
@@ -23,6 +25,8 @@ const EditorPageFrameView = ({
   onActivate: (pageId: string) => void;
   page: EditorPage;
   pageCount: number;
+  /** 1-based position in the document, as the page list shows it. */
+  pageNumber: number;
   zoom: number;
 }) => {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -103,6 +107,7 @@ const EditorPageFrameView = ({
         }}
       >
         <PdfCanvas
+          docId={pageDocId(page)}
           rotation={canvasRotation}
           scale={zoom}
           sourceIndex={page.sourceIndex}
@@ -112,7 +117,7 @@ const EditorPageFrameView = ({
           <OcrPageBanner
             page={page}
             pageCount={pageCount}
-            pageNumber={page.sourceIndex + 1}
+            pageNumber={pageNumber}
           />
         </div>
       </div>

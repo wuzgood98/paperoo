@@ -5,11 +5,9 @@ import type {
   EditorPage,
   ImageAsset,
 } from "@/lib/editor/types";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { OcrTextObject } from "@/lib/ocr/types";
-import {
-  PRIMARY_SOURCE_ID,
-  SESSION_SCHEMA_VERSION,
-} from "@/lib/session/schema";
+import { SESSION_SCHEMA_VERSION } from "@/lib/session/schema";
 import type {
   PersistedAsset,
   SessionStorage,
@@ -199,7 +197,7 @@ export const createAutosave = (deps: AutosaveDeps) => {
         sources: [
           {
             byteLength: bytes.byteLength,
-            docId: PRIMARY_SOURCE_ID,
+            docId: PRIMARY_DOC_ID,
             kind: "file",
           },
         ],
@@ -212,7 +210,7 @@ export const createAutosave = (deps: AutosaveDeps) => {
       write.source = {
         // A plain ArrayBuffer copy; the session's bytes may be any buffer.
         bytes: new Blob([new Uint8Array(bytes)], { type: "application/pdf" }),
-        docId: PRIMARY_SOURCE_ID,
+        docId: PRIMARY_DOC_ID,
       };
     }
     return { assetIds, write };

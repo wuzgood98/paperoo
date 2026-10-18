@@ -7,6 +7,7 @@ import {
   hitTestPdfVector,
   pdfTextEditable,
 } from "@/lib/editor/object-utils";
+import { pageKeyOf } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
 import type {
   EditorDocument,
@@ -78,7 +79,7 @@ export const selectPdfObjectAtPoint = (
   const imageHit = hitTestPdfImage(page.pdfImageObjects, point);
   if (imageHit) {
     editorStore.selectPdfImage(imageHit.id);
-    void ensurePdfImagePreview(imageHit, page.sourceIndex);
+    void ensurePdfImagePreview(imageHit, pageKeyOf(page));
     return true;
   }
   const vectorHit = hitTestPdfVector(

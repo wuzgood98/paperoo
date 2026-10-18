@@ -7,7 +7,6 @@ import {
   pdfLinkActionsEqual,
 } from "@/lib/editor/object-utils";
 import type {
-  EditorDocument,
   EditorPage,
   PdfAnnotationObject,
   PdfFreeTextAnnotation,
@@ -31,28 +30,50 @@ const parseSourceRef = (
   };
 };
 
-const findAnnotRef = (page: PDFPage, sourceRef: string): PDFRef | null => {
+/** Source annotation ref ("12R0") → the ref of its copy on the output page. */
+export type AnnotRefMap = ReadonlyMap<string, PDFRef>;
+
+const refKey = (objectNumber: number, generationNumber: number): string =>
+  `${objectNumber}R${generationNumber}`;
+
+const findAnnotRef = (
+  annotRefs: AnnotRefMap,
+  sourceRef: string
+): PDFRef | null => {
   const parsed = parseSourceRef(sourceRef);
   if (!parsed) {
     return null;
   }
-  const annots = page.node.Annots();
-  if (!annots) {
-    return null;
+  return (
+    annotRefs.get(refKey(parsed.objectNumber, parsed.generationNumber)) ?? null
+  );
+};
+
+/**
+ * Pair each annotation of a source page with its copy: the copier keeps the
+ * `/Annots` order, so entries match by position.
+ */
+export const copiedAnnotRefs = (
+  source: PDFPage,
+  copy: PDFPage
+): AnnotRefMap => {
+  const refs = new Map<string, PDFRef>();
+  const from = source.node.Annots();
+  const to = copy.node.Annots();
+  if (!(from && to)) {
+    return refs;
   }
-  for (let index = 0; index < annots.size(); index += 1) {
-    const entry = annots.get(index);
-    if (!(entry instanceof PDFRef)) {
-      continue;
-    }
-    if (
-      entry.objectNumber === parsed.objectNumber &&
-      entry.generationNumber === parsed.generationNumber
-    ) {
-      return entry;
+  for (let index = 0; index < Math.min(from.size(), to.size()); index += 1) {
+    const original = from.get(index);
+    const copied = to.get(index);
+    if (original instanceof PDFRef && copied instanceof PDFRef) {
+      refs.set(
+        refKey(original.objectNumber, original.generationNumber),
+        copied
+      );
     }
   }
-  return null;
+  return refs;
 };
 
 const hexToPdfRgb = (hex: string): [number, number, number] => {
@@ -132,17 +153,18 @@ const setLinkUriAction = (
 const removeAnnotation = (
   doc: PDFDocument,
   page: PDFPage,
+  annotRefs: AnnotRefMap,
   sourceRef: string,
   popupRef: string | null
 ): void => {
-  const ref = findAnnotRef(page, sourceRef);
+  const ref = findAnnotRef(annotRefs, sourceRef);
   if (!ref) {
     return;
   }
   page.node.removeAnnot(ref);
   doc.context.delete(ref);
   if (popupRef) {
-    const popup = findAnnotRef(page, popupRef);
+    const popup = findAnnotRef(annotRefs, popupRef);
     if (popup) {
       page.node.removeAnnot(popup);
       doc.context.delete(popup);
@@ -267,18 +289,20 @@ const applyAnnotationEdit = async (
   helvetica: () => Promise<PDFFont>,
   editorPage: EditorPage,
   page: PDFPage,
+  annotRefs: AnnotRefMap,
   object: PdfAnnotationObject
 ): Promise<void> => {
   if (object.deleted) {
     removeAnnotation(
       doc,
       page,
+      annotRefs,
       object.sourceRef,
       "popupRef" in object ? object.popupRef : null
     );
     return;
   }
-  const ref = findAnnotRef(page, object.sourceRef);
+  const ref = findAnnotRef(annotRefs, object.sourceRef);
   if (!ref) {
     return;
   }
@@ -355,29 +379,38 @@ const applyAnnotationEdit = async (
   }
 };
 
-export const applyPdfAnnotationEdits = async (
-  source: PDFDocument,
-  document: EditorDocument
-): Promise<void> => {
-  const pages = source.getPages();
-  // Every free-text appearance shares one Helvetica resource.
+/** One Helvetica per output document, shared by every free-text appearance. */
+export const helveticaFor = (doc: PDFDocument): (() => Promise<PDFFont>) => {
   let embedded: Promise<PDFFont> | undefined;
-  const helvetica = (): Promise<PDFFont> => {
-    embedded ??= source.embedFont(StandardFonts.Helvetica);
+  return () => {
+    embedded ??= doc.embedFont(StandardFonts.Helvetica);
     return embedded;
   };
-  for (const editorPage of document.pages) {
-    const dirty = editorPage.pdfAnnotationObjects.filter(isPdfAnnotationDirty);
-    if (dirty.length === 0) {
+};
+
+/**
+ * Apply a page's annotation edits to its copy in the output. Each copy has
+ * its own annotations, so a duplicated page's edits never leak into another.
+ */
+export const applyPageAnnotationEdits = async (
+  doc: PDFDocument,
+  helvetica: () => Promise<PDFFont>,
+  editorPage: EditorPage,
+  page: PDFPage,
+  annotRefs: AnnotRefMap
+): Promise<void> => {
+  for (const object of editorPage.pdfAnnotationObjects) {
+    if (!isPdfAnnotationDirty(object)) {
       continue;
     }
-    const page = pages[editorPage.sourceIndex];
-    if (!page) {
-      continue;
-    }
-    for (const object of dirty) {
-      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential annot edits
-      await applyAnnotationEdit(source, helvetica, editorPage, page, object);
-    }
+    // oxlint-disable-next-line eslint/no-await-in-loop -- sequential annot edits
+    await applyAnnotationEdit(
+      doc,
+      helvetica,
+      editorPage,
+      page,
+      annotRefs,
+      object
+    );
   }
 };

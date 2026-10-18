@@ -1,4 +1,6 @@
 import { displayedCanvasRotation } from "@/lib/editor/coordinates";
+import { pageKeyOf, pageKeyString } from "@/lib/editor/page-source";
+import type { PageKey } from "@/lib/editor/page-source";
 import type { EditorPage } from "@/lib/editor/types";
 import { AnnotationMode } from "@/lib/pdf/pdfjs";
 import { renderPdfPage } from "@/lib/pdf/render-page";
@@ -8,26 +10,26 @@ import { pdfSession } from "@/lib/pdf/session";
 export const MAX_CACHED_PAGE_CANVASES = 6;
 
 export interface PageCanvasCacheDeps<TCanvas> {
-  /** Identity of the open PDF; a change drops every cached canvas. */
-  currentDocument: () => object | null;
+  /** Generation of the open PDFs; a change drops every cached canvas. */
+  currentDocument: () => number;
   render: (
-    sourceIndex: number,
+    page: PageKey,
     scale: number,
     rotation: number | undefined
   ) => Promise<TCanvas | null>;
 }
 
 export type PageCanvasCache<TCanvas> = (
-  sourceIndex: number,
+  page: PageKey,
   scale: number,
   rotation?: number
 ) => Promise<TCanvas | null>;
 
 const cacheKey = (
-  sourceIndex: number,
+  page: PageKey,
   scale: number,
   rotation: number | undefined
-): string => `${sourceIndex}:${scale}:${rotation ?? 0}`;
+): string => `${pageKeyString(page)}:${scale}:${rotation ?? 0}`;
 
 /**
  * LRU of rendered page canvases, keyed by page, scale and rotation. In-flight
@@ -40,15 +42,15 @@ export const createPageCanvasCache = <TCanvas>({
   render,
 }: PageCanvasCacheDeps<TCanvas>): PageCanvasCache<TCanvas> => {
   const cache = new Map<string, Promise<TCanvas | null>>();
-  let cacheDocument: object | null = null;
+  let cacheDocument: number | null = null;
 
-  return async (sourceIndex, scale, rotation) => {
+  return async (page, scale, rotation) => {
     const current = currentDocument();
     if (current !== cacheDocument) {
       cache.clear();
       cacheDocument = current;
     }
-    const key = cacheKey(sourceIndex, scale, rotation);
+    const key = cacheKey(page, scale, rotation);
     const existing = cache.get(key);
     if (existing) {
       // Re-insert so the Map's order stays least-recently-used first.
@@ -56,7 +58,7 @@ export const createPageCanvasCache = <TCanvas>({
       cache.set(key, existing);
       return await existing;
     }
-    const rendering = render(sourceIndex, scale, rotation);
+    const rendering = render(page, scale, rotation);
     cache.set(key, rendering);
     for (const oldKey of cache.keys()) {
       if (cache.size <= MAX_CACHED_PAGE_CANVASES) {
@@ -81,12 +83,12 @@ export const createPageCanvasCache = <TCanvas>({
 };
 
 const renderContentCanvas = async (
-  sourceIndex: number,
+  key: PageKey,
   scale: number,
   rotation: number | undefined,
   pixelRatio?: number
 ): Promise<HTMLCanvasElement | null> => {
-  const page = await pdfSession.retainPage(sourceIndex);
+  const page = await pdfSession.retainPage(key);
   if (!page) {
     return null;
   }
@@ -99,15 +101,14 @@ const renderContentCanvas = async (
     });
     return canvas;
   } finally {
-    pdfSession.releasePageRef(sourceIndex);
+    pdfSession.releasePageRef(key);
   }
 };
 
 /** Shown on screen under edited annotations, so at device resolution. */
 export const getPageContentCanvas = createPageCanvasCache({
-  currentDocument: () => pdfSession.document,
-  render: (sourceIndex, scale, rotation) =>
-    renderContentCanvas(sourceIndex, scale, rotation),
+  currentDocument: () => pdfSession.generation,
+  render: (key, scale, rotation) => renderContentCanvas(key, scale, rotation),
 });
 
 /**
@@ -115,21 +116,21 @@ export const getPageContentCanvas = createPageCanvasCache({
  * memory) on a 2x display. Samplers map rects by the canvas's own width.
  */
 const getPageSampleCanvas = createPageCanvasCache({
-  currentDocument: () => pdfSession.document,
-  render: (sourceIndex, scale, rotation) =>
-    renderContentCanvas(sourceIndex, scale, rotation, 1),
+  currentDocument: () => pdfSession.generation,
+  render: (key, scale, rotation) =>
+    renderContentCanvas(key, scale, rotation, 1),
 });
 
 /** Page content canvas in displayed space, so displayed rects map by scale only. */
 export const getDisplayedPageContentCanvas = (
-  page: Pick<EditorPage, "sourceIndex" | "sourceRotate">,
+  page: Pick<EditorPage, "docId" | "sourceIndex" | "sourceRotate">,
   scale: number
 ): Promise<HTMLCanvasElement | null> =>
-  getPageContentCanvas(page.sourceIndex, scale, displayedCanvasRotation(page));
+  getPageContentCanvas(pageKeyOf(page), scale, displayedCanvasRotation(page));
 
 /** Page content in displayed space at CSS resolution, for color sampling. */
 export const getDisplayedPageSampleCanvas = (
-  page: Pick<EditorPage, "sourceIndex" | "sourceRotate">,
+  page: Pick<EditorPage, "docId" | "sourceIndex" | "sourceRotate">,
   scale: number
 ): Promise<HTMLCanvasElement | null> =>
-  getPageSampleCanvas(page.sourceIndex, scale, displayedCanvasRotation(page));
+  getPageSampleCanvas(pageKeyOf(page), scale, displayedCanvasRotation(page));

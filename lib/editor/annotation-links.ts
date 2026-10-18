@@ -1,3 +1,5 @@
+import { pageDocId } from "@/lib/editor/page-source";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { EditorDocument, PdfLinkAction } from "@/lib/editor/types";
 
 export const resolvePdfLinkNavigation = (
@@ -10,25 +12,17 @@ export const resolvePdfLinkNavigation = (
       return { kind: "url", url: action.url };
     }
     case "goto": {
-      const { dest } = action;
-      if (!Array.isArray(dest) || dest.length === 0) {
+      // Resolved at load to a page of the link's own source document.
+      if (action.pageIndex === undefined) {
         return null;
       }
-      const [pageRef] = dest;
-      if (pageRef && pageRef !== null && "num" in pageRef) {
-        // SAFETY: PDF.js encodes explicit destinations with { num, gen } page refs.
-        const num = Number((pageRef as { num: unknown }).num);
-        if (!Number.isFinite(num)) {
-          return null;
-        }
-        const page = document.pages.find(
-          (item) => item.sourceIndex + 1 === num
-        );
-        if (page) {
-          return { kind: "page", pageId: page.id };
-        }
-      }
-      return null;
+      const from = document.pages.find((page) => page.id === currentPageId);
+      const docId = from ? pageDocId(from) : PRIMARY_DOC_ID;
+      const page = document.pages.find(
+        (item) =>
+          item.sourceIndex === action.pageIndex && pageDocId(item) === docId
+      );
+      return page ? { kind: "page", pageId: page.id } : null;
     }
     case "named": {
       if (action.name === "NextPage" && currentPageId) {

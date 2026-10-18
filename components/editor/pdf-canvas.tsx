@@ -8,10 +8,12 @@ import type { PdfPaintTask } from "@/lib/pdf/render-page";
 import { pdfSession } from "@/lib/pdf/session";
 
 export const PdfCanvas = ({
+  docId,
   rotation,
   scale,
   sourceIndex,
 }: {
+  docId: string;
   rotation?: number;
   scale: number;
   sourceIndex: number;
@@ -28,13 +30,15 @@ export const PdfCanvas = ({
     const controller = new AbortController();
     let retained = false;
 
+    const key = { docId, sourceIndex };
+
     const draw = async () => {
-      const page = await pdfSession.retainPage(sourceIndex);
+      const page = await pdfSession.retainPage(key);
       if (!page) {
         return;
       }
       if (controller.signal.aborted) {
-        pdfSession.releasePageRef(sourceIndex);
+        pdfSession.releasePageRef(key);
         return;
       }
       retained = true;
@@ -60,10 +64,10 @@ export const PdfCanvas = ({
       taskRef.current?.cancel();
       releaseCanvas(canvas);
       if (retained) {
-        pdfSession.releasePageRef(sourceIndex);
+        pdfSession.releasePageRef(key);
       }
     };
-  }, [pixelRatio, rotation, scale, sourceIndex]);
+  }, [docId, pixelRatio, rotation, scale, sourceIndex]);
 
   // White under the backing store: a resized canvas is transparent black until
   // pdf.js paints its first chunk.

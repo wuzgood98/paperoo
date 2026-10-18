@@ -6,6 +6,7 @@ import {
   measurePdfTextWidth,
   pdfTextOverlayBox,
 } from "@/lib/editor/object-utils";
+import { pageKeyOf } from "@/lib/editor/page-source";
 import type { EditorPage, PdfTextObject } from "@/lib/editor/types";
 import { renderPdfPageRegion } from "@/lib/pdf/render-page";
 import { sampleCaptionInk } from "@/lib/pdf/sample-caption-ink";
@@ -42,7 +43,8 @@ export const sampleLinkCaptionFromPage = async (
     x: runBox.x,
     y: runBox.y,
   };
-  const pdfPage = await pdfSession.retainPage(page.sourceIndex);
+  const key = pageKeyOf(page);
+  const pdfPage = await pdfSession.retainPage(key);
   if (!pdfPage) {
     return null;
   }
@@ -55,7 +57,7 @@ export const sampleLinkCaptionFromPage = async (
       displayedCanvasRotation(page)
     );
   } finally {
-    pdfSession.releasePageRef(page.sourceIndex);
+    pdfSession.releasePageRef(key);
   }
   const ctx = canvas.getContext("2d");
   if (!ctx) {

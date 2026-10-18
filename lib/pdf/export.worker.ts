@@ -9,6 +9,7 @@ interface WorkerRequest {
   document: EditorDocument;
   fontBytes: Record<string, ArrayBuffer>;
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
+  sources?: Record<string, ArrayBuffer>;
 }
 
 type WorkerResponse =
@@ -51,6 +52,12 @@ self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
       document: event.data.document,
       fontBytes,
       ocrWordsByPage: event.data.ocrWordsByPage,
+      sources: Object.fromEntries(
+        Object.entries(event.data.sources ?? {}).map(([docId, buffer]) => [
+          docId,
+          toUint8(buffer),
+        ])
+      ),
     };
     const { bytes: result, coverOnlyRunIds } =
       await exportDocumentWithReport(input);

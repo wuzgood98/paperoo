@@ -4,6 +4,8 @@ import {
   EncryptedPDFError,
   PDFDocument,
   PDFName,
+  PDFObjectCopier,
+  PDFPage,
   StandardFonts,
   TextRenderingMode,
   beginText,
@@ -38,7 +40,7 @@ import {
   LineJoinStyle,
   toRadians,
 } from "pdf-lib";
-import type { PDFFont, PDFImage, PDFOperator, PDFPage } from "pdf-lib";
+import type { PDFFont, PDFImage, PDFOperator } from "pdf-lib";
 
 import {
   centerRotateCtm,
@@ -73,6 +75,8 @@ import {
   pdfVectorSubpaths,
 } from "@/lib/editor/object-utils";
 import type { PdfVectorCoverPathStyle } from "@/lib/editor/object-utils";
+import { pageDocId, pageKeyOf, pageKeyString } from "@/lib/editor/page-source";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type {
   DrawingObject,
   EditorDocument,
@@ -95,11 +99,12 @@ import type {
 import { FONT_FILES, wrapText } from "@/lib/fonts/measure-text";
 import type { OcrTextObject } from "@/lib/ocr/types";
 import { embeddedFontCanDraw } from "@/lib/pdf/embedded-font";
-import { applyPdfAnnotationEdits } from "@/lib/pdf/export-annotations";
 import {
-  applyPdfFormEdits,
-  copyPagesWithAcroForm,
-} from "@/lib/pdf/export-forms";
+  applyPageAnnotationEdits,
+  copiedAnnotRefs,
+  helveticaFor,
+} from "@/lib/pdf/export-annotations";
+import { applyPdfFormEdits, writeOutputAcroForm } from "@/lib/pdf/export-forms";
 import { resolvePdfFont } from "@/lib/pdf/extract-text";
 import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
 import type { InterWeight } from "@/lib/pdf/figma-fallback";
@@ -116,7 +121,10 @@ export interface ExportAsset {
 
 export interface ExportInput {
   assets: Record<string, ExportAsset>;
+  /** The opened file (PRIMARY_DOC_ID). */
   bytes: Uint8Array;
+  /** Other source documents the pages come from, by docId. */
+  sources?: Readonly<Record<string, Uint8Array>>;
   document: EditorDocument;
   fontBytes: Record<string, Uint8Array>;
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
@@ -1433,13 +1441,9 @@ const removeOrCoverDirtyText = (
   return coverOnly;
 };
 
-export const exportDocumentWithReport = async (
-  input: ExportInput
-): Promise<ExportReport> => {
-  const coverOnlyRunIds: string[] = [];
-  let source: PDFDocument;
+const loadSourcePdf = async (bytes: Uint8Array): Promise<PDFDocument> => {
   try {
-    source = await PDFDocument.load(input.bytes);
+    return await PDFDocument.load(bytes);
   } catch (error) {
     if (error instanceof EncryptedPDFError) {
       throw new TypeError("This PDF is encrypted and cannot be exported.", {
@@ -1448,25 +1452,90 @@ export const exportDocumentWithReport = async (
     }
     throw error;
   }
-  await applyPdfAnnotationEdits(source, input.document);
-  await applyPdfFormEdits(source, input.document, input.fontBytes);
+};
 
-  const output = await PDFDocument.create();
+/** Each source document the pages use, parsed once, opened file first. */
+const loadSources = async (
+  input: ExportInput
+): Promise<Map<string, { doc: PDFDocument; pages: PDFPage[] }>> => {
+  const docIds = [
+    ...new Set([
+      PRIMARY_DOC_ID,
+      ...input.document.pages.map((page) => pageDocId(page)),
+    ]),
+  ];
+  const entries = await Promise.all(
+    docIds.map(async (docId) => {
+      const bytes =
+        docId === PRIMARY_DOC_ID ? input.bytes : input.sources?.[docId];
+      if (!bytes) {
+        throw new Error("A page's source PDF is missing from the export.");
+      }
+      const doc = await loadSourcePdf(bytes);
+      if (docId === PRIMARY_DOC_ID) {
+        // Form fields belong to the opened file until merging adds others.
+        await applyPdfFormEdits(doc, input.document, input.fontBytes);
+      }
+      await doc.flush();
+      return [docId, { doc, pages: doc.getPages() }] as const;
+    })
+  );
+  return new Map(entries);
+};
+
+export const exportDocumentWithReport = async (
+  input: ExportInput
+): Promise<ExportReport> => {
+  const coverOnlyRunIds: string[] = [];
+  const [sources, output] = await Promise.all([
+    loadSources(input),
+    PDFDocument.create(),
+  ]);
   output.registerFontkit(fontkit);
+  const helvetica = helveticaFor(output);
 
-  const indices = input.document.pages.map((page) => page.sourceIndex);
-  const copied = await copyPagesWithAcroForm(source, output, indices);
+  // One copier per source keeps resources shared by its pages copied once.
+  // A source page shown again (a duplicate) gets a copier of its own, so its
+  // annotations and content are its own to edit.
+  const sharedCopiers = new Map<string, PDFObjectCopier>();
+  const sharedCopier = (docId: string, doc: PDFDocument): PDFObjectCopier => {
+    let copier = sharedCopiers.get(docId);
+    if (!copier) {
+      copier = PDFObjectCopier.for(doc.context, output.context);
+      sharedCopiers.set(docId, copier);
+    }
+    return copier;
+  };
+  const copiedOnce = new Set<string>();
 
   // Shared by every page: a font is parsed and subset once, and an image
   // placed on many pages is embedded once and referenced from each.
   const fonts = new Map<string, PDFFont>();
   const images = new Map<string, PDFImage>();
-  for (const [index, page] of copied.entries()) {
-    output.addPage(page);
-    const editorPage = input.document.pages[index];
-    if (!editorPage) {
-      continue;
+  for (const editorPage of input.document.pages) {
+    const docId = pageDocId(editorPage);
+    const source = sources.get(docId);
+    const sourcePage = source?.pages[editorPage.sourceIndex];
+    if (!(source && sourcePage)) {
+      throw new Error("A page is missing from its source PDF.");
     }
+    const key = pageKeyString(pageKeyOf(editorPage));
+    const copier = copiedOnce.has(key)
+      ? PDFObjectCopier.for(source.doc.context, output.context)
+      : sharedCopier(docId, source.doc);
+    copiedOnce.add(key);
+    const node = copier.copy(sourcePage.node);
+    const page = PDFPage.of(node, output.context.register(node), output);
+    output.addPage(page);
+    // oxlint-disable-next-line eslint/no-await-in-loop -- pages are written in order
+    await applyPageAnnotationEdits(
+      output,
+      helvetica,
+      editorPage,
+      page,
+      copiedAnnotRefs(sourcePage, page)
+    );
+
     const combined = normalizeRotation(
       editorPage.sourceRotate + editorPage.rotation
     );
@@ -1548,6 +1617,14 @@ export const exportDocumentWithReport = async (
       });
     }
   }
+
+  writeOutputAcroForm(
+    output,
+    [...sources].flatMap(([docId, { doc }]) => {
+      const copier = sharedCopiers.get(docId);
+      return copier ? [{ copier, source: doc }] : [];
+    })
+  );
 
   return { bytes: await output.save(), coverOnlyRunIds };
 };

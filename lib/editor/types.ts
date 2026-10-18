@@ -310,7 +310,8 @@ export interface PdfVectorStrokeStyle {
 
 export type PdfLinkAction =
   | { kind: "url"; url: string }
-  | { kind: "goto"; dest: unknown }
+  /** `pageIndex`: the target page within the link's source document, when resolved. */
+  | { kind: "goto"; dest: unknown; pageIndex?: number }
   | { kind: "named"; name: string }
   | { kind: "none" };
 
@@ -610,10 +611,16 @@ export interface PdfType3Glyphs {
   shows: PdfGlyphShow[];
 }
 
+/** Source document id of the opened file; pages without a `docId` use it. */
+export const PRIMARY_DOC_ID = "primary";
+
 export interface EditorPage {
   /** Set at load; missing means export never edits this page's content. */
   contentOpCounts?: PdfContentOpCounts;
+  /** Source document the page comes from; unset is the opened file. */
+  docId?: string;
   id: string;
+  /** Index of the page within its source document. */
   sourceIndex: number;
   width: number;
   height: number;

@@ -1,5 +1,7 @@
 import { pageToCss } from "@/lib/editor/coordinates";
 import { isPdfImageDirty, pdfImageAssetId } from "@/lib/editor/object-utils";
+import { pageKeyOf } from "@/lib/editor/page-source";
+import type { PageKey } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
 import type { EditorDocument, PdfImageObject } from "@/lib/editor/types";
 import { AnnotationMode } from "@/lib/pdf/pdfjs";
@@ -356,7 +358,7 @@ const livePdfImage = (object: PdfImageObject): PdfImageObject => {
 
 export const ensurePdfImagePreview = async (
   object: PdfImageObject,
-  pageSourceIndex: number
+  page: PageKey
 ): Promise<string | null> => {
   const live = livePdfImage(object);
   if (live.replacementAssetId) {
@@ -369,12 +371,12 @@ export const ensurePdfImagePreview = async (
     return live.previewAssetId;
   }
 
-  const page = await pdfSession.getPage(pageSourceIndex);
-  if (!page) {
+  const pdfPage = await pdfSession.getPage(page);
+  if (!pdfPage) {
     return null;
   }
-  const pending = resolvePageImage(page, live.sourceId);
-  await page.getOperatorList({ annotationMode: AnnotationMode.DISABLE });
+  const pending = resolvePageImage(pdfPage, live.sourceId);
+  await pdfPage.getOperatorList({ annotationMode: AnnotationMode.DISABLE });
   const raw = await pending;
   if (!raw) {
     return null;
@@ -398,7 +400,7 @@ export const ensureDirtyPdfImageAssets = async (): Promise<void> => {
         !object.deleted &&
         !object.replacementAssetId
       ) {
-        pending.push(ensurePdfImagePreview(object, page.sourceIndex));
+        pending.push(ensurePdfImagePreview(object, pageKeyOf(page)));
       }
     }
   }

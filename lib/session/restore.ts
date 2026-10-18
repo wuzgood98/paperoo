@@ -1,16 +1,13 @@
 import { toastManager } from "@/components/ui/toast-manager";
 import { rebindRuntimeIds } from "@/lib/editor/session-rebind";
 import { editorStore } from "@/lib/editor/store";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { EditorPage } from "@/lib/editor/types";
 import { ocrSession } from "@/lib/ocr/session";
 import { openRestoredPdf } from "@/lib/pdf/load-pdf";
 import { pdfSession } from "@/lib/pdf/session";
 import { indexedDbSessionStorage } from "@/lib/session/idb";
-import {
-  PRIMARY_SOURCE_ID,
-  SESSION_TTL_MS,
-  migrateMeta,
-} from "@/lib/session/schema";
+import { SESSION_TTL_MS, migrateMeta } from "@/lib/session/schema";
 import type { PersistedMeta } from "@/lib/session/schema";
 import { isSlotFree } from "@/lib/session/slot-lock";
 
@@ -52,7 +49,7 @@ export const peekSavedSession = async (): Promise<PersistedMeta | null> => {
 const restore = async (): Promise<boolean> => {
   const snapshot = await storage.readSnapshot();
   const meta = snapshot ? migrateMeta(snapshot.meta) : null;
-  const source = snapshot?.sources.get(PRIMARY_SOURCE_ID);
+  const source = snapshot?.sources.get(PRIMARY_DOC_ID);
   if (!snapshot || !meta || !source) {
     throw new Error("The saved session is incomplete.");
   }
