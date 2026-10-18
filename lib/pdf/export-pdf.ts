@@ -55,6 +55,7 @@ import {
 import {
   fittedPdfTextBox,
   insetShapePathBox,
+  lineDashArray,
   isPdfImageDirty,
   isPdfTextDirty,
   isPdfVectorDirty,
@@ -1178,6 +1179,7 @@ const drawShape = (
   if (object.shape === "line") {
     page.drawLine({
       color: border,
+      dashArray: object.dashed ? lineDashArray(object.strokeWidth) : undefined,
       // User space is y-up from the box's bottom-left corner.
       end: { x: user.width, y: object.flip ? user.height : 0 },
       opacity: object.opacity,

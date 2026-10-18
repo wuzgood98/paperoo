@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-import { insetShapePathBox } from "@/lib/editor/object-utils";
+import { insetShapePathBox, lineDashArray } from "@/lib/editor/object-utils";
 import type { ShapeKind } from "@/lib/editor/types";
 
 /**
@@ -15,6 +15,7 @@ import type { ShapeKind } from "@/lib/editor/types";
  */
 export const ShapeSvg = ({
   className,
+  dashed = false,
   fill,
   flip = false,
   height,
@@ -26,6 +27,7 @@ export const ShapeSvg = ({
   zoom,
 }: {
   className?: string;
+  dashed?: boolean;
   fill: string | null;
   flip?: boolean;
   height: number;
@@ -47,6 +49,13 @@ export const ShapeSvg = ({
       {shape === "line" ? (
         <line
           stroke={stroke}
+          strokeDasharray={
+            dashed
+              ? lineDashArray(strokeWidth)
+                  .map((length) => length * zoom)
+                  .join(" ")
+              : undefined
+          }
           strokeWidth={strokeWidth * zoom}
           x1={0}
           x2={width * zoom}
