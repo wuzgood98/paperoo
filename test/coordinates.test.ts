@@ -14,6 +14,7 @@ import {
   resizeRotatedBox,
   rotatePoint,
   screenToPage,
+  shownCanvasRotation,
 } from "@/lib/editor/coordinates";
 import type { CropBox, PageRotation } from "@/lib/editor/types";
 
@@ -315,4 +316,10 @@ test("displayedCanvasRotation ignores the user's page rotation", () => {
   expect(displayedCanvasRotation({ sourceRotate: 0 })).toBe(0);
   expect(displayedCanvasRotation({ sourceRotate: 90 })).toBe(90);
   expect(displayedCanvasRotation({ sourceRotate: 450 })).toBe(90);
+});
+
+test("shownCanvasRotation adds the user's page rotation to the source", () => {
+  expect(shownCanvasRotation({ rotation: 0, sourceRotate: 0 })).toBe(0);
+  expect(shownCanvasRotation({ rotation: 90, sourceRotate: 0 })).toBe(90);
+  expect(shownCanvasRotation({ rotation: 270, sourceRotate: 180 })).toBe(90);
 });
