@@ -237,18 +237,27 @@ const PageSelectionBar = () => {
   const selected = useEditorStore((state) => state.selectedPageIds);
   const pageCount = useEditorStore((state) => state.document.pages.length);
   const isExporting = useEditorStore((state) => state.isExporting);
-  if (selected.length === 0) {
-    return null;
+  const open = selected.length > 0;
+  // Keep the last count on screen while the bar slides away.
+  const [shownCount, setShownCount] = useState(selected.length);
+  if (open && selected.length !== shownCount) {
+    setShownCount(selected.length);
   }
   const canDelete = selected.length < pageCount;
   return (
     <div
       aria-label="Selected pages"
-      className="border-border bg-muted/60 mx-3 mb-2 flex items-center gap-1 rounded-md border px-2 py-1"
+      className={cn(
+        "border-border bg-popover absolute inset-x-3 bottom-[calc(--spacing(3)+env(safe-area-inset-bottom,0px))] z-10 flex items-center gap-1 rounded-lg border px-2 py-1 shadow-lg/5 transition-[opacity,translate] ease-out",
+        open
+          ? "opacity-100 duration-200"
+          : "pointer-events-none opacity-0 duration-150 motion-safe:translate-y-[calc(100%+--spacing(3))]"
+      )}
+      inert={!open}
       role="toolbar"
     >
       <span className="text-muted-foreground mr-auto text-xs tabular-nums">
-        {selected.length} selected
+        {shownCount} selected
       </span>
       <ToolbarTip label="Extract as a new PDF">
         <Button
@@ -420,6 +429,11 @@ const PageActions = () => {
   );
 };
 
+interface DropEdge {
+  edge: "after" | "before";
+  index: number;
+}
+
 /** Reorder from the store's current pages, so rows need not hold the list. */
 const movePage = (from: number, to: number): void => {
   const next = [...editorStore.getState().document.pages];
@@ -433,7 +447,10 @@ const movePage = (from: number, to: number): void => {
 
 const PageThumbnailItemView = ({
   checked,
+  dropEdge,
   index,
+  onDragEndAt,
+  onDragOverAt,
   onDragStartAt,
   onDropAt,
   onPageSelect,
@@ -444,7 +461,11 @@ const PageThumbnailItemView = ({
 }: {
   /** Picked for a bulk action. */
   checked: boolean;
+  /** Which side of this page the drag would land on, if any. */
+  dropEdge: "after" | "before" | null;
   index: number;
+  onDragEndAt: () => void;
+  onDragOverAt: (index: number, hasFiles: boolean) => void;
   onDragStartAt: (index: number) => void;
   onDropAt: (index: number) => void;
   onPageSelect?: () => void;
@@ -472,8 +493,10 @@ const PageThumbnailItemView = ({
                 onPageSelect?.();
               }
             }}
+            onDragEnd={onDragEndAt}
             onDragOver={(event) => {
               event.preventDefault();
+              onDragOverAt(index, event.dataTransfer.types.includes("Files"));
             }}
             onDragStart={() => onDragStartAt(index)}
             onDrop={() => onDropAt(index)}
@@ -486,7 +509,7 @@ const PageThumbnailItemView = ({
         {checked ? (
           <span
             aria-hidden
-            className="bg-primary text-primary-foreground absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-full shadow-xs"
+            className="bg-primary text-primary-foreground absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-full shadow-xs transition-[opacity,scale] duration-150 ease-out starting:opacity-0 motion-safe:starting:scale-80"
           >
             <CheckIcon className="size-3.5" />
           </span>
@@ -531,6 +554,19 @@ const PageThumbnailItemView = ({
     <span className="text-muted-foreground text-center text-xs">
       {index + 1}
     </span>
+    {(["before", "after"] as const).map((edge) => (
+      <span
+        aria-hidden
+        className={cn(
+          "bg-primary pointer-events-none absolute inset-x-0 h-0.5 rounded-full transition-[opacity,scale] duration-150 ease-out",
+          edge === "before" ? "-top-[7px]" : "-bottom-[7px]",
+          dropEdge === edge
+            ? "scale-x-100 opacity-100"
+            : "opacity-0 motion-safe:scale-x-60"
+        )}
+        key={edge}
+      />
+    ))}
   </li>
 );
 
@@ -544,19 +580,56 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
   const selecting = usePageSelectMode();
   const checkedIds = new Set(selectedPageIds);
   const dragIndex = useRef<number | null>(null);
+  const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
+  const showDropEdge = useCallback((next: DropEdge | null) => {
+    setDropEdge((current) =>
+      current?.index === next?.index && current?.edge === next?.edge
+        ? current
+        : next
+    );
+  }, []);
+  // dragenter/dragleave fire for every child crossed; count to know when the
+  // drag has really left the list.
+  const dragDepth = useRef(0);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const onDragStartAt = useCallback((index: number) => {
     dragIndex.current = index;
   }, []);
-  const onDropAt = useCallback((index: number) => {
-    const from = dragIndex.current;
+  const onDropAt = useCallback(
+    (index: number) => {
+      dragDepth.current = 0;
+      showDropEdge(null);
+      const from = dragIndex.current;
+      dragIndex.current = null;
+      if (from === null || from === index) {
+        return;
+      }
+      movePage(from, index);
+    },
+    [showDropEdge]
+  );
+  const onDragOverAt = useCallback(
+    (index: number, hasFiles: boolean) => {
+      const from = dragIndex.current;
+      if (from === null) {
+        // A PDF from outside inserts before the page under the pointer.
+        showDropEdge(hasFiles ? { edge: "before", index } : null);
+        return;
+      }
+      if (from === index) {
+        showDropEdge(null);
+        return;
+      }
+      showDropEdge({ edge: from < index ? "after" : "before", index });
+    },
+    [showDropEdge]
+  );
+  const onDragEndAt = useCallback(() => {
     dragIndex.current = null;
-    if (from === null || from === index) {
-      return;
-    }
-    movePage(from, index);
-  }, []);
+    dragDepth.current = 0;
+    showDropEdge(null);
+  }, [showDropEdge]);
 
   const registerItem = useCallback(
     (pageId: string, node: HTMLButtonElement | null) => {
@@ -579,12 +652,35 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
 
   return (
     <div
-      onDragOver={(event) => {
-        if (event.dataTransfer.types.includes("Files")) {
-          event.preventDefault();
+      onDragEnter={() => {
+        dragDepth.current += 1;
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) {
+          showDropEdge(null);
         }
       }}
+      onDragOver={(event) => {
+        const hasFiles = event.dataTransfer.types.includes("Files");
+        if (hasFiles) {
+          event.preventDefault();
+        }
+        const overItem =
+          event.target instanceof Element &&
+          event.target.closest("li[data-page-index]") !== null;
+        if (overItem) {
+          return;
+        }
+        showDropEdge(
+          hasFiles && pages.length > 0
+            ? { edge: "after", index: pages.length - 1 }
+            : null
+        );
+      }}
       onDrop={async (event) => {
+        dragDepth.current = 0;
+        showDropEdge(null);
         const file = firstPdf(event.dataTransfer.files);
         if (!file) {
           return;
@@ -599,12 +695,20 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
         await insertPdfWithNotice(file, index);
       }}
     >
-      <ol className="flex flex-col gap-3 pb-3">
+      <ol
+        className={cn(
+          "flex flex-col gap-3 pt-2",
+          selectedPageIds.length > 0 ? "pb-16" : "pb-3"
+        )}
+      >
         {pages.map((page, index) => (
           <PageThumbnailItem
             checked={checkedIds.has(page.id)}
+            dropEdge={dropEdge?.index === index ? dropEdge.edge : null}
             index={index}
             key={page.id}
+            onDragEndAt={onDragEndAt}
+            onDragOverAt={onDragOverAt}
             onDragStartAt={onDragStartAt}
             onDropAt={onDropAt}
             onPageSelect={onPageSelect}
@@ -645,10 +749,10 @@ export const PageSheetButton = () => {
               <PageActions />
             </div>
           </DialogHeader>
-          <PageSelectionBar />
           <DialogPanel>
             <PageThumbnails onPageSelect={closeSheet} />
           </DialogPanel>
+          <PageSelectionBar />
         </DialogPopup>
       </Dialog>
     </>
@@ -667,19 +771,19 @@ export const PageSidebar = () => {
   }
 
   return (
-    <aside className="border-border bg-background hidden min-h-0 flex-col border-r md:flex">
+    <aside className="border-border bg-background relative hidden min-h-0 flex-col border-r md:flex">
       <div className="flex items-center justify-between px-3 py-2">
         <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
           Pages
         </p>
         <PageActions />
       </div>
-      <PageSelectionBar />
       <ScrollArea className="min-h-0 flex-1" overscrollContain>
         <div className="px-3">
           <PageThumbnails />
         </div>
       </ScrollArea>
+      <PageSelectionBar />
     </aside>
   );
 };
