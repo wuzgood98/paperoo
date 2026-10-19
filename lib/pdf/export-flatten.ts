@@ -2,15 +2,12 @@ import fontkit from "@pdf-lib/fontkit";
 import {
   beginText,
   endText,
-  PDFArray,
   PDFDict,
   PDFDocument,
-  PDFHexString,
   PDFName,
   PDFObjectCopier,
   PDFPage,
   PDFRef,
-  PDFString,
   popGraphicsState,
   pushGraphicsState,
   setCharacterSqueeze,
@@ -21,7 +18,7 @@ import {
   StandardFonts,
   TextRenderingMode,
 } from "pdf-lib";
-import type { PDFFont, PDFObject } from "pdf-lib";
+import type { PDFFont, PDFHexString } from "pdf-lib";
 
 import {
   markInternalLinkTargets,
@@ -35,6 +32,11 @@ import {
   textClearOfBoxes,
 } from "@/lib/pdf/output-pages";
 import type { PositionedText, RedactionBox } from "@/lib/pdf/output-pages";
+import {
+  annotRect,
+  isSubtype,
+  removeFieldsUnderBoxes,
+} from "@/lib/pdf/redact-page";
 import { scrubHiddenData } from "@/lib/pdf/scrub";
 
 /** A redacted page as rendered on the main thread, boxes painted in. */
@@ -63,139 +65,6 @@ export interface FlattenReport {
 }
 
 const PASS_ONE_DOC_ID = "pass-1";
-
-const fieldText = (dict: PDFDict, key: string): string | null => {
-  const value = dict.lookup(PDFName.of(key));
-  return value instanceof PDFString || value instanceof PDFHexString
-    ? value.decodeText()
-    : null;
-};
-
-const isSubtype = (dict: PDFDict, subtype: string): boolean =>
-  dict.get(PDFName.of("Subtype")) === PDFName.of(subtype);
-
-const annotRect = (dict: PDFDict): number[] => {
-  const rect = dict.lookup(PDFName.of("Rect"));
-  return rect instanceof PDFArray
-    ? rect.asArray().map((value) => Number(value.toString()))
-    : [];
-};
-
-/** The field a widget belongs to: itself when it carries a name. */
-const terminalFieldRef = (doc: PDFDocument, widget: PDFRef): PDFRef => {
-  const dict = doc.context.lookupMaybe(widget, PDFDict);
-  const parent = dict?.get(PDFName.of("Parent"));
-  return dict && !dict.has(PDFName.of("T")) && parent instanceof PDFRef
-    ? parent
-    : widget;
-};
-
-const qualifiedName = (doc: PDFDocument, ref: PDFRef): string => {
-  const parts: string[] = [];
-  const seen = new Set<PDFRef>();
-  let current: PDFRef | undefined = ref;
-  while (current && !seen.has(current)) {
-    seen.add(current);
-    const dict: PDFDict | undefined = doc.context.lookupMaybe(current, PDFDict);
-    const part = dict ? fieldText(dict, "T") : null;
-    if (part !== null) {
-      parts.unshift(part);
-    }
-    const parent: PDFObject | undefined = dict?.get(PDFName.of("Parent"));
-    current = parent instanceof PDFRef ? parent : undefined;
-  }
-  return parts.join(".");
-};
-
-const withoutRefs = (
-  doc: PDFDocument,
-  array: PDFArray,
-  refs: ReadonlySet<PDFRef>
-): PDFArray =>
-  doc.context.obj(
-    array
-      .asArray()
-      .filter((entry) => !(entry instanceof PDFRef && refs.has(entry)))
-  );
-
-/** The fields with a widget under a box on a redacted page. */
-const fieldsUnderBoxes = (
-  doc: PDFDocument,
-  pages: readonly PDFPage[],
-  redacted: ReadonlyMap<number, FlattenedPage>
-): Set<PDFRef> => {
-  const fields = new Set<PDFRef>();
-  for (const [index, { boxes }] of redacted) {
-    for (const entry of pages[index]?.node.Annots()?.asArray() ?? []) {
-      const dict = doc.context.lookup(entry);
-      if (
-        entry instanceof PDFRef &&
-        dict instanceof PDFDict &&
-        isSubtype(dict, "Widget") &&
-        rectArrayTouchesBoxes(annotRect(dict), boxes)
-      ) {
-        fields.add(terminalFieldRef(doc, entry));
-      }
-    }
-  }
-  return fields;
-};
-
-/** A field's widgets: its kids, or the field itself when merged. */
-const widgetsOf = (doc: PDFDocument, field: PDFRef): PDFRef[] => {
-  const kids = doc.context
-    .lookupMaybe(field, PDFDict)
-    ?.lookup(PDFName.of("Kids"));
-  if (!(kids instanceof PDFArray)) {
-    return [field];
-  }
-  return kids.asArray().filter((kid) => kid instanceof PDFRef);
-};
-
-/** Take a field out of its parent's kids, or out of the form's fields. */
-const detachField = (doc: PDFDocument, field: PDFRef): void => {
-  const parent = doc.context
-    .lookupMaybe(field, PDFDict)
-    ?.get(PDFName.of("Parent"));
-  const nested = parent instanceof PDFRef;
-  const owner = nested
-    ? doc.context.lookupMaybe(parent, PDFDict)
-    : doc.catalog.lookupMaybe(PDFName.of("AcroForm"), PDFDict);
-  const key = PDFName.of(nested ? "Kids" : "Fields");
-  const list = owner?.lookup(key);
-  if (owner && list instanceof PDFArray) {
-    owner.set(key, withoutRefs(doc, list, new Set([field])));
-  }
-};
-
-/**
- * Remove every field with a widget under a box, with all its widgets on
- * every page: its value would otherwise survive in the form. Returns the
- * removed fields' names.
- */
-const removeFieldsUnderBoxes = (
-  doc: PDFDocument,
-  pages: readonly PDFPage[],
-  redacted: ReadonlyMap<number, FlattenedPage>
-): string[] => {
-  const fields = fieldsUnderBoxes(doc, pages, redacted);
-  const widgets = new Set(
-    [...fields].flatMap((field) => widgetsOf(doc, field))
-  );
-  if (widgets.size > 0) {
-    for (const page of pages) {
-      const annots = page.node.Annots();
-      if (annots) {
-        page.node.set(PDFName.of("Annots"), withoutRefs(doc, annots, widgets));
-      }
-    }
-  }
-  const names = [...fields].map((field) => qualifiedName(doc, field));
-  for (const field of fields) {
-    detachField(doc, field);
-  }
-  return names.toSorted();
-};
 
 /** A redacted page keeps only its links that stay clear of every box. */
 const keepClearLinks = (

@@ -119,8 +119,17 @@ import type { InterWeight } from "@/lib/pdf/figma-fallback";
 import { rebuiltGlyphLayout } from "@/lib/pdf/glyph-face";
 import { saveSwept } from "@/lib/pdf/output-gc";
 import { outputPagesOf } from "@/lib/pdf/output-pages";
+import type { RedactionBox } from "@/lib/pdf/output-pages";
 import { pushRebuiltType3Text } from "@/lib/pdf/rebuilt-type3-font";
-import { removeOriginalInk } from "@/lib/pdf/remove-original-ink";
+import {
+  clearOfBoxes,
+  ocrWordsClearOf,
+  pageRedaction,
+  removeAnnotationsUnderBoxes,
+  removeFieldsUnderBoxes,
+} from "@/lib/pdf/redact-page";
+import type { PageRedaction } from "@/lib/pdf/redact-page";
+import { editPageContent } from "@/lib/pdf/remove-original-ink";
 import { reusedFontHex, reuseEmbeddedPdfFont } from "@/lib/pdf/reuse-pdf-font";
 import type { ReusedPdfFontText } from "@/lib/pdf/reuse-pdf-font";
 import { scrubHiddenData } from "@/lib/pdf/scrub";
@@ -145,10 +154,12 @@ export interface ExportInput {
   fontBytes: Record<string, Uint8Array>;
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
   /**
-   * Redaction boxes are never drawn as plain boxes: "forbid" (the default)
-   * refuses them; "skip" leaves them for the flatten pass to burn in.
+   * Redaction boxes are never drawn as plain boxes. "forbid" (the default)
+   * refuses them; "skip" leaves every redacted page for the flatten pass;
+   * "apply" takes the content under the boxes out where it can, and leaves
+   * the rest (reported in `flattenPages`) for the flatten pass.
    */
-  redactions?: "forbid" | "skip";
+  redactions?: "apply" | "forbid" | "skip";
   /** Strip metadata, thumbnails and the Info dictionary (anything redacted). */
   scrub?: boolean;
 }
@@ -1252,7 +1263,8 @@ const drawObject = async (
     fontBytes: Record<string, Uint8Array>;
     fonts: Map<string, PDFFont>;
     images: Map<string, PDFImage>;
-    redactions: "forbid" | "skip";
+    /** "draw": the content under the box is gone; paint the box. */
+    redactions: "draw" | "forbid" | "skip";
   }
 ): Promise<void> => {
   const rotate = editorPage.sourceRotate;
@@ -1300,6 +1312,16 @@ const drawObject = async (
       return;
     }
     case "redaction": {
+      if (context.redactions === "draw") {
+        page.drawRectangle({
+          color: color(object.fill),
+          height: user.height,
+          width: user.width,
+          x: user.x,
+          y: user.y,
+        });
+        return;
+      }
       // A box painted over content leaves that content in the file.
       if (context.redactions === "skip") {
         return;
@@ -1429,20 +1451,32 @@ export interface ExportReport {
    * or its glyph shapes are still in the file.
    */
   coverOnlyRunIds: string[];
+  /** Output pages (by index) whose redactions are left for flattening. */
+  flattenPages: number[];
+  /** Fields removed because a widget sat under a precise redaction. */
+  removedFieldNames: string[];
 }
 
 /**
  * Take dirty runs' original ink out of the page where it can be verified, and
  * cover the rest. Returns the runs that could only be covered.
  */
+interface DirtyTextOutcome {
+  /** Dirty runs whose original ink could only be covered. */
+  coverOnly: string[];
+  /** The page's redaction boxes were applied to its content. */
+  redactedPrecisely: boolean;
+}
+
 const removeOrCoverDirtyText = (
   output: PDFDocument,
   page: PDFPage,
   editorPage: EditorPage,
-  dirtyText: readonly PdfTextObject[]
-): string[] => {
+  dirtyText: readonly PdfTextObject[],
+  boxes: readonly RedactionBox[]
+): DirtyTextOutcome => {
   const coverOnly: string[] = [];
-  const removal = removeOriginalInk(output, page, editorPage, dirtyText);
+  const removal = editPageContent(output, page, editorPage, dirtyText, boxes);
   // Unedited lines of a label whose path stopped painting come back as they were.
   const vectors = new Map(
     editorPage.pdfVectorObjects.map((vector) => [vector.id, vector])
@@ -1469,7 +1503,7 @@ const removeOrCoverDirtyText = (
       drawDirtyPdfTextCovers(page, object, editorPage);
     }
   }
-  return coverOnly;
+  return { coverOnly, redactedPrecisely: removal.redactedPrecisely };
 };
 
 const loadSourcePdf = async (bytes: Uint8Array): Promise<PDFDocument> => {
@@ -1522,6 +1556,85 @@ const loadSources = async (
   return new Map(entries);
 };
 
+/** How `drawObject` treats a redaction box on this page. */
+const boxMode = (
+  mode: ExportInput["redactions"],
+  precise: boolean
+): "draw" | "forbid" | "skip" => {
+  if (mode === undefined || mode === "forbid") {
+    return "forbid";
+  }
+  return precise ? "draw" : "skip";
+};
+
+interface PageTextOutcome {
+  coverOnly: string[];
+  /** The page's redactions were applied here; it needs no flattening. */
+  precise: boolean;
+}
+
+/**
+ * Edit the page's own content (Removal, precise redaction) and draw its
+ * invisible text. Text under a box is never drawn. `precise` is true when
+ * the page's redactions were applied here and need no flattening.
+ */
+const writePageText = async (
+  context: {
+    fonts: Map<string, PDFFont>;
+    input: ExportInput;
+    output: PDFDocument;
+  },
+  page: PDFPage,
+  editorPage: EditorPage,
+  redaction: PageRedaction | null
+): Promise<PageTextOutcome> => {
+  const { fonts, input, output } = context;
+  const tryPrecise = redaction?.tryPrecise === true;
+  if (redaction && tryPrecise) {
+    removeAnnotationsUnderBoxes(output, page, redaction.boxes);
+  }
+  const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
+  // Removal first, on the page's own content; covers only where ink stays.
+  const { coverOnly, redactedPrecisely } = removeOrCoverDirtyText(
+    output,
+    page,
+    editorPage,
+    dirtyText,
+    redaction && tryPrecise ? redaction.boxes : []
+  );
+  // After Removal, which reads the page's own content and gives up on a
+  // page with appended streams.
+  const boxes = redaction?.boxes;
+  const ocrWords = ocrWordsClearOf(
+    input.ocrWordsByPage?.[editorPage.id],
+    editorPage,
+    boxes
+  );
+  if (ocrWords.length > 0) {
+    drawInvisibleOcrWords(
+      page,
+      ocrWords,
+      editorPage,
+      await ocrFontFor(fonts, output)
+    );
+  }
+  const cleanOutlineText = editorPage.pdfTextObjects.filter(
+    (run) =>
+      run.outlineText &&
+      !isPdfTextDirty(run) &&
+      clearOfBoxes(run, editorPage, boxes)
+  );
+  if (cleanOutlineText.length > 0) {
+    drawInvisibleOutlineText(
+      page,
+      cleanOutlineText,
+      editorPage,
+      await ocrFontFor(fonts, output)
+    );
+  }
+  return { coverOnly, precise: tryPrecise && redactedPrecisely };
+};
+
 const saveOutput = (
   output: PDFDocument,
   scrub: boolean | undefined
@@ -1565,7 +1678,9 @@ export const exportDocumentWithReport = async (
   // placed on many pages is embedded once and referenced from each.
   const fonts = new Map<string, PDFFont>();
   const images = new Map<string, PDFImage>();
-  for (const editorPage of outputPages) {
+  const precisePages = new Map<number, PageRedaction>();
+  const flattenPages: number[] = [];
+  for (const [outputIndex, editorPage] of outputPages.entries()) {
     const docId = pageDocId(editorPage);
     const source = sources.get(docId);
     const sourcePage = source?.pages[editorPage.sourceIndex];
@@ -1600,35 +1715,21 @@ export const exportDocumentWithReport = async (
       page.setRotation(degrees(combined));
     }
 
+    const redaction = pageRedaction(editorPage, input.redactions ?? "forbid");
+    // oxlint-disable-next-line eslint/no-await-in-loop -- pages are written in order
+    const written = await writePageText(
+      { fonts, input, output },
+      page,
+      editorPage,
+      redaction
+    );
+    coverOnlyRunIds.push(...written.coverOnly);
+    if (redaction && written.precise) {
+      precisePages.set(outputIndex, redaction);
+    } else if (redaction) {
+      flattenPages.push(outputIndex);
+    }
     const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
-    // Removal first, on the page's own content; covers only where ink stays.
-    coverOnlyRunIds.push(
-      ...removeOrCoverDirtyText(output, page, editorPage, dirtyText)
-    );
-    // After Removal, which reads the page's own content and gives up on a
-    // page with appended streams.
-    const ocrWords = input.ocrWordsByPage?.[editorPage.id];
-    if (ocrWords && ocrWords.length > 0) {
-      drawInvisibleOcrWords(
-        page,
-        ocrWords,
-        editorPage,
-        // oxlint-disable-next-line eslint/no-await-in-loop -- Helvetica is embedded once per export
-        await ocrFontFor(fonts, output)
-      );
-    }
-    const cleanOutlineText = editorPage.pdfTextObjects.filter(
-      (run) => run.outlineText && !isPdfTextDirty(run)
-    );
-    if (cleanOutlineText.length > 0) {
-      drawInvisibleOutlineText(
-        page,
-        cleanOutlineText,
-        editorPage,
-        // oxlint-disable-next-line eslint/no-await-in-loop -- Helvetica is embedded once per export
-        await ocrFontFor(fonts, output)
-      );
-    }
     for (const object of dirtyText) {
       if (object.text === "") {
         continue;
@@ -1672,7 +1773,7 @@ export const exportDocumentWithReport = async (
         fontBytes: input.fontBytes,
         fonts,
         images,
-        redactions: input.redactions ?? "forbid",
+        redactions: boxMode(input.redactions, written.precise),
       });
     }
   }
@@ -1686,7 +1787,16 @@ export const exportDocumentWithReport = async (
     })
   );
 
-  return { bytes: await saveOutput(output, input.scrub), coverOnlyRunIds };
+  const removedFieldNames =
+    precisePages.size > 0
+      ? removeFieldsUnderBoxes(output, output.getPages(), precisePages)
+      : [];
+  return {
+    bytes: await saveOutput(output, input.scrub),
+    coverOnlyRunIds,
+    flattenPages,
+    removedFieldNames,
+  };
 };
 
 export const exportDocument = async (

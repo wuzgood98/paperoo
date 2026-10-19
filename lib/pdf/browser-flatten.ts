@@ -2,8 +2,20 @@ import type { FlattenDeps } from "@/lib/pdf/flatten-redacted-pages";
 import {
   ensurePdfjsWorker,
   getDocument,
+  OPS,
   PDFJS_DOCUMENT_PARAMS,
 } from "@/lib/pdf/pdfjs";
+import type { VerifyOps } from "@/lib/pdf/verify-redaction";
+
+/** The pdf.js operator codes the redaction safety net follows. */
+export const browserVerifyOps: VerifyOps = {
+  paintImageMaskXObject: OPS.paintImageMaskXObject,
+  paintImageXObject: OPS.paintImageXObject,
+  paintInlineImageXObject: OPS.paintInlineImageXObject,
+  restore: OPS.restore,
+  save: OPS.save,
+  transform: OPS.transform,
+};
 
 /** JPEG quality for flattened pages: text edges stay crisp at 144 dpi. */
 const JPEG_QUALITY = 0.92;

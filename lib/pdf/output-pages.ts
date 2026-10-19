@@ -54,6 +54,24 @@ const clipToCrop = (rect: UserRect, page: EditorPage): UserRect | null => {
     : null;
 };
 
+/** A page's redaction boxes in user space, clipped to its crop box. */
+export const pageRedactionBoxes = (page: EditorPage): RedactionBox[] => {
+  const boxes: RedactionBox[] = [];
+  for (const object of page.objects) {
+    if (object.type !== "redaction") {
+      continue;
+    }
+    const clipped = clipToCrop(
+      displayedToUserSpace(object, page.cropBox, page.sourceRotate),
+      page
+    );
+    if (clipped) {
+      boxes.push({ ...clipped, fill: object.fill });
+    }
+  }
+  return boxes;
+};
+
 /**
  * Each output page's redaction boxes in user space, clipped to the crop box.
  * Pages without a box inside their crop are left out.
@@ -63,19 +81,7 @@ export const redactionPlan = (
   pageIds?: readonly string[]
 ): RedactedOutputPage[] =>
   outputPagesOf({ document, pageIds }).flatMap((page, outputIndex) => {
-    const boxes: RedactionBox[] = [];
-    for (const object of page.objects) {
-      if (object.type !== "redaction") {
-        continue;
-      }
-      const clipped = clipToCrop(
-        displayedToUserSpace(object, page.cropBox, page.sourceRotate),
-        page
-      );
-      if (clipped) {
-        boxes.push({ ...clipped, fill: object.fill });
-      }
-    }
+    const boxes = pageRedactionBoxes(page);
     return boxes.length > 0 ? [{ boxes, outputIndex }] : [];
   });
 
@@ -92,8 +98,11 @@ export interface PositionedText {
   width: number;
 }
 
-/** The item's box in user space, padded by the touch margin. */
-const textBounds = (item: PositionedText): UserRect => {
+/** The item's box in user space, padded by `margin`. */
+const textBounds = (
+  item: PositionedText,
+  margin = TEXT_TOUCH_MARGIN
+): UserRect => {
   const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = item.transform;
   const run = Math.hypot(a, b) || 1;
   const rise = Math.hypot(c, d) || 1;
@@ -104,11 +113,11 @@ const textBounds = (item: PositionedText): UserRect => {
   const below = { x: -vx * TEXT_DESCENT_SHARE, y: -vy * TEXT_DESCENT_SHARE };
   const xs = [e + below.x, e + ux + below.x, e + ux + vx, e + vx];
   const ys = [f + below.y, f + uy + below.y, f + uy + vy, f + vy];
-  const x0 = Math.min(...xs) - TEXT_TOUCH_MARGIN;
-  const y0 = Math.min(...ys) - TEXT_TOUCH_MARGIN;
+  const x0 = Math.min(...xs) - margin;
+  const y0 = Math.min(...ys) - margin;
   return {
-    height: Math.max(...ys) + TEXT_TOUCH_MARGIN - y0,
-    width: Math.max(...xs) + TEXT_TOUCH_MARGIN - x0,
+    height: Math.max(...ys) + margin - y0,
+    width: Math.max(...xs) + margin - x0,
     x: x0,
     y: y0,
   };
@@ -127,6 +136,24 @@ export const textClearOfBoxes = (
 ): boolean => {
   const bounds = textBounds(item);
   return boxes.every((box) => !rectsTouch(bounds, box));
+};
+
+/**
+ * Whether a text item covers part of a box (sharing only an edge does not
+ * count): what a reader could still pull out from under it.
+ */
+export const textOverlapsBoxes = (
+  item: PositionedText,
+  boxes: readonly UserRect[]
+): boolean => {
+  const bounds = textBounds(item, 0);
+  return boxes.some(
+    (box) =>
+      bounds.x < box.x + box.width &&
+      box.x < bounds.x + bounds.width &&
+      bounds.y < box.y + box.height &&
+      box.y < bounds.y + bounds.height
+  );
 };
 
 /** Whether a user-space rect `[x0, y0, x1, y1]` touches any box. */

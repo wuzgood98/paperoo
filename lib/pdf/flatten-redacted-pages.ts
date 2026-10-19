@@ -19,6 +19,11 @@ type TextContentItem = PositionedText | { type: string };
 /** The slice of a pdf.js page the flattener uses. */
 export interface FlattenSourcePage {
   getTextContent: () => Promise<{ items: readonly TextContentItem[] }>;
+  getOperatorList: () => Promise<{
+    /** Each operator's arguments; a transform's are its six numbers. */
+    argsArray: readonly (readonly number[] | null)[];
+    fnArray: readonly number[];
+  }>;
   getViewport: (params: { rotation: number; scale: number }) => {
     convertToViewportPoint: (x: number, y: number) => number[];
     height: number;
