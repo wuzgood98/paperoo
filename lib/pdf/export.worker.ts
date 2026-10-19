@@ -13,7 +13,7 @@ export interface ExportWorkerRequest {
   kind: "export";
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
   pageIds?: readonly string[];
-  redactions: "forbid" | "skip";
+  redactions: "apply" | "forbid" | "skip";
   scrub: boolean;
   sources?: Record<string, ArrayBuffer>;
 }
@@ -34,7 +34,14 @@ export type WorkerRequest = ExportWorkerRequest | FlattenWorkerRequest;
 
 export type WorkerResponse =
   | { error: string; ok: false }
-  | { bytes: ArrayBuffer; coverOnlyRunIds: string[]; kind: "export"; ok: true }
+  | {
+      bytes: ArrayBuffer;
+      coverOnlyRunIds: string[];
+      flattenPages: number[];
+      kind: "export";
+      ok: true;
+      removedFieldNames: string[];
+    }
   | {
       bytes: ArrayBuffer;
       flattenedPageCount: number;
@@ -90,12 +97,14 @@ const runExportRequest = async (
       ])
     ),
   };
-  const { bytes, coverOnlyRunIds } = await exportDocumentWithReport(input);
+  const report = await exportDocumentWithReport(input);
   return {
-    bytes: ownedBuffer(bytes),
-    coverOnlyRunIds,
+    bytes: ownedBuffer(report.bytes),
+    coverOnlyRunIds: report.coverOnlyRunIds,
+    flattenPages: report.flattenPages,
     kind: "export",
     ok: true,
+    removedFieldNames: report.removedFieldNames,
   };
 };
 

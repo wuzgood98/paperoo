@@ -17,6 +17,7 @@ import { renderRedactedPages } from "@/lib/pdf/flatten-redacted-pages";
 import { documentHasRedactions, redactionPlan } from "@/lib/pdf/output-pages";
 import { ensureDirtyPdfImageAssets } from "@/lib/pdf/pdf-image-preview";
 import { pdfSession } from "@/lib/pdf/session";
+import { failedRedactions } from "@/lib/pdf/verify-redaction";
 
 const fetchBytes = async (url: string): Promise<ArrayBuffer> => {
   const response = await fetch(url);
@@ -51,6 +52,8 @@ export interface EditedPdf {
   coverOnlyRunIds: string[];
   /** Pages rebuilt from a picture because they hold redactions. */
   flattenedPageCount: number;
+  /** Pages whose redactions came out of their content, kept as text and vectors. */
+  preciseRedactionCount: number;
   /** Form fields removed because a widget sat under a redaction. */
   removedFieldNames: string[];
 }
@@ -166,10 +169,10 @@ export const buildEditedPdfBytes = async ({
       kind: "export",
       ocrWordsByPage: ocrSession.wordsForExport(),
       pageIds,
-      // Boxes are burned in by the flatten pass, never drawn as boxes.
-      redactions: "skip",
-      // A redaction elsewhere in the document still means: leave no trace.
-      scrub: plan.length === 0 && documentHasRedactions(state.document),
+      // Precise where possible; the rest is left for the flatten pass.
+      redactions: "apply",
+      // A redaction anywhere in the document means: leave no trace.
+      scrub: documentHasRedactions(state.document),
       sources,
     };
     const pass1 = await callExportWorker(request, [
@@ -182,19 +185,45 @@ export const buildEditedPdfBytes = async ({
         bytes: pass1.bytes,
         coverOnlyRunIds: pass1.coverOnlyRunIds,
         flattenedPageCount: 0,
+        preciseRedactionCount: 0,
         removedFieldNames: [],
       };
     }
 
-    const { browserFlattenDeps } = await import("@/lib/pdf/browser-flatten");
-    // pdf.js takes the bytes it renders from; pass 2 keeps its own copy.
+    const { browserFlattenDeps, browserVerifyOps } =
+      await import("@/lib/pdf/browser-flatten");
+    const deps = browserFlattenDeps();
+    const flatten = new Set(pass1.flattenPages);
+    const precise = plan.filter((page) => !flatten.has(page.outputIndex));
+    if (precise.length > 0) {
+      // pdf.js takes the bytes it reads; pass 1 keeps its own copy.
+      const failed = await failedRedactions(
+        new Uint8Array(pass1.bytes).slice(),
+        precise,
+        { open: deps.open, ops: browserVerifyOps }
+      );
+      for (const index of failed) {
+        flatten.add(index);
+      }
+    }
+    const toFlatten = plan.filter((page) => flatten.has(page.outputIndex));
+    if (toFlatten.length === 0) {
+      return {
+        bytes: pass1.bytes,
+        coverOnlyRunIds: pass1.coverOnlyRunIds,
+        flattenedPageCount: 0,
+        preciseRedactionCount: plan.length,
+        removedFieldNames: pass1.removedFieldNames,
+      };
+    }
+
     const pages = await renderRedactedPages(
       new Uint8Array(pass1.bytes).slice(),
-      plan,
-      browserFlattenDeps()
+      toFlatten,
+      deps
     );
     const textFont = await cachedFontCopy(FONT_FILES.sans[400]);
-    const flatten: FlattenWorkerRequest = {
+    const flattenRequest: FlattenWorkerRequest = {
       bytes: pass1.bytes,
       fontBytes: textFont,
       kind: "flatten",
@@ -203,16 +232,19 @@ export const buildEditedPdfBytes = async ({
         jpeg: new Uint8Array(page.jpeg).buffer,
       })),
     };
-    const pass2 = await callExportWorker(flatten, [
+    const pass2 = await callExportWorker(flattenRequest, [
       pass1.bytes,
       textFont,
-      ...flatten.pages.map((page) => page.jpeg),
+      ...flattenRequest.pages.map((page) => page.jpeg),
     ]);
     return {
       bytes: pass2.bytes,
       coverOnlyRunIds: pass1.coverOnlyRunIds,
       flattenedPageCount: pass2.flattenedPageCount,
-      removedFieldNames: pass2.removedFieldNames,
+      preciseRedactionCount: plan.length - toFlatten.length,
+      removedFieldNames: [
+        ...new Set([...pass1.removedFieldNames, ...pass2.removedFieldNames]),
+      ].toSorted(),
     };
   } finally {
     editorStore.setExporting(false);
@@ -236,16 +268,30 @@ const warnCoverOnly = (count: number): void => {
 /** Say what flattening did, so nobody expects the redacted pages as text. */
 export const reportFlattened = ({
   flattenedPageCount,
+  preciseRedactionCount,
   removedFieldNames,
-}: Pick<EditedPdf, "flattenedPageCount" | "removedFieldNames">): void => {
-  if (flattenedPageCount === 0) {
+}: Pick<
+  EditedPdf,
+  "flattenedPageCount" | "preciseRedactionCount" | "removedFieldNames"
+>): void => {
+  if (flattenedPageCount === 0 && preciseRedactionCount === 0) {
     return;
   }
-  const pages =
-    flattenedPageCount === 1
-      ? "1 page with redactions was flattened to an image"
-      : `${flattenedPageCount} pages with redactions were flattened to images`;
-  const lines = [`${pages}; text outside the boxes stays searchable.`];
+  const lines: string[] = [];
+  if (preciseRedactionCount > 0) {
+    lines.push(
+      preciseRedactionCount === 1
+        ? "Content under the boxes was removed from 1 page; the rest of it is unchanged."
+        : `Content under the boxes was removed from ${preciseRedactionCount} pages; the rest of them is unchanged.`
+    );
+  }
+  if (flattenedPageCount > 0) {
+    const pages =
+      flattenedPageCount === 1
+        ? "1 page with redactions was flattened to an image"
+        : `${flattenedPageCount} pages with redactions were flattened to images`;
+    lines.push(`${pages}; text outside the boxes stays searchable.`);
+  }
   if (removedFieldNames.length > 0) {
     lines.push(`Removed form fields: ${removedFieldNames.join(", ")}.`);
   }

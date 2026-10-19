@@ -1,7 +1,3 @@
-import { readFile, realpath } from "node:fs/promises";
-import { createRequire } from "node:module";
-import path from "node:path";
-
 import {
   degrees,
   PDFArray,
@@ -17,113 +13,32 @@ import { createRedactionObject, pinObject } from "@/lib/editor/object-utils";
 import { TOOL_KEYS } from "@/lib/editor/tool-keys";
 import type { EditorDocument, EditorPage, Rect } from "@/lib/editor/types";
 import type { OcrTextObject } from "@/lib/ocr/types";
-import { flattenRedactedPages } from "@/lib/pdf/export-flatten";
 import { exportDocumentWithReport } from "@/lib/pdf/export-pdf";
-import { renderRedactedPages } from "@/lib/pdf/flatten-redacted-pages";
-import type { FlattenDeps } from "@/lib/pdf/flatten-redacted-pages";
-import { documentHasRedactions, redactionPlan } from "@/lib/pdf/output-pages";
+import { redactionPlan } from "@/lib/pdf/output-pages";
 import { pdfSession } from "@/lib/pdf/session";
 import { migrateMeta } from "@/lib/session/schema";
 import type { PersistedMeta } from "@/lib/session/schema";
 
 import { buildPdfFormFixture, FORM_FIELD } from "./pdf-form-fixture";
 import { allPageDictRefs, pdfContainsText } from "./pdf-scan";
-import { loadPdfJsDocument } from "./pdfjs-node";
+import {
+  center,
+  infoKeys,
+  near,
+  openPages,
+  pageTexts,
+  pixelAt,
+  redactingExport as redactWith,
+  withBoxes,
+} from "./redaction-pipeline";
 
 afterEach(async () => {
   await pdfSession.close();
 });
 
-interface NodeCanvas {
-  encode: (format: "jpeg", quality: number) => Promise<Uint8Array>;
-  getContext: (kind: "2d") => CanvasRenderingContext2D;
-}
-
-/** The napi-rs canvas package, loaded the way pdf.js loads it in Node. */
-const napiCanvas = async (): Promise<{
-  createCanvas: (width: number, height: number) => NodeCanvas;
-}> => {
-  const pdfjs = await realpath(
-    path.join(process.cwd(), "node_modules/pdfjs-dist/package.json")
-  );
-  // SAFETY: the package's documented createCanvas export.
-  return createRequire(pdfjs)("@napi-rs/canvas") as {
-    createCanvas: (width: number, height: number) => NodeCanvas;
-  };
-};
-
-const JPEG_QUALITY = 92;
-
-const nodeDeps = async (): Promise<FlattenDeps<NodeCanvas>> => {
-  const { createCanvas } = await napiCanvas();
-  return {
-    createCanvas: (width, height) => {
-      const canvas = createCanvas(width, height);
-      return { canvas, context: canvas.getContext("2d") };
-    },
-    encodeJpeg: async (canvas) =>
-      new Uint8Array(await canvas.encode("jpeg", JPEG_QUALITY)),
-    open: async (bytes) => {
-      const task = loadPdfJsDocument(bytes);
-      const doc = await task.promise;
-      return {
-        destroy: () => task.destroy(),
-        getPage: (pageNumber) => doc.getPage(pageNumber),
-      };
-    },
-  };
-};
-
-/** The app's two-pass export, with Node standing in for the browser. */
-const redactingExport = async (
-  bytes: Uint8Array,
-  document: EditorDocument,
-  options: {
-    ocrWordsByPage?: Record<string, OcrTextObject[]>;
-    pageIds?: string[];
-  } = {}
-): Promise<{
-  bytes: Uint8Array;
-  flattened: number;
-  removedFieldNames: string[];
-}> => {
-  const plan = redactionPlan(document, options.pageIds);
-  const pass1 = await exportDocumentWithReport({
-    assets: {},
-    bytes,
-    document,
-    fontBytes: {},
-    ocrWordsByPage: options.ocrWordsByPage,
-    pageIds: options.pageIds,
-    redactions: "skip",
-    scrub: plan.length === 0 && documentHasRedactions(document),
-  });
-  if (plan.length === 0) {
-    return { bytes: pass1.bytes, flattened: 0, removedFieldNames: [] };
-  }
-  const pages = await renderRedactedPages(
-    Uint8Array.from(pass1.bytes),
-    plan,
-    await nodeDeps()
-  );
-  const font = await readFile(
-    path.join(process.cwd(), "public/fonts/LiberationSans-Regular.ttf")
-  );
-  const report = await flattenRedactedPages({
-    bytes: pass1.bytes,
-    fontBytes: new Uint8Array(font),
-    pages,
-  });
-  return {
-    bytes: report.bytes,
-    flattened: report.flattenedPageCount,
-    removedFieldNames: report.removedFieldNames,
-  };
-};
-
 const LETTER: [number, number] = [612, 792];
 
-/** "SECRET" above "PUBLIC" on each page; page 1 links to the last page. */
+/** "SECRET" above "PUBLIC" on each page. */
 const secretPdf = async (pageCount = 1): Promise<Uint8Array> => {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -138,84 +53,12 @@ const secretPdf = async (pageCount = 1): Promise<Uint8Array> => {
 /** Over "SECRET" at 72,700 (18pt), in displayed coordinates. */
 const SECRET_BOX: Rect = { height: 30, width: 120, x: 64, y: 70 };
 
-const openPages = async (bytes: Uint8Array): Promise<EditorPage[]> => {
-  const { pages } = await pdfSession.open(Uint8Array.from(bytes));
-  return pages;
-};
-
-const withBoxes = (
-  page: EditorPage,
-  ...boxes: { fill?: string; rect: Rect }[]
-): EditorPage => ({
-  ...page,
-  objects: [
-    ...page.objects,
-    ...boxes.map(({ fill, rect }) => createRedactionObject(rect, fill)),
-  ],
-});
-
-const pageTexts = async (bytes: Uint8Array): Promise<string[]> => {
-  const pdf = await loadPdfJsDocument(bytes).promise;
-  const texts: string[] = [];
-  for (let number = 1; number <= pdf.numPages; number += 1) {
-    // oxlint-disable-next-line eslint/no-await-in-loop -- pages in order
-    const page = await pdf.getPage(number);
-    // oxlint-disable-next-line eslint/no-await-in-loop -- pages in order
-    const content = await page.getTextContent();
-    texts.push(
-      content.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ")
-        .replaceAll(/\s+/gu, " ")
-        .trim()
-    );
-  }
-  return texts;
-};
-
-/** RGB at a point of page `number`, rendered at scale 1 and `rotation`. */
-const pixelAt = async (
+/** R1 behaviour: every redacted page is flattened. */
+const redactingExport = (
   bytes: Uint8Array,
-  number: number,
-  rotation: number,
-  points: readonly { x: number; y: number }[]
-): Promise<[number, number, number][]> => {
-  const { createCanvas } = await napiCanvas();
-  const pdf = await loadPdfJsDocument(bytes).promise;
-  const page = await pdf.getPage(number);
-  const viewport = page.getViewport({ rotation, scale: 1 });
-  const canvas = createCanvas(
-    Math.round(viewport.width),
-    Math.round(viewport.height)
-  );
-  const context = canvas.getContext("2d");
-  await page.render({
-    // SAFETY: pdf.js draws onto any 2D canvas; Node's is @napi-rs/canvas.
-    canvas: canvas as never,
-    canvasContext: context,
-    viewport,
-  }).promise;
-  return points.map(({ x, y }) => {
-    const { data } = context.getImageData(Math.round(x), Math.round(y), 1, 1);
-    return [data[0] ?? 0, data[1] ?? 0, data[2] ?? 0];
-  });
-};
-
-const PIXEL_TOLERANCE = 24;
-
-const near = (
-  actual: readonly number[],
-  expected: readonly number[]
-): boolean =>
-  actual.every(
-    (value, index) =>
-      Math.abs(value - (expected[index] ?? 0)) <= PIXEL_TOLERANCE
-  );
-
-const center = (rect: Rect) => ({
-  x: rect.x + rect.width / 2,
-  y: rect.y + rect.height / 2,
-});
+  document: EditorDocument,
+  options: Parameters<typeof redactWith>[2] = {}
+) => redactWith(bytes, document, { ...options, mode: "skip" });
 
 test("redacted text is gone from the file; text outside stays searchable", async () => {
   const bytes = await secretPdf();
@@ -393,14 +236,6 @@ test("a link inside a box is dropped; one outside is kept and resolves", async (
   expect(target instanceof PDFRef ? target : null).toBe(output.getPage(1).ref);
   expect(await allPageDictRefs(result.bytes)).toHaveLength(2);
 });
-
-const infoKeys = async (bytes: Uint8Array): Promise<string[]> => {
-  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
-  const info = doc.context.lookup(doc.context.trailerInfo.Info);
-  return info instanceof PDFDict
-    ? info.keys().map((key) => key.decodeText())
-    : [];
-};
 
 test("a redacting export keeps only the producer in Info", async () => {
   const bytes = await secretPdf();

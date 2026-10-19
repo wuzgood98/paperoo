@@ -37,9 +37,9 @@ export const RedactionConfirmDialog = () => {
         <AlertDialogHeader>
           <AlertDialogTitle>Apply redactions?</AlertDialogTitle>
           <AlertDialogDescription>
-            Everything under the boxes is removed from the file for good, and
-            pages with boxes become images. Text outside the boxes stays
-            searchable. Your document here is not changed.
+            Everything under the boxes is removed from the file for good. A page
+            whose content cannot be cut exactly becomes an image; text outside
+            the boxes stays searchable. Your document here is not changed.
           </AlertDialogDescription>
           {prompt?.unredactedCopies ? (
             <AlertDialogDescription>

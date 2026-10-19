@@ -10,6 +10,7 @@ import type {
   PdfVectorObject,
 } from "@/lib/editor/types";
 import { inkedSubpaths } from "@/lib/ocr/outline-text";
+import { planContentRedaction } from "@/lib/pdf/content-redaction";
 import {
   applyContentEdits,
   parseContentStream,
@@ -21,6 +22,7 @@ import type {
   ContentOperation,
   ContentToken,
 } from "@/lib/pdf/content-stream";
+import type { UserRect } from "@/lib/pdf/output-pages";
 
 /** Lines of an outline-only label that stay as they were after its path was unpainted. */
 export interface KeptOutlineLines {
@@ -343,6 +345,25 @@ interface RawContent {
   source: string;
 }
 
+/** The page's content parsed, without matching it to pdf.js's counts. */
+const readParsedContent = (
+  page: PDFPage
+): { operations: ContentOperation[]; source: string } | null => {
+  // A page with no content stream paints nothing: nothing to edit.
+  if (!page.node.Contents()) {
+    return { operations: [], source: "" };
+  }
+  const source = readPageContent(page);
+  if (source === null) {
+    return null;
+  }
+  try {
+    return { operations: parseContentStream(source), source };
+  } catch {
+    return null;
+  }
+};
+
 /** Parse the page's content, or null when it can't be matched to pdf.js. */
 const readRawContent = (
   page: PDFPage,
@@ -438,34 +459,36 @@ const groupByLabel = (
   return groups;
 };
 
+interface InkRemovalPlan extends InkRemovalResult {
+  edits: ContentEdit[];
+  /** Show operators (by operation index) the plan empties. */
+  emptiedShows: Set<number>;
+}
+
+const NOTHING_PLANNED = (): InkRemovalPlan => ({
+  ...NOTHING_REMOVED,
+  edits: [],
+  emptiedShows: new Set(),
+});
+
 /**
- * Remove dirty runs' original ink from the page's own content: empty each
- * run's text-showing operator and, for an outline-backed run, stop its
+ * Plan taking dirty runs' original ink out of the page's own content: empty
+ * each run's text-showing operator and, for an outline-backed run, stop its
  * outline painting. An outline-only label's path stops painting once for all
  * its edited lines; its other lines are reported for redrawing. Every target
  * is verified against what pdf.js reported at load; anything that does not
  * match is left alone and gets a cover.
  */
 // oxlint-disable-next-line eslint/complexity -- one pass per kind of original ink
-export const removeOriginalInk = (
-  doc: PDFDocument,
-  page: PDFPage,
+const planInkRemoval = (
+  raw: RawContent,
   editorPage: EditorPage,
   runs: readonly PdfTextObject[]
-): InkRemovalResult => {
-  const counts = editorPage.contentOpCounts;
-  if (!counts || runs.every((run) => !(run.removalTarget || run.outlineText))) {
-    return NOTHING_REMOVED;
-  }
-  const raw = readRawContent(page, counts);
-  if (!raw) {
-    return NOTHING_REMOVED;
-  }
-
+): InkRemovalPlan => {
   const vectors = new Map(
     editorPage.pdfVectorObjects.map((vector) => [vector.id, vector])
   );
-  const edits: ContentEdit[] = [];
+  const plan = NOTHING_PLANNED();
   const textRemoved = new Set<string>();
   const inkRemoved = new Set<string>();
   const keptOutlineLines: KeptOutlineLines[] = [];
@@ -475,7 +498,7 @@ export const removeOriginalInk = (
     if (!(vector && labelEdit)) {
       continue;
     }
-    edits.push(labelEdit);
+    plan.edits.push(labelEdit);
     const edited = new Set<number>();
     for (const run of labelRuns) {
       inkRemoved.add(run.id);
@@ -503,28 +526,109 @@ export const removeOriginalInk = (
       continue;
     }
     const showEdit = planShowEdit(raw, run);
-    if (!showEdit) {
+    const showIndex = run.removalTarget
+      ? raw.shows[run.removalTarget.showOrdinal]
+      : undefined;
+    if (!showEdit || showIndex === undefined) {
       continue;
     }
-    edits.push(showEdit);
+    plan.edits.push(showEdit);
+    plan.emptiedShows.add(showIndex);
     textRemoved.add(run.id);
     const outlineEdit = runPaintsOwnInk(run)
       ? null
       : planOutlineEdit(raw, run, vectors);
     if (outlineEdit) {
-      edits.push(outlineEdit);
+      plan.edits.push(outlineEdit);
     }
     if (runPaintsOwnInk(run) || outlineEdit) {
       inkRemoved.add(run.id);
     }
   }
-  if (edits.length === 0) {
-    return NOTHING_REMOVED;
-  }
+  return { ...plan, inkRemoved, keptOutlineLines, textRemoved };
+};
 
-  const updated = applyContentEdits(raw.source, edits);
+const writeContent = (
+  doc: PDFDocument,
+  page: PDFPage,
+  source: string,
+  edits: readonly ContentEdit[]
+): void => {
+  const updated = applyContentEdits(source, edits);
   const stream = doc.context.flateStream(fromLatin1(updated));
   const ref: PDFRef = doc.context.register(stream);
   page.node.set(PDFName.of("Contents"), ref);
-  return { inkRemoved, keptOutlineLines, textRemoved };
 };
+
+const needsInkRemoval = (runs: readonly PdfTextObject[]): boolean =>
+  runs.some((run) => run.removalTarget || run.outlineText);
+
+export interface PageContentEdits extends InkRemovalResult {
+  /**
+   * Everything under the redaction boxes left the page's content. False
+   * when something there could not be removed exactly: the page must be
+   * flattened, and no redaction edit was applied.
+   */
+  redactedPrecisely: boolean;
+}
+
+const rangesMeet = (a: ContentEdit, b: ContentEdit): boolean =>
+  a.start < b.end && b.start < a.end;
+
+/**
+ * Edit a page's own content once: Removal for dirty runs, and precise
+ * redaction under `boxes`. The two plans share one parse, and a show that
+ * Removal empties needs no redaction; a path both want to change sends the
+ * page to flattening.
+ */
+export const editPageContent = (
+  doc: PDFDocument,
+  page: PDFPage,
+  editorPage: EditorPage,
+  runs: readonly PdfTextObject[],
+  boxes: readonly UserRect[]
+): PageContentEdits => {
+  if (boxes.length === 0 && !needsInkRemoval(runs)) {
+    return { ...NOTHING_REMOVED, redactedPrecisely: true };
+  }
+  const counts = editorPage.contentOpCounts;
+  const raw = counts ? readRawContent(page, counts) : null;
+  const ink =
+    raw && needsInkRemoval(runs)
+      ? planInkRemoval(raw, editorPage, runs)
+      : NOTHING_PLANNED();
+  let redaction: ContentEdit[] = [];
+  let redactedPrecisely = boxes.length === 0;
+  const parsed = boxes.length > 0 ? (raw ?? readParsedContent(page)) : null;
+  if (parsed) {
+    const plan = planContentRedaction({
+      boxes,
+      emptiedShows: ink.emptiedShows,
+      operations: parsed.operations,
+      resources: page.node.Resources(),
+    });
+    if (
+      plan.ok &&
+      !plan.edits.some((edit) => ink.edits.some((own) => rangesMeet(edit, own)))
+    ) {
+      redaction = plan.edits;
+      redactedPrecisely = true;
+    }
+  }
+  const source = raw?.source ?? parsed?.source;
+  const edits = [...ink.edits, ...redaction];
+  if (source !== undefined && edits.length > 0) {
+    writeContent(doc, page, source, edits);
+  }
+  const { inkRemoved, keptOutlineLines, textRemoved } =
+    ink.edits.length > 0 ? ink : NOTHING_REMOVED;
+  return { inkRemoved, keptOutlineLines, redactedPrecisely, textRemoved };
+};
+
+/** Remove dirty runs' original ink from the page; see `planInkRemoval`. */
+export const removeOriginalInk = (
+  doc: PDFDocument,
+  page: PDFPage,
+  editorPage: EditorPage,
+  runs: readonly PdfTextObject[]
+): InkRemovalResult => editPageContent(doc, page, editorPage, runs, []);
