@@ -4,6 +4,7 @@ import { flattenRedactedPages } from "@/lib/pdf/export-flatten";
 import { exportDocumentWithReport } from "@/lib/pdf/export-pdf";
 import type { ExportAsset, ExportInput } from "@/lib/pdf/export-pdf";
 import type { PositionedText, RedactionBox } from "@/lib/pdf/output-pages";
+import { workerImageCodec } from "@/lib/pdf/worker-image-codec";
 
 export interface ExportWorkerRequest {
   assets: Record<string, { buffer: ArrayBuffer; mimeType: string }>;
@@ -86,6 +87,7 @@ const runExportRequest = async (
     bytes: toUint8(request.bytes),
     document: request.document,
     fontBytes,
+    imageCodec: workerImageCodec(),
     ocrWordsByPage: request.ocrWordsByPage,
     pageIds: request.pageIds,
     redactions: request.redactions,

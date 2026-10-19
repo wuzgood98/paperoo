@@ -16,12 +16,45 @@ const ANNOTATION_MODE_ENABLE = 1;
 /** A pdf.js text content entry: a positioned run, or a marked-content tag. */
 type TextContentItem = PositionedText | { type: string };
 
+/** A decoded image as pdf.js keeps it: raw samples, or a bitmap. */
+export interface PdfJsImage {
+  bitmap?: ImageBitmap;
+  data?: Uint8Array | Uint8ClampedArray;
+  height: number;
+  /** 1: 1-bit gray, 2: RGB, 3: RGBA; unset for a stencil mask's bits. */
+  kind?: number;
+  width: number;
+}
+
+/** An image operator's argument: an object id, or the image (or mask) itself. */
+export interface PdfJsImageArg {
+  bitmap?: ImageBitmap;
+  data?: string | Uint8Array | Uint8ClampedArray;
+  height?: number;
+  kind?: number;
+  width?: number;
+}
+
+/** One pdf.js operator argument, as far as the flattener reads them. */
+export type PdfJsOperatorArg = number | string | PdfJsImageArg | null;
+
+export interface PdfJsObjects {
+  /** With a callback, waits for an object still being decoded. */
+  get: (
+    id: string,
+    callback: (image: PdfJsImage | null | undefined) => void
+  ) => void;
+}
+
 /** The slice of a pdf.js page the flattener uses. */
 export interface FlattenSourcePage {
   getTextContent: () => Promise<{ items: readonly TextContentItem[] }>;
+  /** Decoded images by id, once the operator list has loaded them. */
+  commonObjs: PdfJsObjects;
+  objs: PdfJsObjects;
   getOperatorList: () => Promise<{
     /** Each operator's arguments; a transform's are its six numbers. */
-    argsArray: readonly (readonly number[] | null)[];
+    argsArray: readonly (readonly PdfJsOperatorArg[] | null)[];
     fnArray: readonly number[];
   }>;
   getViewport: (params: { rotation: number; scale: number }) => {

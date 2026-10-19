@@ -252,3 +252,28 @@ export const applyContentEdits = (
   }
   return result + source.slice(cursor);
 };
+
+/** Bytes per `String.fromCharCode` call, well under engine argument limits. */
+const LATIN1_CHUNK = 0x80_00;
+
+/** Bytes as a latin1 string: one char per byte. */
+export const latin1 = (bytes: Uint8Array): string => {
+  const parts: string[] = [];
+  for (let start = 0; start < bytes.length; start += LATIN1_CHUNK) {
+    parts.push(
+      // oxlint-disable-next-line unicorn/prefer-code-point -- bytes are code units 0-255, and fromCharCode takes them in bulk
+      String.fromCharCode(...bytes.subarray(start, start + LATIN1_CHUNK))
+    );
+  }
+  return parts.join("");
+};
+
+/** Inverse of `latin1`: every char came from one byte, so fits in one. */
+export const fromLatin1 = (text: string): Uint8Array => {
+  const bytes = new Uint8Array(text.length);
+  for (let index = 0; index < text.length; index += 1) {
+    // oxlint-disable-next-line unicorn/prefer-code-point -- every code unit is one latin1 byte
+    bytes[index] = text.charCodeAt(index);
+  }
+  return bytes;
+};

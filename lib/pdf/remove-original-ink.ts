@@ -10,9 +10,15 @@ import type {
   PdfVectorObject,
 } from "@/lib/editor/types";
 import { inkedSubpaths } from "@/lib/ocr/outline-text";
-import { planContentRedaction } from "@/lib/pdf/content-redaction";
+import {
+  planContentRedaction,
+  withXObjects,
+} from "@/lib/pdf/content-redaction";
+import type { ContentRedactionPlan } from "@/lib/pdf/content-redaction";
 import {
   applyContentEdits,
+  fromLatin1,
+  latin1,
   parseContentStream,
   PATH_PAINT_OPERATORS,
   TEXT_SHOW_OPERATORS,
@@ -22,7 +28,8 @@ import type {
   ContentOperation,
   ContentToken,
 } from "@/lib/pdf/content-stream";
-import type { UserRect } from "@/lib/pdf/output-pages";
+import type { ImageCodec } from "@/lib/pdf/image-redaction";
+import type { RedactionBox } from "@/lib/pdf/output-pages";
 
 /** Lines of an outline-only label that stay as they were after its path was unpainted. */
 export interface KeptOutlineLines {
@@ -72,30 +79,6 @@ const BOX_RELATIVE_SLACK = 1e-4;
 const INVISIBLE_RENDER_MODES = new Set([3, 7]);
 /** Text rendering modes that add the glyphs to the clip path. */
 const CLIP_RENDER_MODES = new Set([4, 5, 6, 7]);
-
-/** Bytes per `String.fromCharCode` call, well under engine argument limits. */
-const LATIN1_CHUNK = 0x80_00;
-
-const latin1 = (bytes: Uint8Array): string => {
-  const parts: string[] = [];
-  for (let start = 0; start < bytes.length; start += LATIN1_CHUNK) {
-    parts.push(
-      // oxlint-disable-next-line unicorn/prefer-code-point -- bytes are code units 0-255, and fromCharCode takes them in bulk
-      String.fromCharCode(...bytes.subarray(start, start + LATIN1_CHUNK))
-    );
-  }
-  return parts.join("");
-};
-
-/** Inverse of `latin1`: every char came from one byte, so fits in one. */
-const fromLatin1 = (text: string): Uint8Array => {
-  const bytes = new Uint8Array(text.length);
-  for (let index = 0; index < text.length; index += 1) {
-    // oxlint-disable-next-line unicorn/prefer-code-point -- every code unit is one latin1 byte
-    bytes[index] = text.charCodeAt(index);
-  }
-  return bytes;
-};
 
 /** The page's content streams decoded and joined, or null if any can't be. */
 const readPageContent = (page: PDFPage): string | null => {
@@ -548,16 +531,18 @@ const planInkRemoval = (
   return { ...plan, inkRemoved, keptOutlineLines, textRemoved };
 };
 
+/** Replace the page's content with the edited source; returns it. */
 const writeContent = (
   doc: PDFDocument,
   page: PDFPage,
   source: string,
   edits: readonly ContentEdit[]
-): void => {
+): string => {
   const updated = applyContentEdits(source, edits);
   const stream = doc.context.flateStream(fromLatin1(updated));
   const ref: PDFRef = doc.context.register(stream);
   page.node.set(PDFName.of("Contents"), ref);
+  return updated;
 };
 
 const needsInkRemoval = (runs: readonly PdfTextObject[]): boolean =>
@@ -581,13 +566,14 @@ const rangesMeet = (a: ContentEdit, b: ContentEdit): boolean =>
  * Removal empties needs no redaction; a path both want to change sends the
  * page to flattening.
  */
-export const editPageContent = (
+export const editPageContent = async (
   doc: PDFDocument,
   page: PDFPage,
   editorPage: EditorPage,
   runs: readonly PdfTextObject[],
-  boxes: readonly UserRect[]
-): PageContentEdits => {
+  boxes: readonly RedactionBox[],
+  codec?: ImageCodec
+): Promise<PageContentEdits> => {
   if (boxes.length === 0 && !needsInkRemoval(runs)) {
     return { ...NOTHING_REMOVED, redactedPrecisely: true };
   }
@@ -600,9 +586,12 @@ export const editPageContent = (
   let redaction: ContentEdit[] = [];
   let redactedPrecisely = boxes.length === 0;
   const parsed = boxes.length > 0 ? (raw ?? readParsedContent(page)) : null;
+  let plan: ContentRedactionPlan | null = null;
   if (parsed) {
-    const plan = planContentRedaction({
+    plan = await planContentRedaction({
       boxes,
+      codec,
+      context: doc.context,
       emptiedShows: ink.emptiedShows,
       operations: parsed.operations,
       resources: page.node.Resources(),
@@ -618,17 +607,15 @@ export const editPageContent = (
   const source = raw?.source ?? parsed?.source;
   const edits = [...ink.edits, ...redaction];
   if (source !== undefined && edits.length > 0) {
-    writeContent(doc, page, source, edits);
+    const updated = writeContent(doc, page, source, edits);
+    if (redaction.length > 0 && plan?.ok) {
+      page.node.set(
+        PDFName.of("Resources"),
+        withXObjects(doc, page.node.Resources(), plan.xObjects, updated)
+      );
+    }
   }
   const { inkRemoved, keptOutlineLines, textRemoved } =
     ink.edits.length > 0 ? ink : NOTHING_REMOVED;
   return { inkRemoved, keptOutlineLines, redactedPrecisely, textRemoved };
 };
-
-/** Remove dirty runs' original ink from the page; see `planInkRemoval`. */
-export const removeOriginalInk = (
-  doc: PDFDocument,
-  page: PDFPage,
-  editorPage: EditorPage,
-  runs: readonly PdfTextObject[]
-): InkRemovalResult => editPageContent(doc, page, editorPage, runs, []);

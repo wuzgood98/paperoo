@@ -117,6 +117,7 @@ import { resolvePdfFont } from "@/lib/pdf/extract-text";
 import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
 import type { InterWeight } from "@/lib/pdf/figma-fallback";
 import { rebuiltGlyphLayout } from "@/lib/pdf/glyph-face";
+import type { ImageCodec } from "@/lib/pdf/image-redaction";
 import { saveSwept } from "@/lib/pdf/output-gc";
 import { outputPagesOf } from "@/lib/pdf/output-pages";
 import type { RedactionBox } from "@/lib/pdf/output-pages";
@@ -162,6 +163,8 @@ export interface ExportInput {
   redactions?: "apply" | "forbid" | "skip";
   /** Strip metadata, thumbnails and the Info dictionary (anything redacted). */
   scrub?: boolean;
+  /** JPEG decoding for images under a box; without it those pages flatten. */
+  imageCodec?: ImageCodec;
 }
 
 const hexToRgb = (hex: string) => {
@@ -1468,15 +1471,23 @@ interface DirtyTextOutcome {
   redactedPrecisely: boolean;
 }
 
-const removeOrCoverDirtyText = (
+const removeOrCoverDirtyText = async (
   output: PDFDocument,
   page: PDFPage,
   editorPage: EditorPage,
   dirtyText: readonly PdfTextObject[],
-  boxes: readonly RedactionBox[]
-): DirtyTextOutcome => {
+  boxes: readonly RedactionBox[],
+  codec: ImageCodec | undefined
+): Promise<DirtyTextOutcome> => {
   const coverOnly: string[] = [];
-  const removal = editPageContent(output, page, editorPage, dirtyText, boxes);
+  const removal = await editPageContent(
+    output,
+    page,
+    editorPage,
+    dirtyText,
+    boxes,
+    codec
+  );
   // Unedited lines of a label whose path stopped painting come back as they were.
   const vectors = new Map(
     editorPage.pdfVectorObjects.map((vector) => [vector.id, vector])
@@ -1595,12 +1606,13 @@ const writePageText = async (
   }
   const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
   // Removal first, on the page's own content; covers only where ink stays.
-  const { coverOnly, redactedPrecisely } = removeOrCoverDirtyText(
+  const { coverOnly, redactedPrecisely } = await removeOrCoverDirtyText(
     output,
     page,
     editorPage,
     dirtyText,
-    redaction && tryPrecise ? redaction.boxes : []
+    redaction && tryPrecise ? redaction.boxes : [],
+    input.imageCodec
   );
   // After Removal, which reads the page's own content and gives up on a
   // page with appended streams.

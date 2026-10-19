@@ -386,13 +386,20 @@ test("what precise redaction cannot handle is flattened", async () => {
   expect(type3.flattened).toBe(1);
   await pdfSession.close();
 
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64"
-  );
-  const imaged = await pdfWith(async (page, doc) => {
-    const image = await doc.embedPng(png);
-    page.drawImage(image, { height: 100, width: 100, x: 100, y: 600 });
+  // A 4-bit image: not rewritten pixel by pixel.
+  const imaged = await pdfWith((page, doc) => {
+    const image = doc.context.register(
+      doc.context.flateStream(new Uint8Array(8 * 16).fill(0x5a), {
+        BitsPerComponent: 4,
+        ColorSpace: "DeviceGray",
+        Height: 16,
+        Subtype: "Image",
+        Type: "XObject",
+        Width: 16,
+      })
+    );
+    const key = page.node.newXObject("Im", image);
+    rawContent(page, doc, `q 100 0 0 100 100 600 cm ${key.toString()} Do Q`);
   });
   const imagePage = await firstPage(imaged);
   const image = await redactingExport(imaged, {

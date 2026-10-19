@@ -35,6 +35,25 @@ const canvasJpeg = async (canvas: HTMLCanvasElement): Promise<Uint8Array> => {
   return new Uint8Array(buffer);
 };
 
+/** RGBA pixels of a bitmap pdf.js decoded, read back through a canvas. */
+export const readBitmap = (
+  bitmap: ImageBitmap,
+  width: number,
+  height: number
+): Uint8ClampedArray | null => {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context?.drawImage(bitmap, 0, 0, width, height);
+    return context?.getImageData(0, 0, width, height).data ?? null;
+  } catch {
+    // An unreadable image fails the check; the page is flattened.
+    return null;
+  }
+};
+
 /** Flatten with the page's own pdf.js, canvas and JPEG encoder. */
 export const browserFlattenDeps = (): FlattenDeps<HTMLCanvasElement> => ({
   createCanvas: (width, height) => {
@@ -50,7 +69,12 @@ export const browserFlattenDeps = (): FlattenDeps<HTMLCanvasElement> => ({
   encodeJpeg: canvasJpeg,
   open: async (bytes) => {
     ensurePdfjsWorker();
-    const task = getDocument({ ...PDFJS_DOCUMENT_PARAMS, data: bytes });
+    const task = getDocument({
+      ...PDFJS_DOCUMENT_PARAMS,
+      data: bytes,
+      // Keep decoded images as samples, so the safety net can read them.
+      isOffscreenCanvasSupported: false,
+    });
     const doc = await task.promise;
     return {
       destroy: () => task.destroy(),
