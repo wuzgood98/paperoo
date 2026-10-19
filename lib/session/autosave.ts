@@ -41,6 +41,8 @@ export interface AutosaveDeps {
   releaseSlot: () => void;
   /** The open PDF's bytes; a new reference means a new document. */
   sourceBytes: () => Uint8Array | null;
+  /** Bytes of another source document (an inserted PDF), if open. */
+  sourceBytesOf: (docId: string) => Uint8Array | null;
   storage: SessionStorage;
   subscribe: (listener: () => void) => () => void;
 }
@@ -62,6 +64,22 @@ export const referencedAssetIds = (document: EditorDocument): Set<string> => {
   }
   return ids;
 };
+
+/** Inserted PDFs the pages come from: saved as files, unlike blank pages. */
+const fileSourceIds = (document: EditorDocument): Set<string> => {
+  const ids = new Set<string>();
+  for (const page of document.pages) {
+    const docId = pageDocId(page);
+    if (docId !== PRIMARY_DOC_ID && !blankDocSize(docId)) {
+      ids.add(docId);
+    }
+  }
+  return ids;
+};
+
+const pdfBlob = (bytes: Uint8Array): Blob =>
+  // A plain ArrayBuffer copy; the session's bytes may be any buffer.
+  new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
 
 /** The blank page sources the document uses; restore rebuilds them by id. */
 const blankSources = (document: EditorDocument): PersistedSource[] => {
@@ -102,6 +120,8 @@ export const createAutosave = (deps: AutosaveDeps) => {
   /** Saved page references by id, to write only changed pages. */
   let savedPages = new Map<string, EditorPage>();
   let savedAssets = new Set<string>();
+  /** Inserted PDFs already saved, by docId. */
+  let savedSources = new Set<string>();
   let savedDocument: EditorDocument | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -130,6 +150,7 @@ export const createAutosave = (deps: AutosaveDeps) => {
   const forgetSaved = (): void => {
     savedPages = new Map();
     savedAssets = new Set();
+    savedSources = new Set();
     savedDocument = null;
   };
 
@@ -156,11 +177,11 @@ export const createAutosave = (deps: AutosaveDeps) => {
     deps.onDisabled(reason);
   };
 
-  const hasRoomFor = async (bytes: Uint8Array): Promise<boolean> => {
+  const hasRoomFor = async (byteLength: number): Promise<boolean> => {
     const free = await deps.freeStorage();
     return (
       free === null ||
-      free >= bytes.byteLength * QUOTA_SOURCE_FACTOR + QUOTA_HEADROOM_BYTES
+      free >= byteLength * QUOTA_SOURCE_FACTOR + QUOTA_HEADROOM_BYTES
     );
   };
 
@@ -196,9 +217,30 @@ export const createAutosave = (deps: AutosaveDeps) => {
       ? []
       : [...savedAssets].filter((id) => !assetIds.has(id));
 
+    const fileIds = fileSourceIds(document);
+    const putSources: SessionWrite["putSources"] = [];
+    const fileSources: PersistedSource[] = [];
+    for (const docId of fileIds) {
+      const source = deps.sourceBytesOf(docId);
+      if (!source) {
+        continue;
+      }
+      fileSources.push({ byteLength: source.byteLength, docId, kind: "file" });
+      if (reset || !savedSources.has(docId)) {
+        putSources.push({ bytes: pdfBlob(source), docId });
+      }
+    }
+    if (reset) {
+      putSources.unshift({ bytes: pdfBlob(bytes), docId: PRIMARY_DOC_ID });
+    }
+    const deleteSourceIds = reset
+      ? []
+      : [...savedSources].filter((docId) => !fileIds.has(docId));
+
     const write: SessionWrite = {
       deleteAssetIds,
       deletePageIds,
+      deleteSourceIds,
       meta: {
         assetIds: [...assetIds],
         currentPageId: state.currentPageId,
@@ -215,21 +257,16 @@ export const createAutosave = (deps: AutosaveDeps) => {
             docId: PRIMARY_DOC_ID,
             kind: "file",
           },
+          ...fileSources,
           ...blankSources(document),
         ],
       },
       putAssets,
       putPages,
+      putSources,
       reset,
     };
-    if (reset) {
-      write.source = {
-        // A plain ArrayBuffer copy; the session's bytes may be any buffer.
-        bytes: new Blob([new Uint8Array(bytes)], { type: "application/pdf" }),
-        docId: PRIMARY_DOC_ID,
-      };
-    }
-    return { assetIds, write };
+    return { assetIds, fileIds, write };
   };
 
   const save = async (): Promise<void> => {
@@ -243,18 +280,22 @@ export const createAutosave = (deps: AutosaveDeps) => {
       return;
     }
     const reset = !owner;
-    if (reset) {
-      if (!(await deps.claimSlot())) {
-        disable("other-tab");
-        return;
-      }
-      if (!(await hasRoomFor(bytes))) {
-        deps.releaseSlot();
-        disable("quota");
-        return;
-      }
+    if (reset && !(await deps.claimSlot())) {
+      disable("other-tab");
+      return;
     }
-    const { assetIds, write } = buildWrite(state, bytes, reset);
+    const { assetIds, fileIds, write } = buildWrite(state, bytes, reset);
+    const newBytes = write.putSources.reduce(
+      (total, source) => total + source.bytes.size,
+      0
+    );
+    if (newBytes > 0 && !(await hasRoomFor(newBytes))) {
+      if (reset) {
+        deps.releaseSlot();
+      }
+      disable("quota");
+      return;
+    }
     try {
       await deps.storage.write(write);
     } catch {
@@ -268,6 +309,7 @@ export const createAutosave = (deps: AutosaveDeps) => {
     savedDocument = state.document;
     savedPages = new Map(state.document.pages.map((page) => [page.id, page]));
     savedAssets = assetIds;
+    savedSources = fileIds;
   };
 
   const flush = (): Promise<void> => enqueue(save);

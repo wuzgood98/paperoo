@@ -48,6 +48,7 @@ export const startAutosave = (): void => {
     onDisabled,
     releaseSlot,
     sourceBytes: () => pdfSession.bytesOf(PRIMARY_DOC_ID),
+    sourceBytesOf: (docId) => pdfSession.bytesOf(docId),
     storage: indexedDbSessionStorage,
     subscribe: editorStore.subscribe,
   });

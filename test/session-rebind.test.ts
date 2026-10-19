@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { afterEach, expect, test } from "vitest";
 
 import { rebindRuntimeIds } from "@/lib/editor/session-rebind";
+import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { EditorPage } from "@/lib/editor/types";
 import { pdfSession } from "@/lib/pdf/session";
 
@@ -49,6 +50,11 @@ const openPages = async (bytes: Uint8Array): Promise<EditorPage[]> => {
   return pages;
 };
 
+/** Fresh pages of the opened file, as restore passes them. */
+const primary = (
+  pages: readonly EditorPage[]
+): Map<string, readonly EditorPage[]> => new Map([[PRIMARY_DOC_ID, pages]]);
+
 const fontNames = (pages: readonly EditorPage[]): string[] =>
   pages.flatMap((page) => page.pdfTextObjects.map((run) => run.fontName));
 
@@ -81,7 +87,7 @@ test("saved runs and images point at the fresh open's runtime ids", async () => 
     },
   ];
 
-  const rebound = rebindRuntimeIds(edited, fresh);
+  const rebound = rebindRuntimeIds(edited, primary(fresh));
   expect(rebound).not.toBeNull();
   expect(fontNames(rebound ?? [])).toEqual(fontNames(fresh));
   expect(rebound?.[0]?.pdfTextObjects[0]?.text).toBe("Changed");
@@ -95,12 +101,42 @@ test("saved runs and images point at the fresh open's runtime ids", async () => 
 test("saved pages from a different PDF are rejected", async () => {
   const saved = await openPages(await buildPdf("Hello"));
   const fresh = await openPages(await buildPdf("Other"));
-  expect(rebindRuntimeIds(saved, fresh)).toBeNull();
+  expect(rebindRuntimeIds(saved, primary(fresh))).toBeNull();
 });
 
 test("a saved page missing from the fresh open is rejected", async () => {
   const bytes = await buildPdf("Hello");
   const saved = await openPages(bytes);
   const fresh = await openPages(bytes);
-  expect(rebindRuntimeIds(saved, fresh.slice(0, 1))).toBeNull();
+  expect(rebindRuntimeIds(saved, primary(fresh.slice(0, 1)))).toBeNull();
+});
+
+test("each source document's ids are rebound against its own fresh pages", async () => {
+  const opened = await buildPdf("Hello");
+  const inserted = await buildPdf("Other");
+  // pdf.js names images per page (img_p0_1), so both sources share ids.
+  const savedOpened = await openPages(opened);
+  const savedInserted = await openPages(inserted);
+  const saved = [
+    ...savedOpened,
+    ...savedInserted.map((page) => ({ ...page, docId: "file:b" })),
+  ];
+  const freshOpened = await openPages(opened);
+  const freshInserted = await openPages(inserted);
+  const fresh = new Map<string, readonly EditorPage[]>([
+    [PRIMARY_DOC_ID, freshOpened],
+    ["file:b", freshInserted],
+  ]);
+
+  const rebound = rebindRuntimeIds(saved, fresh);
+  expect(rebound).not.toBeNull();
+  expect(fontNames(rebound?.slice(2) ?? [])).toEqual(fontNames(freshInserted));
+  expect(fontNames(rebound?.slice(0, 2) ?? [])).toEqual(fontNames(freshOpened));
+  // Pages of a source missing from `fresh` (a blank page) pass through.
+  const [template] = freshOpened;
+  if (!template) {
+    throw new Error("expected a page");
+  }
+  const blank: EditorPage = { ...template, docId: "blank:300x300" };
+  expect(rebindRuntimeIds([blank], fresh)?.[0]?.docId).toBe("blank:300x300");
 });

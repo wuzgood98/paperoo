@@ -475,6 +475,8 @@ export interface PdfFormWidget {
 }
 
 interface PdfFormFieldBase {
+  /** Source document the field belongs to; unset is the opened file. */
+  docId?: string;
   id: string;
   name: string;
   readOnly: boolean;
@@ -732,4 +734,6 @@ export const MIN_OBJECT_SIZE = 8;
 export const MIN_CREATE_DRAG = 2;
 export const MAX_PDF_BYTES = 80 * 1024 * 1024;
 export const MAX_PDF_PAGES = 200;
+/** All source documents together, since each is held several times over. */
+export const MAX_TOTAL_SOURCE_BYTES = 160 * 1024 * 1024;
 export const ZOOM_SETTLE_MS = 140;

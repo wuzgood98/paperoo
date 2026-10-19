@@ -780,6 +780,23 @@ class PdfSession {
     this.#removeIdle(cacheKey);
   }
 
+  /** Close one source document that the pages no longer use. */
+  closeDocument(docId: string): Promise<void> {
+    if (docId === PRIMARY_DOC_ID) {
+      return this.close();
+    }
+    return this.#closeSource(docId);
+  }
+
+  /** Bytes of every open source document, for size limits. */
+  totalBytes(): number {
+    let total = 0;
+    for (const entry of this.#sources.values()) {
+      total += entry.bytes.byteLength;
+    }
+    return total;
+  }
+
   /** Test/helper: retained page indexes of one source document. */
   cachedPageIndexes(docId: string = PRIMARY_DOC_ID): number[] {
     const prefix = `${docId}#`;

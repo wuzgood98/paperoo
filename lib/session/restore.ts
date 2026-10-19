@@ -71,18 +71,35 @@ const restore = async (): Promise<boolean> => {
     }
     ordered.push(page);
   }
-  const pages = rebindRuntimeIds(ordered, opened.pages);
+  // Reopen every other source the pages use: inserted PDFs from their saved
+  // bytes, blank pages from their id.
+  const fresh = new Map<string, readonly EditorPage[]>([
+    [PRIMARY_DOC_ID, opened.pages],
+  ]);
+  const otherSources = [
+    ...new Set(ordered.map((page) => pageDocId(page))),
+  ].filter((docId) => docId !== PRIMARY_DOC_ID);
+  await Promise.all(
+    otherSources.map(async (docId) => {
+      if (blankDocSize(docId)) {
+        await ensureBlankSource(docId);
+        return;
+      }
+      const blob = snapshot.sources.get(docId);
+      if (!blob) {
+        throw new Error("A saved page comes from a PDF that wasn't saved.");
+      }
+      const added = await pdfSession.addDocument(
+        new Uint8Array(await blob.arrayBuffer()),
+        docId
+      );
+      fresh.set(docId, added.pages);
+    })
+  );
+  const pages = rebindRuntimeIds(ordered, fresh);
   if (!pages) {
     throw new Error("The saved pages don't match the PDF.");
   }
-  // Blank pages come from generated sources; reopen each size they use.
-  const otherSources = [
-    ...new Set(pages.map((page) => pageDocId(page))),
-  ].filter((docId) => docId !== PRIMARY_DOC_ID);
-  if (otherSources.some((docId) => !blankDocSize(docId))) {
-    throw new Error("A saved page comes from a PDF that wasn't saved.");
-  }
-  await Promise.all(otherSources.map((docId) => ensureBlankSource(docId)));
   editorStore.revokeAssets();
   for (const asset of snapshot.assets) {
     editorStore.restoreAsset(asset.id, asset.bytes, asset.mimeType);

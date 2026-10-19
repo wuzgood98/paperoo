@@ -124,8 +124,11 @@ export const indexedDbSessionStorage: SessionStorage = {
         store(name).clear();
       }
     }
-    if (change.source) {
-      store("sources").put(change.source.bytes, change.source.docId);
+    for (const source of change.putSources) {
+      store("sources").put(source.bytes, source.docId);
+    }
+    for (const docId of change.deleteSourceIds) {
+      store("sources").delete(docId);
     }
     for (const page of change.putPages) {
       store("pages").put(page, page.id);
