@@ -1,21 +1,47 @@
 import type { EditorDocument } from "@/lib/editor/types";
 import type { OcrTextObject } from "@/lib/ocr/types";
+import { flattenRedactedPages } from "@/lib/pdf/export-flatten";
 import { exportDocumentWithReport } from "@/lib/pdf/export-pdf";
 import type { ExportAsset, ExportInput } from "@/lib/pdf/export-pdf";
+import type { PositionedText, RedactionBox } from "@/lib/pdf/output-pages";
 
-interface WorkerRequest {
+export interface ExportWorkerRequest {
   assets: Record<string, { buffer: ArrayBuffer; mimeType: string }>;
   bytes: ArrayBuffer;
   document: EditorDocument;
   fontBytes: Record<string, ArrayBuffer>;
+  kind: "export";
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
   pageIds?: readonly string[];
+  redactions: "forbid" | "skip";
+  scrub: boolean;
   sources?: Record<string, ArrayBuffer>;
 }
 
-type WorkerResponse =
+export interface FlattenWorkerRequest {
+  bytes: ArrayBuffer;
+  fontBytes?: ArrayBuffer;
+  kind: "flatten";
+  pages: {
+    boxes: RedactionBox[];
+    jpeg: ArrayBuffer;
+    outputIndex: number;
+    text: PositionedText[];
+  }[];
+}
+
+export type WorkerRequest = ExportWorkerRequest | FlattenWorkerRequest;
+
+export type WorkerResponse =
   | { error: string; ok: false }
-  | { bytes: ArrayBuffer; coverOnlyRunIds: string[]; ok: true };
+  | { bytes: ArrayBuffer; coverOnlyRunIds: string[]; kind: "export"; ok: true }
+  | {
+      bytes: ArrayBuffer;
+      flattenedPageCount: number;
+      kind: "flatten";
+      ok: true;
+      removedFieldNames: string[];
+    };
 
 const toUint8 = (buffer: ArrayBuffer): Uint8Array => new Uint8Array(buffer);
 
@@ -32,43 +58,73 @@ const ownedBuffer = (bytes: Uint8Array): ArrayBuffer => {
   return new Uint8Array(bytes).buffer;
 };
 
+const runExportRequest = async (
+  request: ExportWorkerRequest
+): Promise<WorkerResponse> => {
+  const assets: Record<string, ExportAsset> = {};
+  for (const [id, asset] of Object.entries(request.assets)) {
+    assets[id] = {
+      bytes: toUint8(asset.buffer),
+      mimeType: asset.mimeType,
+    };
+  }
+
+  const fontBytes: Record<string, Uint8Array> = {};
+  for (const [key, buffer] of Object.entries(request.fontBytes)) {
+    fontBytes[key] = toUint8(buffer);
+  }
+
+  const input: ExportInput = {
+    assets,
+    bytes: toUint8(request.bytes),
+    document: request.document,
+    fontBytes,
+    ocrWordsByPage: request.ocrWordsByPage,
+    pageIds: request.pageIds,
+    redactions: request.redactions,
+    scrub: request.scrub,
+    sources: Object.fromEntries(
+      Object.entries(request.sources ?? {}).map(([docId, buffer]) => [
+        docId,
+        toUint8(buffer),
+      ])
+    ),
+  };
+  const { bytes, coverOnlyRunIds } = await exportDocumentWithReport(input);
+  return {
+    bytes: ownedBuffer(bytes),
+    coverOnlyRunIds,
+    kind: "export",
+    ok: true,
+  };
+};
+
+const runFlattenRequest = async (
+  request: FlattenWorkerRequest
+): Promise<WorkerResponse> => {
+  const report = await flattenRedactedPages({
+    bytes: toUint8(request.bytes),
+    fontBytes: request.fontBytes ? toUint8(request.fontBytes) : undefined,
+    pages: request.pages.map((page) => ({ ...page, jpeg: toUint8(page.jpeg) })),
+  });
+  return {
+    bytes: ownedBuffer(report.bytes),
+    flattenedPageCount: report.flattenedPageCount,
+    kind: "flatten",
+    ok: true,
+    removedFieldNames: report.removedFieldNames,
+  };
+};
+
 self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
   try {
-    const assets: Record<string, ExportAsset> = {};
-    for (const [id, asset] of Object.entries(event.data.assets)) {
-      assets[id] = {
-        bytes: toUint8(asset.buffer),
-        mimeType: asset.mimeType,
-      };
-    }
-
-    const fontBytes: Record<string, Uint8Array> = {};
-    for (const [key, buffer] of Object.entries(event.data.fontBytes)) {
-      fontBytes[key] = toUint8(buffer);
-    }
-
-    const input: ExportInput = {
-      assets,
-      bytes: toUint8(event.data.bytes),
-      document: event.data.document,
-      fontBytes,
-      ocrWordsByPage: event.data.ocrWordsByPage,
-      pageIds: event.data.pageIds,
-      sources: Object.fromEntries(
-        Object.entries(event.data.sources ?? {}).map(([docId, buffer]) => [
-          docId,
-          toUint8(buffer),
-        ])
-      ),
-    };
-    const { bytes: result, coverOnlyRunIds } =
-      await exportDocumentWithReport(input);
-    const response: WorkerResponse = {
-      bytes: ownedBuffer(result),
-      coverOnlyRunIds,
-      ok: true,
-    };
-    self.postMessage(response, { transfer: [response.bytes] });
+    const response =
+      event.data.kind === "flatten"
+        ? await runFlattenRequest(event.data)
+        : await runExportRequest(event.data);
+    self.postMessage(response, {
+      transfer: response.ok ? [response.bytes] : [],
+    });
   } catch (error) {
     const response: WorkerResponse = {
       error: error instanceof Error ? error.message : "Export failed.",

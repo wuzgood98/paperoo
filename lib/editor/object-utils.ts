@@ -13,6 +13,7 @@ import {
   DEFAULT_HIGHLIGHT_COLOR,
   DEFAULT_OBJECT_OPACITY,
   DEFAULT_PDF_TEXT_COLOR,
+  DEFAULT_REDACTION_FILL,
   DEFAULT_SHAPE_STYLE,
   DEFAULT_TEXT_STYLE,
   EDITOR_OBJECT_SOURCE,
@@ -29,6 +30,7 @@ import type {
   HighlightObject,
   ImageMimeType,
   ImageObject,
+  RedactionObject,
   PdfAnnotationObject,
   PdfFormChoiceOption,
   PdfFormField,
@@ -2012,6 +2014,13 @@ export const mapPageObjects = (
     page.id === pageId ? { ...page, objects: mapper(page.objects) } : page
   );
 
+/** A redaction stays unrotated and opaque whatever edit reaches it. */
+export const pinObject = (object: EditorObject): EditorObject =>
+  object.type === "redaction" &&
+  (object.rotation !== 0 || object.opacity !== DEFAULT_OBJECT_OPACITY)
+    ? { ...object, opacity: DEFAULT_OBJECT_OPACITY, rotation: 0 }
+    : object;
+
 export const updateObject = (
   pages: readonly EditorPage[],
   pageId: string,
@@ -2019,7 +2028,9 @@ export const updateObject = (
   updater: (object: EditorObject) => EditorObject
 ): EditorPage[] =>
   mapPageObjects(pages, pageId, (objects) =>
-    objects.map((object) => (object.id === objectId ? updater(object) : object))
+    objects.map((object) =>
+      object.id === objectId ? pinObject(updater(object)) : object
+    )
   );
 
 export const removeObjects = (
@@ -2173,6 +2184,19 @@ export const createHighlightObject = (
   rotation: 0,
   source: EDITOR_OBJECT_SOURCE,
   type: "highlight",
+  ...rect,
+});
+
+export const createRedactionObject = (
+  rect: Rect,
+  fill = DEFAULT_REDACTION_FILL
+): RedactionObject => ({
+  fill,
+  id: createId(),
+  opacity: DEFAULT_OBJECT_OPACITY,
+  rotation: 0,
+  source: EDITOR_OBJECT_SOURCE,
+  type: "redaction",
   ...rect,
 });
 

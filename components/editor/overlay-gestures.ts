@@ -14,6 +14,7 @@ import {
   createDrawingObject,
   createHighlightObject,
   createImageObject,
+  createRedactionObject,
   createShapeObject,
   isClickDrag,
   isRisingDrag,
@@ -34,6 +35,7 @@ import type {
   PdfImageObject,
   PdfVectorObject,
   Point,
+  Rect,
   ShapeStyleDefaults,
 } from "@/lib/editor/types";
 import { readImageFile } from "@/lib/pdf/image-file";
@@ -115,6 +117,7 @@ export const useOverlayGestures = ({
   nodeRefs,
   pageWidth,
   placingSignature,
+  redactionFill,
   rootRef,
   setDraft,
   setPreviewPoint,
@@ -131,6 +134,7 @@ export const useOverlayGestures = ({
   nodeRefs: RefBox<Map<string, HTMLDivElement>>;
   pageWidth: number;
   placingSignature: boolean;
+  redactionFill: string;
   rootRef: RefBox<HTMLDivElement | null>;
   setDraft: Dispatch<SetStateAction<OverlayDraft | null>>;
   setPreviewPoint: Dispatch<SetStateAction<Point | null>>;
@@ -386,6 +390,19 @@ export const useOverlayGestures = ({
       return;
     }
     if (gesture.kind === "rect") {
+      const createRectObject = (rect: Rect): EditorObject => {
+        if (tool === "highlight") {
+          return createHighlightObject(rect, highlightColor);
+        }
+        if (tool === "redact") {
+          return createRedactionObject(rect, redactionFill);
+        }
+        return createShapeObject(
+          rect,
+          shapeStyle,
+          isRisingDrag(gesture.start, point)
+        );
+      };
       gestureRef.current = null;
       boundsRef.current = null;
       const isLine = tool === "shape" && shapeStyle.shape === "line";
@@ -395,16 +412,7 @@ export const useOverlayGestures = ({
       const rect = isLine
         ? lineRect(gesture.start, point)
         : normalizedRect(gesture.start, point);
-      editorStore.addObject(
-        tool === "highlight"
-          ? createHighlightObject(rect, highlightColor)
-          : createShapeObject(
-              rect,
-              shapeStyle,
-              isRisingDrag(gesture.start, point)
-            ),
-        { keepTool: true }
-      );
+      editorStore.addObject(createRectObject(rect), { keepTool: true });
     }
   };
 

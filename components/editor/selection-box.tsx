@@ -39,16 +39,19 @@ export const SelectionBox = ({
     handle: ResizeHandle,
     event: React.PointerEvent
   ) => void;
-  onRotatePointerDown: (event: React.PointerEvent) => void;
+  /** Unset for objects that never rotate (redactions). */
+  onRotatePointerDown?: (event: React.PointerEvent) => void;
 }) => (
   <div className="pointer-events-none absolute inset-0">
     <div className="border-primary absolute inset-0 border" />
-    <button
-      aria-label="Rotate"
-      className="border-primary bg-background pointer-events-auto absolute -top-5 left-1/2 size-3 -translate-x-1/2 rounded-full border"
-      onPointerDown={onRotatePointerDown}
-      type="button"
-    />
+    {onRotatePointerDown ? (
+      <button
+        aria-label="Rotate"
+        className="border-primary bg-background pointer-events-auto absolute -top-5 left-1/2 size-3 -translate-x-1/2 rounded-full border"
+        onPointerDown={onRotatePointerDown}
+        type="button"
+      />
+    ) : null}
     {activeHandles(box).map((handle) => {
       const offset = HANDLE_LOCAL_OFFSET[handle];
       return (

@@ -45,10 +45,7 @@ import {
   getDocument,
   OPS,
   PasswordException,
-  PDFJS_CMAP_URL,
-  PDFJS_ICC_URL,
-  PDFJS_STANDARD_FONT_URL,
-  PDFJS_WASM_URL,
+  PDFJS_DOCUMENT_PARAMS,
 } from "@/lib/pdf/pdfjs";
 import type {
   PDFDocumentLoadingTask,
@@ -433,17 +430,7 @@ class PdfSession {
     ensurePdfjsWorker();
     // pdf.js takes ownership of `bytes`; the session keeps its own copy.
     const kept = clonePdfBytes(bytes);
-    const loadingTask = getDocument({
-      cMapPacked: true,
-      cMapUrl: PDFJS_CMAP_URL,
-      data: bytes,
-      iccUrl: PDFJS_ICC_URL,
-      standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
-      // System fonts leave standard-14 faces `missingFile`, and pdf.js only
-      // builds glyph paths for clip render modes (4–7) from real font data.
-      useSystemFonts: false,
-      wasmUrl: PDFJS_WASM_URL,
-    });
+    const loadingTask = getDocument({ ...PDFJS_DOCUMENT_PARAMS, data: bytes });
     const entry: SourceEntry = { bytes: kept, doc: null, loadingTask };
     this.#sources.set(docId, entry);
     this.#generation += 1;

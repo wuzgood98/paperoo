@@ -79,6 +79,52 @@ const StrokeStyleFields = ({ selected }: { selected: EditorObject }) => {
   );
 };
 
+/** Redactions are always opaque, so they get no opacity slider. */
+const OpacityField = ({ selected }: { selected: EditorObject }) => {
+  if (selected.type === "redaction") {
+    return null;
+  }
+  return (
+    <div className="text-muted-foreground flex items-center gap-2 text-xs">
+      Opacity
+      <Slider
+        aria-label="Opacity"
+        className="w-28"
+        max={1}
+        min={0.1}
+        onValueChange={(value) => {
+          const next = Array.isArray(value) ? value[0] : value;
+          if (next === undefined) {
+            return;
+          }
+          editorStore.schedulePreviewEdit(() =>
+            editorStore.patchSelected((object) => ({
+              ...object,
+              opacity: next,
+            }))
+          );
+        }}
+        onValueCommitted={() => editorStore.commitPreview()}
+        step={0.05}
+        value={[selected.opacity]}
+      />
+    </div>
+  );
+};
+
+const RedactionFillField = ({ selected }: { selected: EditorObject }) =>
+  selected.type === "redaction" ? (
+    <ColorField
+      label="Fill"
+      onChange={(fill) =>
+        patchStyle((object) =>
+          object.type === "redaction" ? { ...object, fill } : object
+        )
+      }
+      value={selected.fill}
+    />
+  ) : null;
+
 export const InspectorBar = () => {
   const selected = useEditorStore((state) => {
     const page = state.document.pages.find(
@@ -286,30 +332,8 @@ export const InspectorBar = () => {
         />
       ) : null}
       <StrokeStyleFields selected={selected} />
-      <div className="text-muted-foreground flex items-center gap-2 text-xs">
-        Opacity
-        <Slider
-          aria-label="Opacity"
-          className="w-28"
-          max={1}
-          min={0.1}
-          onValueChange={(value) => {
-            const next = Array.isArray(value) ? value[0] : value;
-            if (next === undefined) {
-              return;
-            }
-            editorStore.schedulePreviewEdit(() =>
-              editorStore.patchSelected((object) => ({
-                ...object,
-                opacity: next,
-              }))
-            );
-          }}
-          onValueCommitted={() => editorStore.commitPreview()}
-          step={0.05}
-          value={[selected.opacity]}
-        />
-      </div>
+      <RedactionFillField selected={selected} />
+      <OpacityField selected={selected} />
     </div>
   );
 };

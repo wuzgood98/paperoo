@@ -9,6 +9,7 @@ export const TOOL_KEYS: readonly { key: string; tool: EditorTool }[] = [
   { key: "s", tool: "signature" },
   { key: "h", tool: "highlight" },
   { key: "r", tool: "shape" },
+  { key: "x", tool: "redact" },
 ];
 
 export const toolTooltip = (label: string, tool: EditorTool): string => {

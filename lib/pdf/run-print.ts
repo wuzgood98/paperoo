@@ -1,8 +1,10 @@
 import { printPdfBlob } from "@/lib/pdf/print-blob";
-import { buildEditedPdfBytes } from "@/lib/pdf/run-export";
+import { buildEditedPdfBytes, reportFlattened } from "@/lib/pdf/run-export";
 
 export const runPrint = async (): Promise<void> => {
-  const { bytes: result } = await buildEditedPdfBytes();
+  const edited = await buildEditedPdfBytes();
+  const { bytes: result } = edited;
   const blob = new Blob([result], { type: "application/pdf" });
   await printPdfBlob(blob);
+  reportFlattened(edited);
 };

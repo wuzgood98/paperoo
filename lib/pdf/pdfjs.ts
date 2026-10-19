@@ -36,6 +36,18 @@ export const PDFJS_STANDARD_FONT_URL = "/pdfjs/standard_fonts/";
 export const PDFJS_WASM_URL = "/pdfjs/wasm/";
 export const PDFJS_ICC_URL = "/pdfjs/iccs/";
 
+/** How the app opens every pdf.js document; `data` is added per call. */
+export const PDFJS_DOCUMENT_PARAMS = {
+  cMapPacked: true,
+  cMapUrl: PDFJS_CMAP_URL,
+  iccUrl: PDFJS_ICC_URL,
+  standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
+  // System fonts leave standard-14 faces `missingFile`, and pdf.js only
+  // builds glyph paths for clip render modes (4–7) from real font data.
+  useSystemFonts: false,
+  wasmUrl: PDFJS_WASM_URL,
+} as const;
+
 export const MAX_CANVAS_PIXELS = 2 ** 25;
 export const MAX_CANVAS_DIM = 32_767;
 export const CANVAS_AREA_FACTOR = 200;

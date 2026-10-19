@@ -6,6 +6,7 @@ import { requestDeleteSelection } from "@/components/editor/large-delete";
 import { toastManager } from "@/components/ui/toast-manager";
 import { duplicateSelection } from "@/lib/editor/clipboard";
 import { pendingSignature } from "@/lib/editor/pending";
+import { confirmRedactions } from "@/lib/editor/redaction-gate";
 import { editorStore } from "@/lib/editor/store";
 import { TOOL_KEYS } from "@/lib/editor/tool-keys";
 import {
@@ -24,6 +25,9 @@ const printEditedPdf = async (): Promise<void> => {
   }
 
   try {
+    if (!(await confirmRedactions())) {
+      return;
+    }
     const { runPrint } = await import("@/lib/pdf/run-print");
     await runPrint();
   } catch (error) {

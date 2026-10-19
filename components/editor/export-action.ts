@@ -1,4 +1,5 @@
 import { toastManager } from "@/components/ui/toast-manager";
+import { confirmRedactions } from "@/lib/editor/redaction-gate";
 import type { ExportOptions } from "@/lib/pdf/run-export";
 
 /**
@@ -8,6 +9,9 @@ import type { ExportOptions } from "@/lib/pdf/run-export";
 export const exportPdfWithToast = async (
   options: ExportOptions = {}
 ): Promise<boolean> => {
+  if (!(await confirmRedactions())) {
+    return false;
+  }
   try {
     // The export runner pulls in pdf.js and the export worker; load it on use.
     const { runExport } = await import("@/lib/pdf/run-export");

@@ -156,6 +156,20 @@ export const ObjectView = ({
         />
       );
     }
+    case "redaction": {
+      return (
+        <div
+          className="border-destructive h-full w-full border border-dashed"
+          style={{
+            backgroundColor: object.fill,
+            backgroundImage:
+              "repeating-linear-gradient(45deg, rgb(255 255 255 / 0.12) 0 2px, transparent 2px 8px)",
+          }}
+        >
+          <span className="sr-only">Redaction</span>
+        </div>
+      );
+    }
     case "shape": {
       return (
         <ShapeSvg

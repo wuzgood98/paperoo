@@ -9,7 +9,8 @@ export type EditorTool =
   | "draw"
   | "signature"
   | "highlight"
-  | "shape";
+  | "shape"
+  | "redact";
 
 export type ShapeKind = "rect" | "line" | "circle";
 
@@ -83,6 +84,16 @@ export type HighlightObject = BaseObject & {
   color: string;
 };
 
+/**
+ * A box whose content export removes for good: everything under it is
+ * taken out of the file and the box is painted in `fill`. Never rotated,
+ * always opaque.
+ */
+export type RedactionObject = BaseObject & {
+  type: "redaction";
+  fill: string;
+};
+
 export type ShapeObject = BaseObject & {
   type: "shape";
   shape: ShapeKind;
@@ -101,7 +112,8 @@ export type EditorObject =
   | DrawingObject
   | SignatureObject
   | HighlightObject
-  | ShapeObject;
+  | ShapeObject
+  | RedactionObject;
 
 export type EditorObjectType = EditorObject["type"];
 
@@ -714,6 +726,8 @@ export const DEFAULT_SHAPE_STYLE: ShapeStyleDefaults = {
 };
 
 export const DEFAULT_HIGHLIGHT_COLOR = "#facc15";
+
+export const DEFAULT_REDACTION_FILL = "#000000";
 
 /** Default fill for dirty PDF text preview/export until op-list colors are extracted. */
 export const DEFAULT_PDF_TEXT_COLOR = "#111827";

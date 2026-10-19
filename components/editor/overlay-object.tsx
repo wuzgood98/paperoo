@@ -139,23 +139,28 @@ const OverlayObjectView = ({
                 origin: object,
               };
             }}
-            onRotatePointerDown={(event) => {
-              event.stopPropagation();
-              boundsRef.current = snapshotBounds(
-                requireOverlayRoot(rootRef.current)
-              );
-              rootRef.current?.setPointerCapture(event.pointerId);
-              const center = objectCenter(object);
-              const point = toPage(event);
-              gestureRef.current = {
-                kind: "rotate",
-                object,
-                originRotation: object.rotation,
-                startAngle:
-                  (Math.atan2(point.y - center.y, point.x - center.x) * 180) /
-                  Math.PI,
-              };
-            }}
+            onRotatePointerDown={
+              object.type === "redaction"
+                ? undefined
+                : (event) => {
+                    event.stopPropagation();
+                    boundsRef.current = snapshotBounds(
+                      requireOverlayRoot(rootRef.current)
+                    );
+                    rootRef.current?.setPointerCapture(event.pointerId);
+                    const center = objectCenter(object);
+                    const point = toPage(event);
+                    gestureRef.current = {
+                      kind: "rotate",
+                      object,
+                      originRotation: object.rotation,
+                      startAngle:
+                        (Math.atan2(point.y - center.y, point.x - center.x) *
+                          180) /
+                        Math.PI,
+                    };
+                  }
+            }
           />
         ) : null}
       </div>

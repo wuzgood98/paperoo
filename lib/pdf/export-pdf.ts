@@ -118,10 +118,12 @@ import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
 import type { InterWeight } from "@/lib/pdf/figma-fallback";
 import { rebuiltGlyphLayout } from "@/lib/pdf/glyph-face";
 import { saveSwept } from "@/lib/pdf/output-gc";
+import { outputPagesOf } from "@/lib/pdf/output-pages";
 import { pushRebuiltType3Text } from "@/lib/pdf/rebuilt-type3-font";
 import { removeOriginalInk } from "@/lib/pdf/remove-original-ink";
 import { reusedFontHex, reuseEmbeddedPdfFont } from "@/lib/pdf/reuse-pdf-font";
 import type { ReusedPdfFontText } from "@/lib/pdf/reuse-pdf-font";
+import { scrubHiddenData } from "@/lib/pdf/scrub";
 
 export interface ExportAsset {
   bytes: Uint8Array;
@@ -142,6 +144,13 @@ export interface ExportInput {
   document: EditorDocument;
   fontBytes: Record<string, Uint8Array>;
   ocrWordsByPage?: Readonly<Record<string, readonly OcrTextObject[]>>;
+  /**
+   * Redaction boxes are never drawn as plain boxes: "forbid" (the default)
+   * refuses them; "skip" leaves them for the flatten pass to burn in.
+   */
+  redactions?: "forbid" | "skip";
+  /** Strip metadata, thumbnails and the Info dictionary (anything redacted). */
+  scrub?: boolean;
 }
 
 const hexToRgb = (hex: string) => {
@@ -1243,6 +1252,7 @@ const drawObject = async (
     fontBytes: Record<string, Uint8Array>;
     fonts: Map<string, PDFFont>;
     images: Map<string, PDFImage>;
+    redactions: "forbid" | "skip";
   }
 ): Promise<void> => {
   const rotate = editorPage.sourceRotate;
@@ -1288,6 +1298,13 @@ const drawObject = async (
     case "shape": {
       drawShape(page, object, user);
       return;
+    }
+    case "redaction": {
+      // A box painted over content leaves that content in the file.
+      if (context.redactions === "skip") {
+        return;
+      }
+      throw new Error("Redactions must be flattened, not drawn.");
     }
     default: {
       const _exhaustive: never = object;
@@ -1468,19 +1485,6 @@ const loadSourcePdf = async (bytes: Uint8Array): Promise<PDFDocument> => {
   }
 };
 
-/** The pages to write: all of them, or the extracted ones in order. */
-const outputPagesOf = (input: ExportInput): EditorPage[] => {
-  if (!input.pageIds) {
-    return input.document.pages;
-  }
-  const wanted = new Set(input.pageIds);
-  const pages = input.document.pages.filter((page) => wanted.has(page.id));
-  if (pages.length === 0) {
-    throw new Error("Choose at least one page to export.");
-  }
-  return pages;
-};
-
 /** Each source document the pages use, parsed once, opened file first. */
 const loadSources = async (
   input: ExportInput,
@@ -1516,6 +1520,16 @@ const loadSources = async (
     })
   );
   return new Map(entries);
+};
+
+const saveOutput = (
+  output: PDFDocument,
+  scrub: boolean | undefined
+): Promise<Uint8Array> => {
+  if (scrub) {
+    scrubHiddenData(output);
+  }
+  return saveSwept(output);
 };
 
 export const exportDocumentWithReport = async (
@@ -1658,6 +1672,7 @@ export const exportDocumentWithReport = async (
         fontBytes: input.fontBytes,
         fonts,
         images,
+        redactions: input.redactions ?? "forbid",
       });
     }
   }
@@ -1671,7 +1686,7 @@ export const exportDocumentWithReport = async (
     })
   );
 
-  return { bytes: await saveSwept(output), coverOnlyRunIds };
+  return { bytes: await saveOutput(output, input.scrub), coverOnlyRunIds };
 };
 
 export const exportDocument = async (

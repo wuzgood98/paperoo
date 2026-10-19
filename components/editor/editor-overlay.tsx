@@ -106,6 +106,7 @@ export const EditorOverlay = ({
   const showOcrRegions = useEditorStore((state) => state.showOcrRegions);
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
+  const redactionFill = useEditorStore((state) => state.redactionFill);
   const shapeStyle = useEditorStore((state) => state.shapeStyle);
   const pending = useSyncExternalStore(
     pendingSignature.subscribe,
@@ -151,6 +152,7 @@ export const EditorOverlay = ({
     tool === "draw" ||
     tool === "highlight" ||
     tool === "shape" ||
+    tool === "redact" ||
     placingSignature;
   const pendingScaled = useMemo(
     () =>
@@ -167,6 +169,7 @@ export const EditorOverlay = ({
       nodeRefs,
       pageWidth: page.width,
       placingSignature,
+      redactionFill,
       rootRef,
       setDraft,
       setPreviewPoint,
@@ -338,7 +341,7 @@ export const EditorOverlay = ({
           return;
         }
 
-        if (tool === "highlight" || tool === "shape") {
+        if (tool === "highlight" || tool === "shape" || tool === "redact") {
           event.currentTarget.setPointerCapture(event.pointerId);
           gestureRef.current = { kind: "rect", start: point };
           return;
@@ -521,6 +524,7 @@ export const EditorOverlay = ({
         pendingScaled={pendingScaled}
         placingSignature={placingSignature}
         previewPoint={previewPoint}
+        redactionFill={redactionFill}
         shapeStyle={shapeStyle}
         tool={tool}
         zoom={zoom}

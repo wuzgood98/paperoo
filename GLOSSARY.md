@@ -18,6 +18,12 @@ A browser PDF editor that lets users change text, images, and vectors already on
 
 **Outline-only text**: Text a PDF draws only as filled glyph outlines, with no text layer; Paperoo recognizes it with OCR and turns each line into a run whose original ink is its part of the outline. _Avoid_: Vector text, shape text
 
+**Redaction**: A box the user draws over content that must not survive export: everything under it is taken out of the file and the box is painted in its fill. _Avoid_: Black box, mask, cover (a cover hides; a redaction removes)
+
+**Flatten**: Rebuilding a page in the export from a picture of itself, with redaction boxes painted in and the text outside the boxes kept as invisible, searchable text. _Avoid_: Rasterize, burn in
+
+**Sweep**: Dropping every object nothing in the exported file reaches, so removed or replaced content is not written as an orphan. _Avoid_: Garbage collection, cleanup
+
 ## Documents and pages
 
 **Source document**: A PDF file whose pages appear in the document: the opened file, a file whose pages were inserted, or a generated blank page. Each page records its source document (`docId`) and its index there (`sourceIndex`). _Avoid_: Source id (that is a pdf.js image id), input file
