@@ -5,7 +5,7 @@ import { memo, useLayoutEffect, useRef, useState } from "react";
 import { EditorOverlay } from "@/components/editor/editor-overlay";
 import { OcrPageBanner } from "@/components/editor/ocr-page-banner";
 import { PdfCanvas } from "@/components/editor/pdf-canvas";
-import { normalizeRotation, pixelSnapOffset } from "@/lib/editor/coordinates";
+import { pixelSnapOffset, shownCanvasRotation } from "@/lib/editor/coordinates";
 import { pageFrameCssSize } from "@/lib/editor/page-frame-size";
 import { pageDocId } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
@@ -44,7 +44,7 @@ const EditorPageFrameView = ({
   const swapped = page.rotation % 180 !== 0;
   const canvasWidth = swapped ? pageHeight : pageWidth;
   const canvasHeight = swapped ? pageWidth : pageHeight;
-  const canvasRotation = normalizeRotation(page.sourceRotate + page.rotation);
+  const canvasRotation = shownCanvasRotation(page);
 
   useLayoutEffect(() => {
     const node = rootRef.current;

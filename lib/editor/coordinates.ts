@@ -46,6 +46,16 @@ export const displayedCanvasRotation = (page: {
   sourceRotate: number;
 }): PageRotation => normalizeRotation(page.sourceRotate);
 
+/**
+ * Rotation for a canvas that shows the page as the user sees it: the source
+ * /Rotate plus the user's page rotation, baked into the pixels. The main page
+ * canvas and the sidebar thumbnails both paint this way.
+ */
+export const shownCanvasRotation = (page: {
+  rotation: number;
+  sourceRotate: number;
+}): PageRotation => normalizeRotation(page.sourceRotate + page.rotation);
+
 export const rotatePoint = (
   point: Point,
   origin: Point,
