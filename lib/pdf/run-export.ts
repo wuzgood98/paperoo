@@ -190,18 +190,19 @@ export const buildEditedPdfBytes = async ({
       };
     }
 
-    const { browserFlattenDeps, browserVerifyOps } =
+    const { browserFlattenDeps, browserVerifyOps, readBitmap } =
       await import("@/lib/pdf/browser-flatten");
     const deps = browserFlattenDeps();
     const flatten = new Set(pass1.flattenPages);
     const precise = plan.filter((page) => !flatten.has(page.outputIndex));
     if (precise.length > 0) {
       // pdf.js takes the bytes it reads; pass 1 keeps its own copy.
+      // A check that cannot finish passes nothing: those pages flatten.
       const failed = await failedRedactions(
         new Uint8Array(pass1.bytes).slice(),
         precise,
-        { open: deps.open, ops: browserVerifyOps }
-      );
+        { open: deps.open, ops: browserVerifyOps, readBitmap }
+      ).catch(() => precise.map((page) => page.outputIndex));
       for (const index of failed) {
         flatten.add(index);
       }

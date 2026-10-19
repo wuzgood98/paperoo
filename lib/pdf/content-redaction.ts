@@ -1,4 +1,12 @@
-import { PDFDict, PDFName, PDFNumber, PDFArray, PDFStream } from "pdf-lib";
+import {
+  decodePDFRawStream,
+  PDFArray,
+  PDFDict,
+  PDFName,
+  PDFNumber,
+  PDFRawStream,
+} from "pdf-lib";
+import type { PDFContext, PDFDocument, PDFObject, PDFRef } from "pdf-lib";
 
 import {
   apply,
@@ -23,17 +31,29 @@ import type {
   Point2,
   Segment,
 } from "@/lib/pdf/content-geometry";
+import {
+  applyContentEdits,
+  fromLatin1,
+  latin1,
+  parseContentStream,
+} from "@/lib/pdf/content-stream";
 import type {
   ContentEdit,
   ContentOperation,
   ContentToken,
 } from "@/lib/pdf/content-stream";
-import type { UserRect } from "@/lib/pdf/output-pages";
+import { redactImage } from "@/lib/pdf/image-redaction";
+import type { ImageCodec } from "@/lib/pdf/image-redaction";
+import type { RedactionBox } from "@/lib/pdf/output-pages";
 import { redactionFontFor } from "@/lib/pdf/redaction-fonts";
 import type { RedactionFont, ShownGlyph } from "@/lib/pdf/redaction-fonts";
 
 export interface ContentRedactionInput {
-  boxes: readonly UserRect[];
+  boxes: readonly RedactionBox[];
+  /** Decodes and encodes JPEG images under a box; without it they flatten. */
+  codec?: ImageCodec;
+  /** The output document's context, where rewritten XObjects go. */
+  context: PDFContext;
   operations: readonly ContentOperation[];
   /** The page's `/Resources`, for fonts, XObjects and marked-content properties. */
   resources: PDFDict | undefined;
@@ -42,8 +62,30 @@ export interface ContentRedactionInput {
 }
 
 export type ContentRedactionPlan =
-  | { edits: ContentEdit[]; ok: true }
+  | {
+      edits: ContentEdit[];
+      ok: true;
+      /** XObjects the edited content draws by new names. */
+      xObjects: ReadonlyMap<string, PDFRef>;
+    }
   | { ok: false; reason: string };
+
+/** An image under a box, to be blanked once the content has been read. */
+interface ImageJob {
+  boxes: readonly RedactionBox[];
+  ctm: Matrix;
+  ref: PDFRef;
+  stream: PDFRawStream;
+}
+
+/** State shared by a page's content and the forms it draws. */
+interface Shared {
+  jobs: ImageJob[];
+  names: number;
+}
+
+/** Forms inside forms: deeper than this is not followed. */
+const MAX_FORM_DEPTH = 8;
 
 /** Something under a box this pass cannot take out exactly. */
 const NOT_PRECISE = "NotPreciseError";
@@ -169,6 +211,8 @@ interface GraphicsState {
   hScale: number;
   leading: number;
   lineWidth: number;
+  /** The fill or stroke colour is a pattern. */
+  pattern: { fill: boolean; stroke: boolean };
   renderMode: number;
   rise: number;
   wordSpacing: number;
@@ -402,9 +446,52 @@ const pathSegments = (path: ReadPath, closeAll: boolean): Segment[] => {
   return segments;
 };
 
+/**
+ * Resources with extra XObjects: a copy, so a resource dictionary shared
+ * with other pages or forms is never changed.
+ */
+export const withXObjects = (
+  doc: Pick<PDFDocument, "context">,
+  resources: PDFDict | undefined,
+  added: ReadonlyMap<string, PDFRef>,
+  content: string
+): PDFDict => {
+  const { context } = doc;
+  const copy = resources ? resources.clone(context) : context.obj({});
+  const xObjects =
+    resources?.lookupMaybe(PDFName.of("XObject"), PDFDict)?.clone(context) ??
+    context.obj({});
+  for (const [name, ref] of added) {
+    xObjects.set(PDFName.of(name), ref);
+  }
+  // An XObject the edited content no longer draws must not stay reachable.
+  const used = new Set<string>();
+  for (const operation of parseContentStream(content)) {
+    const [name] = operation.operands;
+    if (operation.operator === "Do" && name) {
+      used.add(name.text);
+    }
+  }
+  for (const key of xObjects.keys()) {
+    if (!used.has(key.toString())) {
+      xObjects.delete(key);
+    }
+  }
+  copy.set(PDFName.of("XObject"), xObjects);
+  return copy;
+};
+
+/** What a content stream's redaction comes to. */
+interface RedactorResult {
+  edits: ContentEdit[];
+  xObjects: Map<string, PDFRef>;
+}
+
 /** Plan the content edits that take everything under the boxes out. */
 class ContentRedactor {
+  readonly #added = new Map<string, PDFRef>();
   readonly #boxes: Bounds2[];
+  readonly #depth: number;
   readonly #edits: ContentEdit[] = [];
   readonly #fonts = new Map<string, RedactionFont | null>();
   readonly #input: ContentRedactionInput;
@@ -418,26 +505,58 @@ class ContentRedactor {
     hScale: 1,
     leading: 0,
     lineWidth: 1,
+    pattern: { fill: false, stroke: false },
     renderMode: 0,
     rise: 0,
     wordSpacing: 0,
   };
+  readonly #shared: Shared;
   readonly #stack: GraphicsState[] = [];
   #text: TextPosition = { known: true, line: IDENTITY, matrix: IDENTITY };
 
-  constructor(input: ContentRedactionInput) {
+  constructor(
+    input: ContentRedactionInput,
+    shared: Shared,
+    inherited?: { depth: number; state: GraphicsState }
+  ) {
     this.#input = input;
+    this.#shared = shared;
     this.#boxes = input.boxes.map(rectBounds);
+    this.#depth = inherited?.depth ?? 0;
+    if (inherited) {
+      this.#state = { ...inherited.state };
+    }
   }
 
-  run(): ContentEdit[] {
+  run(): RedactorResult {
     for (const [index, operation] of this.#input.operations.entries()) {
       this.#step(index, operation);
     }
     while (this.#marked.length > 0) {
       this.#closeMarked();
     }
-    return this.#edits;
+    return { edits: this.#edits, xObjects: this.#added };
+  }
+
+  /** A new XObject name, unused in this content's resources. */
+  #newName(): string {
+    const taken = lookupDict(this.#input.resources, "XObject");
+    let name = "";
+    do {
+      this.#shared.names += 1;
+      name = `RdX${this.#shared.names}`;
+    } while (taken?.has(PDFName.of(name)));
+    return name;
+  }
+
+  #replaceDo(operation: ContentOperation, ref: PDFRef): void {
+    const name = this.#newName();
+    this.#added.set(name, ref);
+    this.#edits.push({
+      end: operation.end,
+      replacement: `/${name} Do`,
+      start: operation.start,
+    });
   }
 
   #touches(bounds: Bounds2): boolean {
@@ -504,8 +623,14 @@ class ContentRedactor {
         return;
       }
       case "EI": {
+        // An inline image under a box goes whole.
         if (this.#touches(mappedBounds(this.#state.ctm, 0, 0, 1, 1))) {
-          notPrecise("An inline image lies under a box.");
+          this.#markTouched();
+          this.#edits.push({
+            end: operation.end,
+            replacement: " ",
+            start: operation.start,
+          });
         }
         return;
       }
@@ -515,7 +640,42 @@ class ContentRedactor {
         return;
       }
       default: {
-        this.#textOperator(index, operation);
+        if (!this.#colorOperator(operation)) {
+          this.#textOperator(index, operation);
+        }
+      }
+    }
+  }
+
+  /** Track whether fills and strokes paint a pattern; true if handled. */
+  #colorOperator(operation: ContentOperation): boolean {
+    const last = operation.operands.at(-1);
+    const isPattern =
+      last?.kind === "name" &&
+      (last.text === "/Pattern" ||
+        operation.operator === "scn" ||
+        operation.operator === "SCN");
+    switch (operation.operator) {
+      case "cs":
+      case "scn":
+      case "sc":
+      case "g":
+      case "rg":
+      case "k": {
+        this.#state.pattern = { ...this.#state.pattern, fill: isPattern };
+        return true;
+      }
+      case "CS":
+      case "SCN":
+      case "SC":
+      case "G":
+      case "RG":
+      case "K": {
+        this.#state.pattern = { ...this.#state.pattern, stroke: isPattern };
+        return true;
+      }
+      default: {
+        return false;
       }
     }
   }
@@ -636,11 +796,94 @@ class ContentRedactor {
     const object = lookupDict(this.#input.resources, "XObject")?.lookup(
       PDFName.of(name)
     );
-    const dict = object instanceof PDFStream ? object.dict : undefined;
-    const bounds = xObjectBounds(dict, this.#state.ctm);
-    if (!dict || this.#touches(bounds)) {
-      notPrecise("An image or form lies under a box.");
+    if (!(object instanceof PDFRawStream)) {
+      return notPrecise("An XObject could not be read.");
     }
+    const { ctm } = this.#state;
+    const bounds = xObjectBounds(object.dict, ctm);
+    if (!this.#touches(bounds)) {
+      return;
+    }
+    this.#markTouched();
+    const subtype = object.dict.get(PDFName.of("Subtype"));
+    if (subtype === PDFName.of("Image")) {
+      if (this.#boxes.some((box) => contains(box, bounds))) {
+        this.#edits.push({
+          end: operation.end,
+          replacement: " ",
+          start: operation.start,
+        });
+        return;
+      }
+      const ref = this.#input.context.nextRef();
+      this.#shared.jobs.push({
+        boxes: this.#input.boxes,
+        ctm,
+        ref,
+        stream: object,
+      });
+      this.#replaceDo(operation, ref);
+      return;
+    }
+    if (subtype !== PDFName.of("Form") || this.#depth >= MAX_FORM_DEPTH) {
+      return notPrecise("An XObject under a box cannot be rewritten.");
+    }
+    const form = this.#redactForm(object);
+    if (form) {
+      this.#replaceDo(operation, form);
+    }
+  }
+
+  /**
+   * A form under a box, copied with its own content redacted (copy on
+   * write: other uses of the form keep the original). Null when nothing in
+   * it changed.
+   */
+  #redactForm(form: PDFRawStream): PDFRef | null {
+    let source: string;
+    let operations: ContentOperation[];
+    try {
+      source = latin1(decodePDFRawStream(form).decode());
+      operations = parseContentStream(source);
+    } catch {
+      return notPrecise("A form's content could not be read.");
+    }
+    const resources =
+      form.dict.lookupMaybe(PDFName.of("Resources"), PDFDict) ??
+      this.#input.resources;
+    const matrix = arrayNumbers(
+      form.dict.lookupMaybe(PDFName.of("Matrix"), PDFArray)
+    );
+    const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = matrix;
+    const inner = new ContentRedactor(
+      { ...this.#input, emptiedShows: undefined, operations, resources },
+      this.#shared,
+      {
+        depth: this.#depth + 1,
+        state: {
+          ...this.#state,
+          ctm: multiply([a, b, c, d, e, f], this.#state.ctm),
+        },
+      }
+    ).run();
+    if (inner.edits.length === 0 && inner.xObjects.size === 0) {
+      return null;
+    }
+    const { context } = this.#input;
+    const entries: Record<string, PDFObject> = {};
+    for (const [key, value] of form.dict.entries()) {
+      const name = key.decodeText();
+      if (!["DecodeParms", "Filter", "Length", "Resources"].includes(name)) {
+        entries[name] = value;
+      }
+    }
+    const content = applyContentEdits(source, inner.edits);
+    const copy = context.flateStream(fromLatin1(content), entries);
+    copy.dict.set(
+      PDFName.of("Resources"),
+      withXObjects({ context }, resources, inner.xObjects, content)
+    );
+    return context.register(copy);
   }
 
   #openMarked(operation: ContentOperation): void {
@@ -787,6 +1030,9 @@ class ContentRedactor {
     if (scale === 0 || CLIP_RENDER_MODES.has(this.#state.renderMode)) {
       return notPrecise("Clip or zero-size text lies under a box.");
     }
+    if (this.#state.pattern.fill || this.#state.pattern.stroke) {
+      return notPrecise("Pattern-painted text lies under a box.");
+    }
     this.#markTouched();
     this.#edits.push({
       end: operation.end,
@@ -820,6 +1066,13 @@ class ContentRedactor {
     }
     if (path.clips) {
       return notPrecise("A clipping path lies under a box.");
+    }
+    const { pattern } = this.#state;
+    if (
+      (FILL_OPS.has(paint.operator) && pattern.fill) ||
+      (strokes && pattern.stroke)
+    ) {
+      return notPrecise("A pattern-painted path lies under a box.");
     }
     this.#markTouched();
     const inside = this.#boxes.some((box) => contains(box, hull));
@@ -928,15 +1181,32 @@ class ContentRedactor {
  * exactly (an image, a shading, a clip, an unmeasured font): that page is
  * flattened instead.
  */
-export const planContentRedaction = (
+export const planContentRedaction = async (
   input: ContentRedactionInput
-): ContentRedactionPlan => {
+): Promise<ContentRedactionPlan> => {
+  const shared: Shared = { jobs: [], names: 0 };
+  let planned: RedactorResult;
   try {
-    return { edits: new ContentRedactor(input).run(), ok: true };
+    planned = new ContentRedactor(input, shared).run();
   } catch (error) {
     if (error instanceof Error && error.name === NOT_PRECISE) {
       return { ok: false, reason: error.message };
     }
     throw error;
   }
+  for (const job of shared.jobs) {
+    // oxlint-disable-next-line react-doctor/async-await-in-loop eslint/no-await-in-loop -- one image's pixels at a time bounds memory
+    const blanked = await redactImage({
+      boxes: job.boxes,
+      codec: input.codec,
+      context: input.context,
+      ctm: job.ctm,
+      stream: job.stream,
+    });
+    if (!blanked) {
+      return { ok: false, reason: "An image under a box cannot be rewritten." };
+    }
+    input.context.assign(job.ref, blanked);
+  }
+  return { ...planned, ok: true };
 };

@@ -12,6 +12,7 @@ import { flattenRedactedPages } from "@/lib/pdf/export-flatten";
 import { exportDocumentWithReport } from "@/lib/pdf/export-pdf";
 import { renderRedactedPages } from "@/lib/pdf/flatten-redacted-pages";
 import type { FlattenDeps } from "@/lib/pdf/flatten-redacted-pages";
+import type { ImageCodec } from "@/lib/pdf/image-redaction";
 import { documentHasRedactions, redactionPlan } from "@/lib/pdf/output-pages";
 import { pdfSession } from "@/lib/pdf/session";
 import { failedRedactions } from "@/lib/pdf/verify-redaction";
@@ -24,20 +25,57 @@ export interface NodeCanvas {
   getContext: (kind: "2d") => CanvasRenderingContext2D;
 }
 
-/** The napi-rs canvas package, loaded the way pdf.js loads it in Node. */
-export const napiCanvas = async (): Promise<{
+const JPEG_QUALITY = 92;
+
+interface NapiCanvas {
+  ImageData: typeof ImageData;
   createCanvas: (width: number, height: number) => NodeCanvas;
-}> => {
+  loadImage: (
+    source: Uint8Array
+  ) => Promise<CanvasImageSource & { height: number; width: number }>;
+}
+
+/** The napi-rs canvas package, loaded the way pdf.js loads it in Node. */
+export const napiCanvas = async (): Promise<NapiCanvas> => {
   const pdfjs = await realpath(
     path.join(process.cwd(), "node_modules/pdfjs-dist/package.json")
   );
-  // SAFETY: the package's documented createCanvas export.
-  return createRequire(pdfjs)("@napi-rs/canvas") as {
-    createCanvas: (width: number, height: number) => NodeCanvas;
-  };
+  // SAFETY: the package's documented createCanvas and loadImage exports.
+  return createRequire(pdfjs)("@napi-rs/canvas") as NapiCanvas;
 };
 
-const JPEG_QUALITY = 92;
+/** The worker's JPEG codec, with napi canvas standing in for OffscreenCanvas. */
+export const nodeImageCodec = async (): Promise<ImageCodec> => {
+  const {
+    createCanvas,
+    ImageData: NodeImageData,
+    loadImage,
+  } = await napiCanvas();
+  return {
+    decodeJpeg: async (bytes) => {
+      const image = await loadImage(Buffer.from(bytes));
+      const { height, width } = image;
+      const context = createCanvas(width, height).getContext("2d");
+      context.drawImage(image, 0, 0);
+      return {
+        data: context.getImageData(0, 0, width, height).data,
+        height,
+        width,
+      };
+    },
+    encodeJpeg: async (rgba, width, height) => {
+      const canvas = createCanvas(width, height);
+      canvas
+        .getContext("2d")
+        .putImageData(
+          new NodeImageData(Uint8ClampedArray.from(rgba), width, height),
+          0,
+          0
+        );
+      return new Uint8Array(await canvas.encode("jpeg", JPEG_QUALITY));
+    },
+  };
+};
 
 export const nodeDeps = async (): Promise<FlattenDeps<NodeCanvas>> => {
   const { createCanvas } = await napiCanvas();
@@ -87,6 +125,8 @@ export const redactingExport = async (
   bytes: Uint8Array,
   document: EditorDocument,
   options: {
+    /** Leave JPEG images under a box without a codec (they flatten). */
+    noCodec?: boolean;
     mode?: "apply" | "skip";
     ocrWordsByPage?: Record<string, OcrTextObject[]>;
     pageIds?: string[];
@@ -98,6 +138,7 @@ export const redactingExport = async (
     bytes,
     document,
     fontBytes: {},
+    imageCodec: options.noCodec ? undefined : await nodeImageCodec(),
     ocrWordsByPage: options.ocrWordsByPage,
     pageIds: options.pageIds,
     redactions: options.mode ?? "apply",
