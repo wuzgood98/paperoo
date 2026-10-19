@@ -17,6 +17,7 @@ import {
 import type { HistoryState } from "@/lib/editor/history";
 import { createId } from "@/lib/editor/ids";
 import {
+  documentForm,
   findObject,
   findPage,
   findPdfAnnotation,
@@ -180,6 +181,14 @@ const getSnapshot = (): HistorySnapshot => ({
   currentPageId: internal.state.currentPageId,
   document: internal.state.document,
   selectedObjectIds: internal.state.selectedObjectIds,
+});
+
+/** One form for the document: every source's fields, flags and signatures. */
+const mergeForms = (into: PdfFormModel, added: PdfFormModel): PdfFormModel => ({
+  fields: [...into.fields, ...added.fields],
+  hasJavaScript: into.hasJavaScript || added.hasJavaScript,
+  hasXfa: into.hasXfa || added.hasXfa,
+  signatures: [...into.signatures, ...added.signatures],
 });
 
 /** Page selection limited to pages that still exist. */
@@ -995,7 +1004,12 @@ export const editorStore = {
    * Insert pages at `atIndex` as one undo step and make the first current.
    * Waits for every page to load: hydration places pages by source order.
    */
-  insertPages: (atIndex: number, pages: readonly EditorPage[]): boolean => {
+  insertPages: (
+    atIndex: number,
+    pages: readonly EditorPage[],
+    /** The form of the PDF the pages come from, merged into the document's. */
+    form?: PdfFormModel
+  ): boolean => {
     const { document, hydrated, status } = internal.state;
     if (status !== "ready" || !hydrated || pages.length === 0) {
       return false;
@@ -1005,11 +1019,14 @@ export const editorStore = {
       internal.state = {
         ...internal.state,
         currentPageId: pages[0]?.id ?? internal.state.currentPageId,
-        document: withPages([
-          ...document.pages.slice(0, index),
-          ...pages,
-          ...document.pages.slice(index),
-        ]),
+        document: {
+          form: form ? mergeForms(documentForm(document), form) : document.form,
+          pages: [
+            ...document.pages.slice(0, index),
+            ...pages,
+            ...document.pages.slice(index),
+          ],
+        },
         selectedObjectIds: [],
         selectedOcrWordIds: [],
         selectedPdfAnnotationId: null,

@@ -9,6 +9,7 @@ import {
   PDFOptionList,
   PDFRadioGroup,
   PDFRef,
+  PDFString,
   PDFTextField,
   StandardFonts,
 } from "pdf-lib";
@@ -273,6 +274,39 @@ const pruneFieldRef = (
  * its pages used so widget refs line up, keeping only fields that still
  * have a widget on an output page (pages may have been deleted or split off).
  */
+const fieldName = (field: PDFDict): string | null => {
+  const name = field.lookup(PDFName.of("T"));
+  return name instanceof PDFString || name instanceof PDFHexString
+    ? name.decodeText()
+    : null;
+};
+
+/** `name`, or `name_2`, `name_3`… — the first not yet taken. */
+const unusedName = (name: string, taken: ReadonlySet<string>): string => {
+  let suffix = 2;
+  while (taken.has(`${name}_${suffix}`)) {
+    suffix += 1;
+  }
+  return `${name}_${suffix}`;
+};
+
+/** Merge another source's form resources (fonts) without replacing any. */
+const mergeFormResources = (into: PDFDict, from: PDFDict): void => {
+  const fromFonts = from
+    .lookupMaybe(PDFName.of("DR"), PDFDict)
+    ?.lookupMaybe(PDFName.of("Font"), PDFDict);
+  const intoResources = into.lookupMaybe(PDFName.of("DR"), PDFDict);
+  const intoFonts = intoResources?.lookupMaybe(PDFName.of("Font"), PDFDict);
+  if (!(fromFonts && intoFonts)) {
+    return;
+  }
+  for (const [key, value] of fromFonts.entries()) {
+    if (!intoFonts.has(key)) {
+      intoFonts.set(key, value);
+    }
+  }
+};
+
 export const writeOutputAcroForm = (
   output: PDFDocument,
   sources: readonly { copier: PDFObjectCopier; source: PDFDocument }[]
@@ -280,6 +314,9 @@ export const writeOutputAcroForm = (
   const onPage = outputAnnotRefKeys(output);
   let merged: PDFDict | null = null;
   const fields: PDFRef[] = [];
+  // Field names must be unique in a document: a later source's clashing
+  // top-level name is renamed on its copy (Name → Name_2).
+  const taken = new Set<string>();
   for (const { copier, source } of sources) {
     const acroForm = source.catalog.get(PDFName.of("AcroForm"));
     if (!acroForm) {
@@ -289,15 +326,37 @@ export const writeOutputAcroForm = (
     if (!(copied instanceof PDFDict)) {
       continue;
     }
-    merged ??= copied;
+    if (merged) {
+      mergeFormResources(merged, copied);
+    } else {
+      merged = copied;
+    }
     const sourceFields = copied.lookup(PDFName.of("Fields"));
     if (!(sourceFields instanceof PDFArray)) {
       continue;
     }
+    const names: string[] = [];
     for (const field of sourceFields.asArray()) {
-      if (field instanceof PDFRef && pruneFieldRef(output, field, onPage)) {
-        fields.push(field);
+      if (!(field instanceof PDFRef && pruneFieldRef(output, field, onPage))) {
+        continue;
       }
+      fields.push(field);
+      const dict = output.context.lookup(field);
+      const name = dict instanceof PDFDict ? fieldName(dict) : null;
+      if (!(dict instanceof PDFDict && name !== null)) {
+        continue;
+      }
+      if (taken.has(name)) {
+        const renamed = unusedName(name, taken);
+        dict.set(PDFName.of("T"), PDFHexString.fromText(renamed));
+        names.push(renamed);
+      } else {
+        names.push(name);
+      }
+    }
+    // A source's own names never clash with each other.
+    for (const name of names) {
+      taken.add(name);
     }
   }
   if (!merged) {

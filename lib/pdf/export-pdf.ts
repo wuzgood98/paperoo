@@ -55,6 +55,7 @@ import {
   vectorStrokeScale,
 } from "@/lib/editor/coordinates";
 import {
+  documentForm,
   fittedPdfTextBox,
   insetShapePathBox,
   lineDashArray,
@@ -1493,9 +1494,19 @@ const loadSources = async (
         throw new Error("A page's source PDF is missing from the export.");
       }
       const doc = await loadSourcePdf(bytes);
-      if (docId === PRIMARY_DOC_ID) {
-        // Form fields belong to the opened file until merging adds others.
-        await applyPdfFormEdits(doc, input.document, input.fontBytes);
+      // Each source's field values and appearances go into its own form.
+      const fields = documentForm(input.document).fields.filter(
+        (field) => (field.docId ?? PRIMARY_DOC_ID) === docId
+      );
+      if (fields.length > 0) {
+        await applyPdfFormEdits(
+          doc,
+          {
+            ...input.document,
+            form: { ...documentForm(input.document), fields },
+          },
+          input.fontBytes
+        );
       }
       await doc.flush();
       return [docId, { doc, pages: doc.getPages() }] as const;

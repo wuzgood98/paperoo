@@ -52,8 +52,11 @@ const memoryStorage = () => {
       const sources = new Map<string, Blob>(
         change.reset ? undefined : snapshot?.sources
       );
-      if (change.source) {
-        sources.set(change.source.docId, change.source.bytes);
+      for (const source of change.putSources) {
+        sources.set(source.docId, source.bytes);
+      }
+      for (const docId of change.deleteSourceIds) {
+        sources.delete(docId);
       }
       snapshot = {
         assets: change.putAssets,
@@ -114,6 +117,8 @@ let bytes: Uint8Array | null;
 let autosave: Autosave | null;
 let onDisabled: ReturnType<typeof vi.fn<AutosaveDeps["onDisabled"]>>;
 let free: number | null;
+/** Inserted PDFs' bytes, by docId. */
+const otherSources = new Map<string, Uint8Array>();
 
 const start = (): Autosave => {
   autosave = createAutosave({
@@ -126,6 +131,7 @@ const start = (): Autosave => {
     onDisabled,
     releaseSlot: () => {},
     sourceBytes: () => bytes,
+    sourceBytesOf: (docId) => otherSources.get(docId) ?? null,
     storage: memory.storage,
     subscribe: editorStore.subscribe,
   });
@@ -150,6 +156,7 @@ beforeEach(() => {
   autosave = null;
   free = null;
   onDisabled = vi.fn<AutosaveDeps["onDisabled"]>();
+  otherSources.clear();
 });
 
 afterEach(() => {
@@ -168,7 +175,9 @@ test("an edit is saved once editing pauses, with the source PDF", async () => {
   expect(memory.writes).toHaveLength(1);
   const [write] = memory.writes;
   expect(write?.reset).toBe(true);
-  expect(write?.source?.bytes.size).toBe(5);
+  expect(
+    write?.putSources.map((source) => [source.docId, source.bytes.size])
+  ).toEqual([["primary", 5]]);
   expect(write?.putPages.map((item) => item.id)).toEqual(["page-1", "page-2"]);
   expect(write?.meta.schemaVersion).toBe(SESSION_SCHEMA_VERSION);
   expect(write?.meta.pageOrder).toEqual(["page-1", "page-2"]);
@@ -184,7 +193,7 @@ test("later saves write only the pages that changed", async () => {
   await settle(AUTOSAVE_DEBOUNCE_MS);
   const [, second] = memory.writes;
   expect(second?.reset).toBe(false);
-  expect(second?.source).toBeUndefined();
+  expect(second?.putSources).toEqual([]);
   expect(second?.putPages.map((item) => item.id)).toEqual(["page-2"]);
 });
 
@@ -242,6 +251,35 @@ test("opening another file clears this tab's save", async () => {
   open();
   await settle(0);
   expect(memory.snapshot()).toBeNull();
+});
+
+test("an inserted PDF is saved once, and dropped when its pages go", async () => {
+  start();
+  open();
+  otherSources.set("file:a", new Uint8Array([1, 2, 3]));
+  const inserted: EditorPage = { ...page("page-3", 0), docId: "file:a" };
+  const [first, second] = editorStore.getState().document.pages;
+  if (!(first && second)) {
+    throw new Error("expected two pages");
+  }
+  editorStore.setPages([first, second, inserted]);
+  await settle(AUTOSAVE_DEBOUNCE_MS);
+  const sources = (index: number) =>
+    memory.writes[index]?.putSources.map((source) => source.docId);
+  expect(sources(0)).toEqual(["primary", "file:a"]);
+  expect(memory.writes[0]?.meta.sources.map((source) => source.kind)).toEqual([
+    "file",
+    "file",
+  ]);
+
+  editorStore.addObject(text("t1"));
+  await settle(AUTOSAVE_DEBOUNCE_MS);
+  expect(sources(1)).toEqual([]);
+
+  editorStore.setPages([first, second]);
+  await settle(AUTOSAVE_DEBOUNCE_MS);
+  expect(memory.writes[2]?.deleteSourceIds).toEqual(["file:a"]);
+  expect(memory.snapshot()?.sources.has("file:a")).toBe(false);
 });
 
 test("referenced images are saved; preview images are not", async () => {

@@ -7,6 +7,7 @@ import {
   CopyIcon,
   FileOutputIcon,
   ListChecksIcon,
+  FileInputIcon,
   FilePlusIcon,
   PlusIcon,
   RotateCwIcon,
@@ -98,6 +99,44 @@ const insertBlankPageWithNotice = async (pageId: string): Promise<void> => {
   }
 };
 
+// Inserting a PDF parses it with pdf.js; load that code on first use.
+const loadInsertPdf = () => import("@/lib/pdf/insert-pdf");
+
+/** Insert a PDF file's pages before position `atIndex` and say how it went. */
+const insertPdfWithNotice = async (
+  file: File,
+  atIndex: number
+): Promise<void> => {
+  const { insertPdfFile } = await loadInsertPdf();
+  try {
+    const count = await insertPdfFile(file, atIndex);
+    toastManager.add({
+      description: file.name,
+      title: count === 1 ? "Inserted 1 page" : `Inserted ${count} pages`,
+      type: "success",
+    });
+  } catch (error) {
+    toastManager.add({
+      description:
+        error instanceof Error ? error.message : "Could not insert that PDF.",
+      title: "Pages not inserted",
+      type: "error",
+    });
+  }
+};
+
+/** Index right after `pageId`, or the end when it is not found. */
+const indexAfter = (pageId: string): number => {
+  const { pages } = editorStore.getState().document;
+  const index = pages.findIndex((page) => page.id === pageId);
+  return index === -1 ? pages.length : index + 1;
+};
+
+const firstPdf = (files: FileList | null | undefined): File | null =>
+  [...(files ?? [])].find(
+    (file) => !file.type || file.type === "application/pdf"
+  ) ?? null;
+
 const deletePage = (pageId: string): void => {
   const next = editorStore
     .getState()
@@ -109,9 +148,25 @@ const deletePage = (pageId: string): void => {
 
 const AddPageMenu = ({ pageId }: { pageId: string | null }) => {
   const hydrated = useEditorStore((state) => state.hydrated);
+  const inputRef = useRef<HTMLInputElement>(null);
   const disabled = !(hydrated && pageId);
   return (
     <Menu>
+      <input
+        accept="application/pdf"
+        aria-hidden
+        className="sr-only"
+        onChange={async (event) => {
+          const file = firstPdf(event.target.files);
+          event.target.value = "";
+          if (file && pageId) {
+            await insertPdfWithNotice(file, indexAfter(pageId));
+          }
+        }}
+        ref={inputRef}
+        tabIndex={-1}
+        type="file"
+      />
       <ToolbarTip label={hydrated ? "Add page" : "Pages are still loading"}>
         <MenuTrigger
           aria-label="Add page"
@@ -148,6 +203,10 @@ const AddPageMenu = ({ pageId }: { pageId: string | null }) => {
         >
           <CopyIcon />
           Duplicate current page
+        </MenuItem>
+        <MenuItem onClick={() => inputRef.current?.click()}>
+          <FileInputIcon />
+          Insert pages from PDF…
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -395,7 +454,7 @@ const PageThumbnailItemView = ({
   selected: boolean;
   selecting: boolean;
 }) => (
-  <li className="relative flex flex-col gap-1">
+  <li className="relative flex flex-col gap-1" data-page-index={index}>
     <ContextMenu>
       <ContextMenuTrigger
         render={
@@ -519,22 +578,44 @@ const PageThumbnails = ({ onPageSelect }: { onPageSelect?: () => void }) => {
   }, [currentPageId]);
 
   return (
-    <ol className="flex flex-col gap-3 pb-3">
-      {pages.map((page, index) => (
-        <PageThumbnailItem
-          checked={checkedIds.has(page.id)}
-          index={index}
-          key={page.id}
-          onDragStartAt={onDragStartAt}
-          onDropAt={onDropAt}
-          onPageSelect={onPageSelect}
-          page={page}
-          registerItem={registerItem}
-          selected={page.id === currentPageId}
-          selecting={selecting}
-        />
-      ))}
-    </ol>
+    <div
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) {
+          event.preventDefault();
+        }
+      }}
+      onDrop={async (event) => {
+        const file = firstPdf(event.dataTransfer.files);
+        if (!file) {
+          return;
+        }
+        event.preventDefault();
+        // Before the page dropped on, or at the end below the last one.
+        const target =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("li[data-page-index]")
+            : null;
+        const index = Number(target?.dataset.pageIndex ?? pages.length);
+        await insertPdfWithNotice(file, index);
+      }}
+    >
+      <ol className="flex flex-col gap-3 pb-3">
+        {pages.map((page, index) => (
+          <PageThumbnailItem
+            checked={checkedIds.has(page.id)}
+            index={index}
+            key={page.id}
+            onDragStartAt={onDragStartAt}
+            onDropAt={onDropAt}
+            onPageSelect={onPageSelect}
+            page={page}
+            registerItem={registerItem}
+            selected={page.id === currentPageId}
+            selecting={selecting}
+          />
+        ))}
+      </ol>
+    </div>
   );
 };
 

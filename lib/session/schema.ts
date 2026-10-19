@@ -49,8 +49,10 @@ export interface SessionWrite {
   putPages: EditorPage[];
   /** Start a new saved session: drop whatever was saved before. */
   reset: boolean;
-  /** The source PDF, written once per session. */
-  source?: { bytes: Blob; docId: string };
+  /** Source PDFs not saved yet (each is written once per session). */
+  putSources: { bytes: Blob; docId: string }[];
+  /** Saved source PDFs no page uses any more. */
+  deleteSourceIds: string[];
 }
 
 export interface SessionSnapshot {
