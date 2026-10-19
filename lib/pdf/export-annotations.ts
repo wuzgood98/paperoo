@@ -3,6 +3,7 @@ import {
   PDFArray,
   PDFDict,
   PDFName,
+  PDFNumber,
   PDFRef,
   PDFString,
   StandardFonts,
@@ -387,26 +388,52 @@ const applyAnnotationEdit = async (
   }
 };
 
-/** The page an explicit destination array points at, if it names one by ref. */
-const destinationRef = (
+/** An explicit destination array, direct or behind a ref. */
+const destinationArray = (
   doc: PDFDocument,
   dest: PDFObject | undefined
-): PDFRef | null => {
+): PDFArray | null => {
   const resolved = dest instanceof PDFRef ? doc.context.lookup(dest) : dest;
-  if (!(resolved instanceof PDFArray)) {
-    return null;
-  }
-  const target = resolved.get(0);
-  return target instanceof PDFRef ? target : null;
+  return resolved instanceof PDFArray ? resolved : null;
 };
 
+/** A link's explicit destination arrays: its `/Dest` and its GoTo's `/D`. */
+const linkDestinations = (
+  doc: PDFDocument,
+  link: PDFDict
+): { array: PDFArray; drop: () => void }[] => {
+  const found: { array: PDFArray; drop: () => void }[] = [];
+  const dest = destinationArray(doc, link.get(PDFName.of("Dest")));
+  if (dest) {
+    found.push({ array: dest, drop: () => link.delete(PDFName.of("Dest")) });
+  }
+  const action = doc.context.lookup(link.get(PDFName.of("A")));
+  if (
+    action instanceof PDFDict &&
+    action.get(PDFName.of("S")) === PDFName.of("GoTo")
+  ) {
+    const goTo = destinationArray(doc, action.get(PDFName.of("D")));
+    if (goTo) {
+      found.push({ array: goTo, drop: () => link.delete(PDFName.of("A")) });
+    }
+  }
+  return found;
+};
+
+const isLink = (dict: PDFDict): boolean =>
+  dict.get(PDFName.of("Subtype")) === PDFName.of("Link");
+
 /**
- * Remove the destination of every internal link on an output page whose
- * target page is not in the output (deleted, or left out of an extract), so
- * the link goes nowhere instead of dragging that page in. Edits the parsed
- * sources, which exist only for this export.
+ * Prepare the annotations of every output page for copying. A ref to a
+ * source page would make the copier write that page again as a hidden copy
+ * (it maps objects, not refs), carrying its original content. So an
+ * internal link's target becomes a number marker holding the source page
+ * index, resolved once the output pages exist, and every `/P` goes (it is
+ * set again on the copy). A link to a page left out of the output (deleted,
+ * or not extracted) loses its destination. Edits the parsed sources, which
+ * exist only for this export.
  */
-export const dropLinksToMissingPages = (
+export const markInternalLinkTargets = (
   sources: ReadonlyMap<string, { doc: PDFDocument; pages: PDFPage[] }>,
   outputPages: readonly EditorPage[]
 ): void => {
@@ -420,16 +447,18 @@ export const dropLinksToMissingPages = (
         index,
       ])
     );
-    const isMissing = (ref: PDFRef | null): boolean => {
-      if (!ref) {
-        return false;
+    /** The source index a destination names, or null for none in this doc. */
+    const targetIndex = (target: PDFObject | undefined): number | null => {
+      if (target instanceof PDFNumber) {
+        // Marked already (a shared array), or a producer's page index.
+        return target.asNumber();
       }
-      const index = indexByRef.get(
-        refKey(ref.objectNumber, ref.generationNumber)
-      );
+      if (!(target instanceof PDFRef)) {
+        return null;
+      }
       return (
-        index === undefined ||
-        !kept.has(pageKeyString({ docId, sourceIndex: index }))
+        indexByRef.get(refKey(target.objectNumber, target.generationNumber)) ??
+        null
       );
     };
     for (const [index, page] of pages.entries()) {
@@ -438,22 +467,74 @@ export const dropLinksToMissingPages = (
       }
       for (const entry of page.node.Annots()?.asArray() ?? []) {
         const dict = doc.context.lookup(entry);
-        if (
-          !(dict instanceof PDFDict) ||
-          dict.get(PDFName.of("Subtype")) !== PDFName.of("Link")
-        ) {
+        if (!(dict instanceof PDFDict)) {
           continue;
         }
-        if (isMissing(destinationRef(doc, dict.get(PDFName.of("Dest"))))) {
-          dict.delete(PDFName.of("Dest"));
+        dict.delete(PDFName.of("P"));
+        if (!isLink(dict)) {
+          continue;
         }
-        const action = doc.context.lookup(dict.get(PDFName.of("A")));
-        if (
-          action instanceof PDFDict &&
-          action.get(PDFName.of("S")) === PDFName.of("GoTo") &&
-          isMissing(destinationRef(doc, action.get(PDFName.of("D"))))
-        ) {
-          dict.delete(PDFName.of("A"));
+        for (const { array, drop } of linkDestinations(doc, dict)) {
+          const target = targetIndex(array.get(0));
+          if (
+            target === null ||
+            !kept.has(pageKeyString({ docId, sourceIndex: target }))
+          ) {
+            drop();
+          } else {
+            array.set(0, PDFNumber.of(target));
+          }
+        }
+      }
+    }
+  }
+};
+
+/** An output page and the source page it was copied from. */
+export interface OutputPagePlacement {
+  docId: string;
+  page: PDFPage;
+  sourceIndex: number;
+}
+
+/**
+ * Point each marked link target at the first output page copied from that
+ * source page, and give every annotation the `/P` of the page that holds
+ * it. `placements` are the output pages in order.
+ */
+export const resolveInternalLinkTargets = (
+  output: PDFDocument,
+  placements: readonly OutputPagePlacement[]
+): void => {
+  const firstCopy = new Map<string, PDFRef>();
+  for (const { docId, page, sourceIndex } of placements) {
+    const key = pageKeyString({ docId, sourceIndex });
+    if (!firstCopy.has(key)) {
+      firstCopy.set(key, page.ref);
+    }
+  }
+  for (const { docId, page } of placements) {
+    for (const entry of page.node.Annots()?.asArray() ?? []) {
+      const dict = output.context.lookup(entry);
+      if (!(dict instanceof PDFDict)) {
+        continue;
+      }
+      dict.set(PDFName.of("P"), page.ref);
+      if (!isLink(dict)) {
+        continue;
+      }
+      for (const { array, drop } of linkDestinations(output, dict)) {
+        const marker = array.get(0);
+        if (!(marker instanceof PDFNumber)) {
+          continue;
+        }
+        const target = firstCopy.get(
+          pageKeyString({ docId, sourceIndex: marker.asNumber() })
+        );
+        if (target) {
+          array.set(0, target);
+        } else {
+          drop();
         }
       }
     }

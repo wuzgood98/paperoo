@@ -281,6 +281,32 @@ const fieldName = (field: PDFDict): string | null => {
     : null;
 };
 
+/** Every field and widget ref under the given fields. */
+const fieldTreeRefKeys = (
+  output: PDFDocument,
+  fields: readonly PDFRef[]
+): Set<string> => {
+  const keys = new Set<string>();
+  const stack = [...fields];
+  for (let ref = stack.pop(); ref; ref = stack.pop()) {
+    if (keys.has(refKey(ref))) {
+      continue;
+    }
+    keys.add(refKey(ref));
+    const kids = output.context
+      .lookupMaybe(ref, PDFDict)
+      ?.lookup(PDFName.of("Kids"));
+    if (kids instanceof PDFArray) {
+      for (const kid of kids.asArray()) {
+        if (kid instanceof PDFRef) {
+          stack.push(kid);
+        }
+      }
+    }
+  }
+  return keys;
+};
+
 /** `name`, or `name_2`, `name_3`… — the first not yet taken. */
 const unusedName = (name: string, taken: ReadonlySet<string>): string => {
   let suffix = 2;
@@ -314,6 +340,7 @@ export const writeOutputAcroForm = (
   const onPage = outputAnnotRefKeys(output);
   let merged: PDFDict | null = null;
   const fields: PDFRef[] = [];
+  const calculationOrder: PDFRef[] = [];
   // Field names must be unique in a document: a later source's clashing
   // top-level name is renamed on its copy (Name → Name_2).
   const taken = new Set<string>();
@@ -330,6 +357,14 @@ export const writeOutputAcroForm = (
       mergeFormResources(merged, copied);
     } else {
       merged = copied;
+    }
+    const order = copied.lookup(PDFName.of("CO"));
+    if (order instanceof PDFArray) {
+      for (const entry of order.asArray()) {
+        if (entry instanceof PDFRef) {
+          calculationOrder.push(entry);
+        }
+      }
     }
     const sourceFields = copied.lookup(PDFName.of("Fields"));
     if (!(sourceFields instanceof PDFArray)) {
@@ -363,5 +398,17 @@ export const writeOutputAcroForm = (
     return;
   }
   merged.set(PDFName.of("Fields"), output.context.obj(fields));
+  // A calculation order naming a pruned field would keep it in the file.
+  const keptFields = fieldTreeRefKeys(output, fields);
+  const keptOrder = calculationOrder.filter((ref) =>
+    keptFields.has(refKey(ref))
+  );
+  if (keptOrder.length > 0) {
+    merged.set(PDFName.of("CO"), output.context.obj(keptOrder));
+  } else {
+    merged.delete(PDFName.of("CO"));
+  }
+  // The XFA form is a second copy of every field, values included.
+  merged.delete(PDFName.of("XFA"));
   output.catalog.set(PDFName.of("AcroForm"), output.context.register(merged));
 };
