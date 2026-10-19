@@ -103,9 +103,11 @@ import { embeddedFontCanDraw } from "@/lib/pdf/embedded-font";
 import {
   applyPageAnnotationEdits,
   copiedAnnotRefs,
-  dropLinksToMissingPages,
   helveticaFor,
+  markInternalLinkTargets,
+  resolveInternalLinkTargets,
 } from "@/lib/pdf/export-annotations";
+import type { OutputPagePlacement } from "@/lib/pdf/export-annotations";
 import {
   applyPdfFormEdits,
   stripFormWidgets,
@@ -115,6 +117,7 @@ import { resolvePdfFont } from "@/lib/pdf/extract-text";
 import { figmaFallbackFor } from "@/lib/pdf/figma-fallback";
 import type { InterWeight } from "@/lib/pdf/figma-fallback";
 import { rebuiltGlyphLayout } from "@/lib/pdf/glyph-face";
+import { saveSwept } from "@/lib/pdf/output-gc";
 import { pushRebuiltType3Text } from "@/lib/pdf/rebuilt-type3-font";
 import { removeOriginalInk } from "@/lib/pdf/remove-original-ink";
 import { reusedFontHex, reuseEmbeddedPdfFont } from "@/lib/pdf/reuse-pdf-font";
@@ -1524,8 +1527,8 @@ export const exportDocumentWithReport = async (
     loadSources(input, outputPages),
     PDFDocument.create(),
   ]);
-  // A link to a page left out would pull that page in as a hidden copy.
-  dropLinksToMissingPages(sources, outputPages);
+  // A ref to a source page would pull that page in as a hidden copy.
+  markInternalLinkTargets(sources, outputPages);
   output.registerFontkit(fontkit);
   const helvetica = helveticaFor(output);
 
@@ -1542,6 +1545,7 @@ export const exportDocumentWithReport = async (
     return copier;
   };
   const copiedOnce = new Set<string>();
+  const placements: OutputPagePlacement[] = [];
 
   // Shared by every page: a font is parsed and subset once, and an image
   // placed on many pages is embedded once and referenced from each.
@@ -1562,6 +1566,7 @@ export const exportDocumentWithReport = async (
     const node = copier.copy(sourcePage.node);
     const page = PDFPage.of(node, output.context.register(node), output);
     output.addPage(page);
+    placements.push({ docId, page, sourceIndex: editorPage.sourceIndex });
     // oxlint-disable-next-line eslint/no-await-in-loop -- pages are written in order
     await applyPageAnnotationEdits(
       output,
@@ -1581,6 +1586,13 @@ export const exportDocumentWithReport = async (
       page.setRotation(degrees(combined));
     }
 
+    const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
+    // Removal first, on the page's own content; covers only where ink stays.
+    coverOnlyRunIds.push(
+      ...removeOrCoverDirtyText(output, page, editorPage, dirtyText)
+    );
+    // After Removal, which reads the page's own content and gives up on a
+    // page with appended streams.
     const ocrWords = input.ocrWordsByPage?.[editorPage.id];
     if (ocrWords && ocrWords.length > 0) {
       drawInvisibleOcrWords(
@@ -1591,12 +1603,6 @@ export const exportDocumentWithReport = async (
         await ocrFontFor(fonts, output)
       );
     }
-    const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
-    // Removal first, on the page's own content; covers only where ink stays.
-    coverOnlyRunIds.push(
-      ...removeOrCoverDirtyText(output, page, editorPage, dirtyText)
-    );
-    // After Removal, which rewrites the page's own content.
     const cleanOutlineText = editorPage.pdfTextObjects.filter(
       (run) => run.outlineText && !isPdfTextDirty(run)
     );
@@ -1656,6 +1662,7 @@ export const exportDocumentWithReport = async (
     }
   }
 
+  resolveInternalLinkTargets(output, placements);
   writeOutputAcroForm(
     output,
     [...sources].flatMap(([docId, { doc }]) => {
@@ -1664,7 +1671,7 @@ export const exportDocumentWithReport = async (
     })
   );
 
-  return { bytes: await output.save(), coverOnlyRunIds };
+  return { bytes: await saveSwept(output), coverOnlyRunIds };
 };
 
 export const exportDocument = async (

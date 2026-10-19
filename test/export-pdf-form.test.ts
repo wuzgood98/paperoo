@@ -20,6 +20,7 @@ import {
   buildXfaFormFixture,
   FORM_FIELD,
 } from "./pdf-form-fixture";
+import { pdfContainsText } from "./pdf-scan";
 import { loadPdfJsDocument } from "./pdfjs-node";
 
 const editorDocumentFromBytes = async (
@@ -163,7 +164,7 @@ test("export keeps AcroForm fields interactive with updated values", async () =>
   expect(byName[FORM_FIELD.signature]?.kind).toBe("signature");
 });
 
-test("export copies XFA streams without calling getForm", async () => {
+test("export drops the XFA form without calling getForm", async () => {
   const bytes = await buildXfaFormFixture();
   const document = await editorDocumentFromBytes(bytes);
   const output = await exportDocument({
@@ -173,7 +174,9 @@ test("export copies XFA streams without calling getForm", async () => {
     fontBytes: {},
   });
   const exported = await PDFDocument.load(output);
-  expect(exported.catalog.AcroForm()?.has(PDFName.of("XFA"))).toBe(true);
+  // XFA repeats every field value; edited or pruned fields would leak.
+  expect(exported.catalog.AcroForm()?.has(PDFName.of("XFA"))).toBe(false);
+  expect(await pdfContainsText(output, "xdp:xdp")).toBe(false);
 });
 
 test("export fills a non-Latin form value with the embedded fallback font", async () => {

@@ -3,11 +3,7 @@ import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { expect, test } from "vitest";
 
 import { pdfTextEditable, pdfTextRemovable } from "@/lib/editor/object-utils";
-import type {
-  EditorPage,
-  PdfTextObject,
-  PdfVectorObject,
-} from "@/lib/editor/types";
+import type { EditorPage, PdfVectorObject } from "@/lib/editor/types";
 import { exportDocumentWithReport } from "@/lib/pdf/export-pdf";
 import {
   extractPdfVectorObjects,
@@ -18,33 +14,7 @@ import { indexPageRemovals } from "@/lib/pdf/removal-targets";
 import { extractFigmaPage } from "./figma-extract";
 import { buildFigmaType3Fixture, FIGMA_HEADING } from "./figma-type3-fixture";
 import { loadPdfJsDocument } from "./pdfjs-node";
-
-const twoLinePdf = async (): Promise<Uint8Array> => {
-  const doc = await PDFDocument.create();
-  const page = doc.addPage([612, 792]);
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  page.drawText("Old line", { font, size: 14, x: 72, y: 700 });
-  page.drawText("Keep line", { font, size: 14, x: 72, y: 660 });
-  return doc.save();
-};
-
-/** What the browser measures before export (Node has no canvas). */
-const withCover = (run: PdfTextObject): PdfTextObject => ({
-  ...run,
-  coverRects: [{ height: run.height, width: run.width, x: run.x, y: run.y }],
-});
-
-const editRun = (
-  page: EditorPage,
-  original: string,
-  text: string,
-  patch: Partial<PdfTextObject> = {}
-): EditorPage => ({
-  ...page,
-  pdfTextObjects: page.pdfTextObjects.map((run) =>
-    run.originalText === original ? { ...withCover(run), text, ...patch } : run
-  ),
-});
+import { editRun, twoLinePdf } from "./text-removal-fixtures";
 
 const runId = (page: EditorPage, text: string): string | undefined =>
   page.pdfTextObjects.find((run) => run.originalText === text)?.id;
