@@ -29,6 +29,7 @@ import {
   isPdfVectorDirty,
   mapDocumentFormFields,
   mapPageObjects,
+  pinObject,
   mapPagePdfAnnotations,
   mapPagePdfImages,
   mapPagePdfVectors,
@@ -42,6 +43,7 @@ import {
 import {
   DEFAULT_DRAW_STYLE,
   DEFAULT_HIGHLIGHT_COLOR,
+  DEFAULT_REDACTION_FILL,
   DEFAULT_SHAPE_STYLE,
   DEFAULT_TEXT_STYLE,
   MAX_ZOOM,
@@ -92,6 +94,7 @@ export interface EditorStoreState {
   /** Every page of the open PDF has loaded (hydration finished). */
   hydrated: boolean;
   isExporting: boolean;
+  redactionFill: string;
   selectedObjectIds: readonly string[];
   selectedOcrWordIds: readonly string[];
   /** Pages picked in the page list for a bulk action; not part of undo. */
@@ -137,6 +140,7 @@ const initialState = (): EditorStoreState => ({
   highlightColor: DEFAULT_HIGHLIGHT_COLOR,
   hydrated: false,
   isExporting: false,
+  redactionFill: DEFAULT_REDACTION_FILL,
   selectedObjectIds: [],
   selectedOcrWordIds: [],
   selectedPageIds: [],
@@ -1191,7 +1195,7 @@ export const editorStore = {
         document: withPages(
           mapPageObjects(internal.state.document.pages, pageId, (objects) =>
             objects.map((object) =>
-              ids.has(object.id) ? updater(object) : object
+              ids.has(object.id) ? pinObject(updater(object)) : object
             )
           )
         ),
@@ -1268,6 +1272,8 @@ export const editorStore = {
       editorStore.setShapeStyle(style);
     } else if (object?.type === "highlight") {
       editorStore.setHighlightColor(object.color);
+    } else if (object?.type === "redaction") {
+      editorStore.setRedactionFill(object.fill);
     }
   },
 
@@ -1719,6 +1725,10 @@ export const editorStore = {
       };
     });
     emit();
+  },
+
+  setRedactionFill: (redactionFill: string): void => {
+    setState({ redactionFill });
   },
 
   setShapeStyle: (shapeStyle: Partial<ShapeStyleDefaults>): void => {

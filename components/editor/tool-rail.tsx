@@ -5,6 +5,7 @@ import {
   ImageIcon,
   MousePointer2Icon,
   PenLineIcon,
+  RectangleEllipsisIcon,
   SignatureIcon,
   TypeIcon,
 } from "lucide-react";
@@ -25,6 +26,7 @@ const TOOLS: { icon: React.ReactNode; id: EditorTool; label: string }[] = [
   { icon: <PenLineIcon />, id: "draw", label: "Draw" },
   { icon: <SignatureIcon />, id: "signature", label: "Signature" },
   { icon: <HighlighterIcon />, id: "highlight", label: "Highlight" },
+  { icon: <RectangleEllipsisIcon />, id: "redact", label: "Redact" },
 ];
 
 export const ToolRail = () => {

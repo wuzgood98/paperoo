@@ -39,6 +39,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { toastManager } from "@/components/ui/toast-manager";
 import { Toggle } from "@/components/ui/toggle";
+import { confirmRedactions } from "@/lib/editor/redaction-gate";
 import {
   editorStore,
   useCanRedo,
@@ -59,6 +60,9 @@ const exportPdf = async () => {
 
 const printPdf = async () => {
   try {
+    if (!(await confirmRedactions())) {
+      return;
+    }
     const { runPrint } = await import("@/lib/pdf/run-print");
     await runPrint();
   } catch (error) {

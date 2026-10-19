@@ -435,7 +435,7 @@ const isLink = (dict: PDFDict): boolean =>
  */
 export const markInternalLinkTargets = (
   sources: ReadonlyMap<string, { doc: PDFDocument; pages: PDFPage[] }>,
-  outputPages: readonly EditorPage[]
+  outputPages: readonly Pick<EditorPage, "docId" | "sourceIndex">[]
 ): void => {
   const kept = new Set(
     outputPages.map((page) => pageKeyString(pageKeyOf(page)))

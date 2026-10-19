@@ -14,6 +14,7 @@ export const ToolStyleInspector = () => {
   const drawStyle = useEditorStore((state) => state.drawStyle);
   const shapeStyle = useEditorStore((state) => state.shapeStyle);
   const highlightColor = useEditorStore((state) => state.highlightColor);
+  const redactionFill = useEditorStore((state) => state.redactionFill);
   const textColor = useEditorStore((state) => state.textStyle.color);
 
   if (tool === "draw") {
@@ -61,6 +62,18 @@ export const ToolStyleInspector = () => {
           label="Fill"
           onChange={(color) => editorStore.setHighlightColor(color)}
           value={highlightColor}
+        />
+      </div>
+    );
+  }
+
+  if (tool === "redact") {
+    return (
+      <div className={inspectorStripClassName}>
+        <ColorField
+          label="Fill"
+          onChange={(fill) => editorStore.setRedactionFill(fill)}
+          value={redactionFill}
         />
       </div>
     );

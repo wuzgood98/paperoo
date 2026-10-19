@@ -9,7 +9,7 @@ import type { OcrTextObject } from "@/lib/ocr/types";
  * Shape of a saved session. Bump it, and add a migration from the previous
  * version, whenever a persisted type changes shape.
  */
-export const SESSION_SCHEMA_VERSION = 1;
+export const SESSION_SCHEMA_VERSION = 2;
 
 /** Saved sessions older than this are not offered. */
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -73,7 +73,11 @@ export interface SessionStorage {
 type Migration = (meta: PersistedMeta) => PersistedMeta;
 
 /** Upgrades from each older schema version to the next one. */
-const MIGRATIONS: Readonly<Record<number, Migration>> = {};
+const MIGRATIONS = new Map<number, Migration>([
+  // 2 adds redaction objects. Nothing stored changes shape; the bump makes
+  // an older build refuse a session it would export without its redactions.
+  [1, (meta) => ({ ...meta, schemaVersion: 2 })],
+]);
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- IndexedDB records are I/O: check them before use */
 const isStringArray = (value: unknown): value is string[] =>
@@ -102,7 +106,7 @@ export const isPersistedMeta = (value: unknown): value is PersistedMeta => {
 export const migrateMeta = (meta: PersistedMeta): PersistedMeta | null => {
   let current = meta;
   while (current.schemaVersion < SESSION_SCHEMA_VERSION) {
-    const migrate = MIGRATIONS[current.schemaVersion];
+    const migrate = MIGRATIONS.get(current.schemaVersion);
     if (!migrate) {
       return null;
     }

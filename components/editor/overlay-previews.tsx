@@ -49,6 +49,7 @@ export const OverlayPreviews = ({
   pendingScaled,
   placingSignature,
   previewPoint,
+  redactionFill,
   shapeStyle,
   tool,
   zoom,
@@ -59,6 +60,7 @@ export const OverlayPreviews = ({
   pendingScaled: Point[] | null;
   placingSignature: boolean;
   previewPoint: Point | null;
+  redactionFill: string;
   shapeStyle: ShapeStyleDefaults;
   tool: EditorTool;
   zoom: number;
@@ -89,6 +91,18 @@ export const OverlayPreviews = ({
           height: Math.abs(draft.end.y - draft.start.y) * zoom,
           left: Math.min(draft.start.x, draft.end.x) * zoom,
           opacity: 0.4,
+          top: Math.min(draft.start.y, draft.end.y) * zoom,
+          width: Math.abs(draft.end.x - draft.start.x) * zoom,
+        }}
+      />
+    ) : null}
+    {draft?.kind === "rect" && tool === "redact" ? (
+      <div
+        className="border-destructive pointer-events-none absolute border border-dashed"
+        style={{
+          backgroundColor: `color-mix(in srgb, ${redactionFill} 50%, transparent)`,
+          height: Math.abs(draft.end.y - draft.start.y) * zoom,
+          left: Math.min(draft.start.x, draft.end.x) * zoom,
           top: Math.min(draft.start.y, draft.end.y) * zoom,
           width: Math.abs(draft.end.x - draft.start.x) * zoom,
         }}
