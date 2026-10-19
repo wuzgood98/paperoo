@@ -7,6 +7,7 @@
 @theme inline {
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -301,28 +302,26 @@
     crosshair;
 }
 
-@layer components {
-  .editor-pressable {
-    touch-action: manipulation;
-    transition: transform 160ms var(--ease-out);
-  }
+/*
+ * Press feedback. Unlayered so its transition beats the `transition-shadow`
+ * utility on Button and Toggle, which would otherwise make the press snap;
+ * box-shadow stays in the list so their shadow change still eases.
+ */
+.editor-pressable {
+  touch-action: manipulation;
+  transition:
+    transform 160ms var(--ease-out),
+    box-shadow 150ms var(--default-transition-timing-function);
+}
 
+.editor-pressable:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-pressable,
   .editor-pressable:active {
-    transform: scale(0.97);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .editor-pressable,
-    .editor-pressable:active {
-      transform: none;
-      transition: opacity 160ms var(--ease-out);
-    }
-
-    [data-slot="dialog-popup"],
-    [data-slot="popover-popup"],
-    [data-slot="tooltip-popup"] {
-      transition: opacity 160ms var(--ease-out);
-      scale: 1;
-    }
+    transform: none;
+    transition: box-shadow 150ms var(--default-transition-timing-function);
   }
 }

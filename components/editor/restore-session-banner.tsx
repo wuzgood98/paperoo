@@ -3,12 +3,7 @@
 import { HistoryIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { PersistedMeta } from "@/lib/session/schema";
 
@@ -63,42 +58,46 @@ export const RestoreSessionBanner = () => {
 
   const pages = meta.pageOrder.length;
   return (
-    <Alert className="max-w-md text-left" variant="info">
-      <HistoryIcon />
-      <AlertTitle>Restore your last session?</AlertTitle>
-      <AlertDescription>
-        <span className="break-all">{meta.fileName}</span> · {pages}{" "}
-        {pages === 1 ? "page" : "pages"} · saved {savedAgo(meta.savedAt)}.
-        Unexported edits are kept in this browser until you export or discard
-        them.
-      </AlertDescription>
-      <AlertAction>
-        <Button
-          disabled={restoring}
-          onClick={async () => {
-            const { discardSavedSession } = await loadRestore();
-            await discardSavedSession();
-            setMeta(null);
-          }}
-          size="sm"
-          variant="ghost"
-        >
-          Discard
-        </Button>
-        <Button
-          disabled={restoring}
-          onClick={async () => {
-            setRestoring(true);
-            const { restoreSavedSession } = await loadRestore();
-            await restoreSavedSession();
-            setRestoring(false);
-            setMeta(null);
-          }}
-          size="sm"
-        >
-          Restore
-        </Button>
-      </AlertAction>
-    </Alert>
+    <div className="absolute inset-x-0 bottom-6 mx-auto w-[calc(100%-2rem)] max-w-md transition-[opacity,translate] duration-250 ease-out max-sm:static starting:opacity-0 motion-safe:starting:translate-y-2 [@media(max-height:640px)]:static">
+      <Alert className="max-w-md text-left" variant="info">
+        <HistoryIcon />
+        <AlertTitle>Restore your last session?</AlertTitle>
+        <AlertDescription>
+          <span className="break-all">{meta.fileName}</span> · {pages}{" "}
+          {pages === 1 ? "page" : "pages"} · saved {savedAgo(meta.savedAt)}.
+          Unexported edits are kept in this browser until you export or discard
+          them.
+        </AlertDescription>
+        {/* Not AlertAction: the long description needs the full width, so the
+            buttons sit below it like a dialog footer. */}
+        <div className="col-start-2 mt-2 flex justify-end gap-1">
+          <Button
+            disabled={restoring}
+            onClick={async () => {
+              const { discardSavedSession } = await loadRestore();
+              await discardSavedSession();
+              setMeta(null);
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            Discard
+          </Button>
+          <Button
+            disabled={restoring}
+            onClick={async () => {
+              setRestoring(true);
+              const { restoreSavedSession } = await loadRestore();
+              await restoreSavedSession();
+              setRestoring(false);
+              setMeta(null);
+            }}
+            size="sm"
+          >
+            Restore
+          </Button>
+        </div>
+      </Alert>
+    </div>
   );
 };
