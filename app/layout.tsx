@@ -1,5 +1,6 @@
 /* oxlint-disable react/no-danger -- Next.js JSON-LD guide uses a script tag */
 
+import { Analytics } from "@vercel/analytics/next";
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 
@@ -84,6 +85,7 @@ const RootLayout = ({
           <ToastProvider position="bottom-center">{children}</ToastProvider>
         </TooltipProvider>
       </ThemeProvider>
+      <Analytics />
     </body>
   </html>
 );

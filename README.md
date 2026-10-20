@@ -62,6 +62,8 @@ pnpm dev
 
 Next.js 16, React 19, pdf.js for rendering, pdf-lib for export, Tesseract.js for OCR, Tailwind CSS 4.
 
+Page views are counted with [Vercel Web Analytics](https://vercel.com/docs/analytics), which uses no cookies. It records which page was visited, never your files or their contents.
+
 ## Layout
 
 ```
