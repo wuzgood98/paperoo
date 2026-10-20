@@ -11,6 +11,10 @@ const siteDescription =
 
 const siteName = "Paperoo";
 
+const supportEmail = "support@paperoo.app";
+
+const organizationId = `${appUrl}/#organization`;
+
 export const siteConfig = {
   description: siteDescription,
   jsonLd: {
@@ -18,6 +22,19 @@ export const siteConfig = {
     "@graph": [
       {
         "@type": "WebSite",
+        name: siteName,
+        publisher: { "@id": organizationId },
+        url: appUrl,
+      },
+      {
+        "@id": organizationId,
+        "@type": "Organization",
+        contactPoint: {
+          "@type": "ContactPoint",
+          contactType: "customer support",
+          email: supportEmail,
+        },
+        email: supportEmail,
         name: siteName,
         url: appUrl,
       },
@@ -39,12 +56,27 @@ export const siteConfig = {
           priceCurrency: "USD",
         },
         operatingSystem: "Web",
+        publisher: { "@id": organizationId },
         url: appUrl,
       },
     ],
   },
   keywords: ["PDF editor", "browser PDF editor", "private PDF editing", "OCR"],
   name: siteName,
+  supportEmail,
   title: `${siteName} — Edit PDFs in your browser`,
   url: appUrl,
+};
+
+/** A mailto link to support with the subject and body filled in. */
+export const supportMailto = ({
+  body,
+  subject,
+}: {
+  body: string;
+  subject: string;
+}): string => {
+  const params = new URLSearchParams({ body, subject });
+  // Mail apps read "+" literally, so spaces must be %20.
+  return `mailto:${supportEmail}?${params.toString().replaceAll("+", "%20")}`;
 };

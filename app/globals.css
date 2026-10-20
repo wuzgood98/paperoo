@@ -325,3 +325,25 @@
     transition: box-shadow 150ms var(--default-transition-timing-function);
   }
 }
+
+/*
+ * Crash screen: the lower half of the torn page drops and tilts once, then
+ * rests there. Without motion it simply starts torn.
+ */
+.crash-tear {
+  transform: translate(2px, 11px) rotate(7deg);
+  transform-box: view-box;
+  transform-origin: 40px 78px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .crash-tear {
+    animation: crash-tear 520ms var(--ease-out) 180ms backwards;
+  }
+}
+
+@keyframes crash-tear {
+  from {
+    transform: none;
+  }
+}
