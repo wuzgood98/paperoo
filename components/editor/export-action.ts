@@ -1,6 +1,7 @@
 import { toastManager } from "@/components/ui/toast-manager";
 import { confirmRedactions } from "@/lib/editor/redaction-gate";
 import type { ExportOptions } from "@/lib/pdf/run-export";
+import { siteConfig, supportMailto } from "@/lib/site";
 
 /**
  * Export the edited PDF, or only `options.pageIds` (extract), and report
@@ -22,8 +23,18 @@ export const exportPdfWithToast = async (
     });
     return true;
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Export failed.";
     toastManager.add({
-      description: error instanceof Error ? error.message : "Export failed.",
+      actionProps: {
+        children: "Email support",
+        onClick: () => {
+          window.location.href = supportMailto({
+            body: `My export failed with this message:\n\n${message}\n\nWhat I was doing:\n`,
+            subject: "Paperoo export failed",
+          });
+        },
+      },
+      description: `${message} If it keeps happening, email ${siteConfig.supportEmail}.`,
       title: "Export failed",
       type: "error",
     });

@@ -20,6 +20,7 @@ import {
   openPdfFromUrl,
   prewarmPdfOpen,
 } from "@/lib/pdf/open-pdf";
+import { siteConfig } from "@/lib/site";
 
 const onFiles = async (files: FileList | null) => {
   await openPdfFromList(files);
@@ -117,6 +118,15 @@ export const EmptyState = () => {
           Open
           <Kbd>⌘O</Kbd>· Undo
           <Kbd>⌘Z</Kbd>
+        </p>
+        <p className="text-muted-foreground text-xs">
+          Need help? Email{" "}
+          <a
+            className="text-foreground underline underline-offset-4"
+            href={`mailto:${siteConfig.supportEmail}`}
+          >
+            {siteConfig.supportEmail}
+          </a>
         </p>
       </EmptyContent>
       <RestoreSessionBanner />
