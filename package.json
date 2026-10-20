@@ -22,6 +22,7 @@
     "@pdf-lib/fontkit": "^1.1.1",
     "@pdf-lib/standard-fonts": "1.0.0",
     "@tanstack/react-virtual": "^3.14.13",
+    "@vercel/analytics": "^2.0.1",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "lucide-react": "^1.48.0",
