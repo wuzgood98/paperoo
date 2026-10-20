@@ -12,6 +12,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Do not use jargon, and speak coherently. State it more simply and concisely, like one human talking to another.
 - No AI attribution in commits or pull requests: no `Co-Authored-By` lines, session links, or "Generated with" footers.
+- Commits must be authored by Gideon Ofori Addo, never an AI identity. Before committing, check `git config user.name`; if it names an AI agent, set the name and email to match Gideon's earlier commits in `git log`.
 
 # Ultracite Code Standards
 
