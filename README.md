@@ -2,6 +2,10 @@
 
 A lightweight web PDF editor. Open, edit, export, and print PDFs in the browser — files never leave your machine.
 
+https://github.com/user-attachments/assets/67459f21-e44c-488b-b26d-c46a30a5be37
+
+Video not playing? [Watch the walkthrough](https://x6zhlifrtw.ufs.sh/f/XGGYyzcpFU3lvytn5iK9AXDtrLHBigPfypk0ZFv3UqzVelSY).
+
 ## Features
 
 - Open a PDF with the file picker, drag-and-drop, or the bundled sample (`⌘O` / `Ctrl+O`)
