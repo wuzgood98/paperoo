@@ -1,10 +1,17 @@
 "use client";
 
 import { memo, useEffect, useId, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent,
+  PointerEvent,
+  RefObject,
+} from "react";
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
+  adjacentPdfFormWidget,
+  documentForm,
   isPdfFormFieldDirty,
   isPdfFormFieldEditable,
   nextCheckboxValue,
@@ -51,8 +58,58 @@ const controlFontStyle = (
   };
 };
 
+/** A page scrolled into view mounts its widgets within a few frames. */
+const FOCUS_WIDGET_MAX_FRAMES = 30;
+
 const patchSelectedField = (updater: (field: PdfFormField) => PdfFormField) => {
   editorStore.patchPdfFormField(updater);
+};
+
+const widgetButton = (widgetId: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(
+    `[data-form-widget="${CSS.escape(widgetId)}"]`
+  );
+
+/**
+ * Focus the next or previous fillable widget in the document, scrolling its
+ * page into view first. False past either end, so Tab can leave the form.
+ */
+const focusAdjacentWidget = (widgetId: string, step: 1 | -1): boolean => {
+  const { document: editorDocument } = editorStore.getState();
+  const target = adjacentPdfFormWidget(
+    documentForm(editorDocument),
+    editorDocument.pages.map((page) => page.id),
+    widgetId,
+    step
+  );
+  if (!target) {
+    return false;
+  }
+  editorStore.setCurrentPage(target.widget.pageId, { syncFitZoom: false });
+  let frames = 0;
+  const tryFocus = (): void => {
+    const node = widgetButton(target.widget.id);
+    if (node) {
+      node.focus();
+      return;
+    }
+    frames += 1;
+    if (frames < FOCUS_WIDGET_MAX_FRAMES) {
+      window.requestAnimationFrame(tryFocus);
+    }
+  };
+  tryFocus();
+  return true;
+};
+
+/** Tab and Shift+Tab move between fields across pages, not DOM order. */
+const handleTabKey = (event: KeyboardEvent<HTMLElement>, widgetId: string) => {
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) {
+    return;
+  }
+  if (focusAdjacentWidget(widgetId, event.shiftKey ? -1 : 1)) {
+    event.preventDefault();
+  }
 };
 
 const FormCoverPlate = ({
@@ -116,6 +173,11 @@ const FormTextControl = ({
   const onKeyDown = (
     event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>
   ): void => {
+    // Moving focus blurs this input, which commits the value.
+    handleTabKey(event, widget.id);
+    if (event.defaultPrevented) {
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       discardRef.current = true;
@@ -171,73 +233,152 @@ const FormTextControl = ({
   );
 };
 
-const FormDropdownControl = ({
-  field,
-  widget,
-  zoom,
-}: {
-  field: PdfFormDropdownField;
+interface ChoiceControlProps {
+  onExit: () => void;
+  /** Opened by a click, so the option list opens too. */
+  openPicker: boolean;
   widget: PdfFormWidget;
   zoom: number;
-}) => {
+}
+
+/** Focus a control as it opens, and open a dropdown's list on a click. */
+const useFocusOnOpen = (
+  ref: RefObject<HTMLInputElement | HTMLSelectElement | null>,
+  openPicker: boolean
+): void => {
+  useEffect(() => {
+    const control = ref.current;
+    if (!control) {
+      return;
+    }
+    control.focus({ preventScroll: true });
+    if (!(openPicker && "showPicker" in control)) {
+      return;
+    }
+    try {
+      control.showPicker();
+    } catch {
+      // Some browsers refuse a picker here; the control is focused anyway.
+    }
+    // openPicker only changes while closed, so this runs once per open.
+  }, [openPicker, ref]);
+};
+
+/** Escape closes the control; Tab moves to the next field. */
+const choiceKeyDown = (
+  event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>,
+  widgetId: string,
+  onEscape: () => void
+): void => {
+  handleTabKey(event, widgetId);
+  if (!event.defaultPrevented && event.key === "Escape") {
+    event.preventDefault();
+    onEscape();
+    event.currentTarget.blur();
+  }
+};
+
+const commitDropdownValue = (
+  field: PdfFormDropdownField,
+  exportValue: string
+): void => {
+  if (exportValue === (field.value ?? "")) {
+    return;
+  }
+  patchSelectedField((current) =>
+    current.kind === "dropdown" && current.id === field.id
+      ? { ...current, value: exportValue.length > 0 ? exportValue : null }
+      : current
+  );
+};
+
+const FormComboControl = ({
+  field,
+  onExit,
+  openPicker,
+  widget,
+  zoom,
+}: ChoiceControlProps & { field: PdfFormDropdownField }) => {
   const listId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const discardRef = useRef(false);
+  useFocusOnOpen(inputRef, openPicker);
   const displayValue =
     pdfFormChoiceDisplay(field.options, field.value) || (field.value ?? "");
 
-  const commitExport = (exportValue: string): void => {
-    if (exportValue === (field.value ?? "")) {
-      return;
-    }
-    patchSelectedField((current) =>
-      current.kind === "dropdown" && current.id === field.id
-        ? { ...current, value: exportValue.length > 0 ? exportValue : null }
-        : current
-    );
-  };
+  return (
+    <>
+      <input
+        aria-label={field.name}
+        autoComplete="off"
+        className="absolute inset-0 h-full w-full border-0 bg-white p-0.5 text-[#111827] outline-none"
+        defaultValue={displayValue}
+        list={listId}
+        onBlur={(event) => {
+          if (discardRef.current) {
+            discardRef.current = false;
+            onExit();
+            return;
+          }
+          const typed = event.currentTarget.value;
+          const match = field.options.find(
+            (option) => option.display === typed || option.exportValue === typed
+          );
+          commitDropdownValue(field, match?.exportValue ?? typed);
+          onExit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.currentTarget.blur();
+            return;
+          }
+          choiceKeyDown(event, widget.id, () => {
+            discardRef.current = true;
+          });
+        }}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+        }}
+        ref={inputRef}
+        style={controlFontStyle(widget, zoom)}
+      />
+      <datalist id={listId}>
+        {field.options.map((option) => (
+          <option key={option.exportValue} value={option.display}>
+            {option.display}
+          </option>
+        ))}
+      </datalist>
+    </>
+  );
+};
 
-  if (field.editable) {
-    return (
-      <>
-        <input
-          aria-label={field.name}
-          autoComplete="off"
-          className="absolute inset-0 h-full w-full border-0 bg-white p-0.5 text-[#111827] outline-none"
-          defaultValue={displayValue}
-          list={listId}
-          onBlur={(event) => {
-            const typed = event.currentTarget.value;
-            const match = field.options.find(
-              (option) =>
-                option.display === typed || option.exportValue === typed
-            );
-            commitExport(match?.exportValue ?? typed);
-          }}
-          onPointerDown={(event) => {
-            event.stopPropagation();
-          }}
-          style={controlFontStyle(widget, zoom)}
-        />
-        <datalist id={listId}>
-          {field.options.map((option) => (
-            <option key={option.exportValue} value={option.display}>
-              {option.display}
-            </option>
-          ))}
-        </datalist>
-      </>
-    );
-  }
+const FormDropdownControl = ({
+  field,
+  onExit,
+  openPicker,
+  widget,
+  zoom,
+}: ChoiceControlProps & { field: PdfFormDropdownField }) => {
+  const selectRef = useRef<HTMLSelectElement>(null);
+  useFocusOnOpen(selectRef, openPicker);
 
   return (
     <select
       aria-label={field.name}
       className="absolute inset-0 h-full w-full border-0 bg-white text-[#111827] outline-none"
+      onBlur={onExit}
       onChange={(event) => {
-        commitExport(event.currentTarget.value);
+        commitDropdownValue(field, event.currentTarget.value);
+      }}
+      onKeyDown={(event) => {
+        choiceKeyDown(event, widget.id, onExit);
       }}
       onPointerDown={(event) => {
         event.stopPropagation();
       }}
+      ref={selectRef}
       style={controlFontStyle(widget, zoom)}
       value={field.value ?? ""}
     >
@@ -253,45 +394,52 @@ const FormDropdownControl = ({
 
 const FormListboxControl = ({
   field,
+  onExit,
   widget,
   zoom,
-}: {
-  field: PdfFormListboxField;
-  widget: PdfFormWidget;
-  zoom: number;
-}) => (
-  <select
-    aria-label={field.name}
-    className="absolute inset-0 h-full w-full border-0 bg-white text-[#111827] outline-none"
-    multiple={field.multiSelect}
-    onChange={(event) => {
-      const next = Array.from(
-        event.currentTarget.selectedOptions,
-        (option) => option.value
-      );
-      patchSelectedField((current) =>
-        current.kind === "listbox" && current.id === field.id
-          ? { ...current, value: next }
-          : current
-      );
-    }}
-    onPointerDown={(event) => {
-      event.stopPropagation();
-    }}
-    size={Math.max(
-      LISTBOX_MIN_VISIBLE_OPTIONS,
-      Math.min(field.options.length, LISTBOX_MAX_VISIBLE_OPTIONS)
-    )}
-    style={controlFontStyle(widget, zoom)}
-    value={field.multiSelect ? field.value : (field.value[0] ?? "")}
-  >
-    {field.options.map((option) => (
-      <option key={option.exportValue} value={option.exportValue}>
-        {option.display}
-      </option>
-    ))}
-  </select>
-);
+}: Omit<ChoiceControlProps, "openPicker"> & { field: PdfFormListboxField }) => {
+  const selectRef = useRef<HTMLSelectElement>(null);
+  useFocusOnOpen(selectRef, false);
+
+  return (
+    <select
+      aria-label={field.name}
+      className="absolute inset-0 h-full w-full border-0 bg-white text-[#111827] outline-none"
+      multiple={field.multiSelect}
+      onBlur={onExit}
+      onChange={(event) => {
+        const next = Array.from(
+          event.currentTarget.selectedOptions,
+          (option) => option.value
+        );
+        patchSelectedField((current) =>
+          current.kind === "listbox" && current.id === field.id
+            ? { ...current, value: next }
+            : current
+        );
+      }}
+      onKeyDown={(event) => {
+        choiceKeyDown(event, widget.id, onExit);
+      }}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      ref={selectRef}
+      size={Math.max(
+        LISTBOX_MIN_VISIBLE_OPTIONS,
+        Math.min(field.options.length, LISTBOX_MAX_VISIBLE_OPTIONS)
+      )}
+      style={controlFontStyle(widget, zoom)}
+      value={field.multiSelect ? field.value : (field.value[0] ?? "")}
+    >
+      {field.options.map((option) => (
+        <option key={option.exportValue} value={option.exportValue}>
+          {option.display}
+        </option>
+      ))}
+    </select>
+  );
+};
 
 const activateWidget = (field: PdfFormField, widget: PdfFormWidget): void => {
   editorStore.selectPdfFormField(field.id);
@@ -326,7 +474,6 @@ const FormWidgetChrome = ({
   onBeginEdit,
   onExitEdit,
   selected,
-  tabIndex,
   widget,
   zoom,
 }: {
@@ -336,10 +483,11 @@ const FormWidgetChrome = ({
   onBeginEdit: (fieldId: string) => void;
   onExitEdit: () => void;
   selected: boolean;
-  tabIndex: number;
   widget: PdfFormWidget;
   zoom: number;
 }) => {
+  // A click opens a dropdown's list too; Tab only focuses it.
+  const [openedByPointer, setOpenedByPointer] = useState(false);
   const dirty = isPdfFormFieldDirty(field);
   const editable = isPdfFormFieldEditable(field);
   const showControl = editing && editable && startsInlineEdit(field);
@@ -350,6 +498,10 @@ const FormWidgetChrome = ({
   } else if (hovered) {
     chromeClass = "outline-primary/40 outline";
   }
+  const exitControl = (): void => {
+    setOpenedByPointer(false);
+    onExitEdit();
+  };
 
   return (
     <div
@@ -362,21 +514,42 @@ const FormWidgetChrome = ({
       {showControl && field.kind === "text" ? (
         <FormTextControl
           field={field}
-          onExit={onExitEdit}
+          onExit={exitControl}
           widget={widget}
           zoom={zoom}
         />
       ) : null}
-      {showControl && field.kind === "dropdown" ? (
-        <FormDropdownControl field={field} widget={widget} zoom={zoom} />
+      {showControl && field.kind === "dropdown" && field.editable ? (
+        <FormComboControl
+          field={field}
+          onExit={exitControl}
+          openPicker={openedByPointer}
+          widget={widget}
+          zoom={zoom}
+        />
+      ) : null}
+      {showControl && field.kind === "dropdown" && !field.editable ? (
+        <FormDropdownControl
+          field={field}
+          onExit={exitControl}
+          openPicker={openedByPointer}
+          widget={widget}
+          zoom={zoom}
+        />
       ) : null}
       {showControl && field.kind === "listbox" ? (
-        <FormListboxControl field={field} widget={widget} zoom={zoom} />
+        <FormListboxControl
+          field={field}
+          onExit={exitControl}
+          widget={widget}
+          zoom={zoom}
+        />
       ) : null}
       {showControl ? null : (
         <button
           aria-label={field.name}
           className="absolute inset-0 cursor-text bg-transparent"
+          data-form-widget={widget.id}
           onClick={() => {
             activateWidget(field, widget);
             if (editable && startsInlineEdit(field)) {
@@ -389,10 +562,15 @@ const FormWidgetChrome = ({
               onBeginEdit(field.id);
             }
           }}
+          onKeyDown={(event) => {
+            handleTabKey(event, widget.id);
+          }}
           onPointerDown={(event) => {
             event.stopPropagation();
+            setOpenedByPointer(true);
           }}
-          tabIndex={tabIndex}
+          // Tab skips fields with nothing to fill; a click still selects them.
+          tabIndex={editable ? 0 : -1}
           type="button"
         />
       )}
@@ -423,16 +601,16 @@ const PdfFormLayerView = ({
 
   return (
     <>
-      {items.map(({ field, widget }, index) => (
+      {items.map(({ field, widget }) => (
         <FormWidgetChrome
-          editing={editingId === field.id}
+          // Selecting anything else closes an open control.
+          editing={editingId === field.id && selectedId === field.id}
           field={field}
           hovered={hoveredId === field.id}
           key={widget.id}
           onBeginEdit={onBeginEdit}
           onExitEdit={onExitEdit}
           selected={selectedId === field.id}
-          tabIndex={index + 1}
           widget={widget}
           zoom={zoom}
         />

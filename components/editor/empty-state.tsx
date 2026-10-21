@@ -91,6 +91,7 @@ export const EmptyState = () => {
             event.target.value = "";
           }}
           ref={inputRef}
+          tabIndex={-1}
           type="file"
         />
         <div className="flex items-center justify-center gap-2">

@@ -42,6 +42,7 @@ export const PdfImageInspector = ({ object }: { object: PdfImageObject }) => {
           }
         }}
         ref={inputRef}
+        tabIndex={-1}
         type="file"
       />
       <Button

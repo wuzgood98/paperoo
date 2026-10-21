@@ -205,7 +205,7 @@ export const pdfFormFieldPreviewText = (
   }
 };
 
-interface PdfFormWidgetItem {
+export interface PdfFormWidgetItem {
   field: PdfFormField;
   widget: PdfFormWidget;
 }
@@ -246,6 +246,37 @@ export const pdfFormWidgetsOnPage = (
   pageId: string
 ): readonly PdfFormWidgetItem[] =>
   formWidgetsByPage(documentForm(document)).get(pageId) ?? NO_FORM_WIDGETS;
+
+/**
+ * The next (step 1) or previous (step -1) widget Tab should reach: pages in
+ * document order, then the page's widget order. Read-only and signature
+ * fields are skipped. Null past either end, so focus leaves the form.
+ */
+export const adjacentPdfFormWidget = (
+  form: PdfFormModel,
+  pageOrder: readonly string[],
+  widgetId: string,
+  step: 1 | -1
+): PdfFormWidgetItem | null => {
+  const items = pageOrder.flatMap((pageId) =>
+    pdfFormWidgetsOnPage({ form }, pageId)
+  );
+  const from = items.findIndex((item) => item.widget.id === widgetId);
+  if (from === -1) {
+    return null;
+  }
+  for (
+    let index = from + step;
+    index >= 0 && index < items.length;
+    index += step
+  ) {
+    const item = items[index];
+    if (item && isPdfFormFieldEditable(item.field)) {
+      return item;
+    }
+  }
+  return null;
+};
 
 const pointInRect = (point: Point, rect: Rect): boolean =>
   point.x >= rect.x &&
