@@ -21,13 +21,13 @@ import {
   pdfTextCssInkOffsetFromRunTop,
   pdfTextCoverColor,
   pdfTextCoverRects,
-  pdfTextFramePivot,
-  pdfTextFrameRotation,
   pdfTextInkCoverStyle,
   pdfTextInkOutline,
   pdfTextNeedsFill,
   pdfTextNeedsStroke,
   pdfTextOverlayBox,
+  pdfTextStripTurn,
+  pdfTextUnturnedBox,
 } from "@/lib/editor/object-utils";
 import { editorStore } from "@/lib/editor/store";
 import type { EditorPage, PdfTextObject, Rect } from "@/lib/editor/types";
@@ -66,50 +66,45 @@ const pdfTextInkStyle = (
 };
 
 /**
- * Wrapper for a run's frame. A turned run turns about its baseline origin, so
- * its outline, covers, preview and editor all land on its original glyphs.
- * `unturnedRotation` turns an unturned frame about its center instead.
+ * Wrapper for a run's frame, an unturned strip (see `pdfTextUnturnedBox`). It
+ * turns about the baseline origin, so a run that is turned in the PDF or
+ * sits on a rotated page keeps its outline, covers, preview and editor on its
+ * original glyphs.
  */
 const pdfTextFrameStyle = (
   object: PdfTextObject,
+  page: EditorPage,
   frame: Rect,
-  zoom: number,
-  unturnedRotation = 0
+  zoom: number
 ): CSSProperties => {
-  const rotation = pdfTextFrameRotation(object);
+  const { pivot, rotation } = pdfTextStripTurn(object, page);
   if (rotation === 0) {
-    return objectWrapperStyle({ ...frame, rotation: unturnedRotation }, zoom);
+    return objectWrapperStyle({ ...frame, rotation: 0 }, zoom);
   }
-  const pivot = pdfTextFramePivot(object);
   return {
     ...objectWrapperStyle({ ...frame, rotation }, zoom),
     transformOrigin: `${pageToCss(pivot.x - frame.x, zoom)}px ${pageToCss(pivot.y - frame.y, zoom)}px`,
   };
 };
 
-/** Glyph transform inside the frame: page-`/Rotate` turn and `Tz` stretch. */
+/** Glyph transform inside the frame: the `Tz` stretch. */
 const pdfTextGlyphTransform = (object: PdfTextObject): string | undefined => {
-  const parts: string[] = [];
-  const glyphRotation = object.rotation - pdfTextFrameRotation(object);
-  if (glyphRotation !== 0) {
-    parts.push(`rotate(${glyphRotation}deg)`);
-  }
   const scale = object.horizontalScale ?? 1;
-  if (scale !== 1) {
-    parts.push(`scaleX(${scale})`);
-  }
-  return parts.length > 0 ? parts.join(" ") : undefined;
+  return scale === 1 ? undefined : `scaleX(${scale})`;
 };
 
+/** The run's box as its unturned strip, fitted to `text` once edited. */
 const overlayFrame = (
   object: PdfTextObject,
+  page: EditorPage,
   text: string = object.text
-): ReturnType<typeof pdfTextOverlayBox> => {
+): Rect => {
   const measured = measurePdfTextWidth(object, text);
-  if (text !== object.text) {
-    return fittedPdfTextBox(object, measured);
-  }
-  return pdfTextOverlayBox(object, measured);
+  const box =
+    text === object.text
+      ? pdfTextOverlayBox(object, measured)
+      : fittedPdfTextBox(object, measured);
+  return pdfTextUnturnedBox(object, page, box);
 };
 
 /** Baseline ratio for the exact face and CSS size `pdfTextInkStyle` paints. */
@@ -129,27 +124,34 @@ const inkBaselineRatio = (
 };
 
 const PdfTextCoverPlate = ({
-  cover,
+  cover: displayedCover,
   coverColor,
+  object,
+  page,
   runBox,
   zoom,
 }: {
   cover: Rect;
   coverColor: string;
+  object: PdfTextObject;
+  page: EditorPage;
   runBox: Rect;
   zoom: number;
-}) => (
-  <div
-    className="absolute"
-    style={{
-      backgroundColor: coverColor,
-      height: pageToCss(cover.height, zoom),
-      left: pageToCss(cover.x - runBox.x, zoom),
-      top: pageToCss(cover.y - runBox.y, zoom),
-      width: pageToCss(cover.width, zoom),
-    }}
-  />
-);
+}) => {
+  const cover = pdfTextUnturnedBox(object, page, displayedCover);
+  return (
+    <div
+      className="absolute"
+      style={{
+        backgroundColor: coverColor,
+        height: pageToCss(cover.height, zoom),
+        left: pageToCss(cover.x - runBox.x, zoom),
+        top: pageToCss(cover.y - runBox.y, zoom),
+        width: pageToCss(cover.width, zoom),
+      }}
+    />
+  );
+};
 
 const PdfTextEditor = ({
   fontsReady,
@@ -197,7 +199,7 @@ const PdfTextEditor = ({
   }, [object.id, object.text, page, value, valueWidth]);
   // A recognized centered line stays centered while the draft grows.
   const placed = placeOutlineDraft(object, page, value, valueWidth);
-  const frame = overlayFrame(placed, value);
+  const frame = overlayFrame(placed, page, value);
   const fontSizeCss = pageToCss(fontSize, zoom);
   // Keystrokes only change `draft`; until measurement lands this walks the
   // whole page, so compute it once per run and page version.
@@ -273,7 +275,7 @@ const PdfTextEditor = ({
     <div
       className="absolute origin-center"
       style={{
-        ...pdfTextFrameStyle(object, frame, zoom, object.rotation),
+        ...pdfTextFrameStyle(object, page, frame, zoom),
         opacity: object.fillOpacity,
       }}
     >
@@ -282,6 +284,8 @@ const PdfTextEditor = ({
           cover={cover}
           coverColor={pdfTextCoverColor(object)}
           key={`${cover.x}:${cover.y}:${cover.width}:${cover.height}`}
+          object={object}
+          page={page}
           runBox={frame}
           zoom={zoom}
         />
@@ -426,18 +430,20 @@ const PdfTextEditsView = ({
         // Covers paint in their own pass, under every run's text and the
         // inline editor: a run emptied by a link label edit must not hide
         // the caption drawn by the run before it.
-        const frame = overlayFrame(object);
+        const frame = overlayFrame(object, page);
         return (
           <div
             className="pointer-events-none absolute origin-center"
             key={`cover-${object.id}`}
-            style={pdfTextFrameStyle(object, frame, zoom)}
+            style={pdfTextFrameStyle(object, page, frame, zoom)}
           >
             {pdfTextCoverRects(object, page).map((cover) => (
               <PdfTextCoverPlate
                 cover={cover}
                 coverColor={pdfTextCoverColor(object)}
                 key={`${cover.x}:${cover.y}:${cover.width}:${cover.height}`}
+                object={object}
+                page={page}
                 runBox={frame}
                 zoom={zoom}
               />
@@ -464,7 +470,7 @@ const PdfTextEditsView = ({
         const linkAppearance = pdfLinkTextAppearance(page, object);
         const fillColor = linkAppearance?.fillColor ?? object.color;
         const underline = linkAppearance?.underline;
-        const frame = overlayFrame(object);
+        const frame = overlayFrame(object, page);
         const fontSizeCss = pageToCss(object.fontSize ?? object.height, zoom);
         const inkTop = pdfTextCssInkOffsetFromRunTop(
           object,
@@ -478,7 +484,7 @@ const PdfTextEditsView = ({
             className="pointer-events-none absolute origin-center"
             key={`dirty-${object.id}`}
             style={{
-              ...pdfTextFrameStyle(object, frame, zoom),
+              ...pdfTextFrameStyle(object, page, frame, zoom),
               opacity: object.fillOpacity,
             }}
           >
@@ -538,12 +544,14 @@ const PdfTextChrome = ({
   editingId,
   hoveredId,
   objects,
+  page,
   selectedId,
   zoom,
 }: {
   editingId: string | null;
   hoveredId: string | null;
   objects: readonly PdfTextObject[];
+  page: EditorPage;
   selectedId: string | null;
   zoom: number;
 }) => {
@@ -566,7 +574,12 @@ const PdfTextChrome = ({
           selected ? "outline-primary outline" : "outline-primary/40 outline"
         )}
         key={`chrome-${object.id}`}
-        style={pdfTextFrameStyle(object, overlayFrame(object), zoom)}
+        style={pdfTextFrameStyle(
+          object,
+          page,
+          overlayFrame(object, page),
+          zoom
+        )}
       />
     );
   });
@@ -601,6 +614,7 @@ const PdfTextLayerView = ({
       editingId={editingId}
       hoveredId={hoveredId}
       objects={objects}
+      page={page}
       selectedId={selectedId}
       zoom={zoom}
     />
