@@ -82,7 +82,11 @@ test/                 Vitest suites
 
 ## Contributing
 
-Issues and bug reports are welcome. Pull requests are not being accepted yet while the project settles.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up the project, name branches, and write commits.
+
+## Security
+
+Please don't report security issues in public issues or pull requests. Email them privately to [security@paperoo.app](mailto:security@paperoo.app). See [SECURITY.md](SECURITY.md) for what to include.
 
 ## License
 
