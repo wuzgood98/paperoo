@@ -10,7 +10,7 @@ import {
 import type { PdfTextObject } from "@/lib/editor/types";
 import { extractPdfTextObjects } from "@/lib/pdf/extract-text";
 
-/** public/sample.pdf page 2: an upright run on a `/Rotate 90` page. */
+/** test/fixtures/sample.pdf page 2: an upright run on a `/Rotate 90` page. */
 const PAGE = {
   cropBox: { height: 792, width: 612, x: 0, y: 0 },
   id: "page-2",

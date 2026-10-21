@@ -15,7 +15,8 @@
     "prepare": "husky",
     "test": "vitest run",
     "postinstall": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ocr-assets.mjs",
-    "icons": "node scripts/generate-favicon.mjs"
+    "icons": "node scripts/generate-favicon.mjs",
+    "sample": "node scripts/generate-sample-pdf.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
