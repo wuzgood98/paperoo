@@ -921,17 +921,44 @@ export const fittedPdfTextWidth = (
   measuredWidth: number
 ): number => Math.max(originalWidth, measuredWidth);
 
+/**
+ * Quarter turns (0 to 3, clockwise) of a run that only follows a page
+ * `/Rotate`. Its box is stored as displayed, so its text runs right, down,
+ * left or up across it. 0 for upright and turned runs.
+ */
+export const pdfTextPageQuarterTurns = (
+  object: Partial<Pick<PdfTextObject, "rotation" | "transform">>
+): number => {
+  if (
+    object.rotation === undefined ||
+    (object.transform !== undefined && isPdfTextTurned(object.transform))
+  ) {
+    return 0;
+  }
+  return ((Math.round(object.rotation / 90) % 4) + 4) % 4;
+};
+
+/** Grows a run's box to `measuredWidth` along the way its text runs. */
 export const fittedPdfTextBox = (
-  object: Pick<PdfTextObject, "dir" | "height" | "width" | "x" | "y">,
+  object: Pick<PdfTextObject, "dir" | "height" | "width" | "x" | "y"> &
+    Partial<Pick<PdfTextObject, "rotation" | "transform">>,
   measuredWidth: number
 ): Rect => {
-  const width = fittedPdfTextWidth(object.width, measuredWidth);
-  return {
-    height: object.height,
-    width,
-    x: object.dir === "rtl" ? object.x - (width - object.width) : object.x,
-    y: object.y,
-  };
+  const quarters = pdfTextPageQuarterTurns(object);
+  const runsDown = quarters % 2 === 1;
+  const length = runsDown ? object.height : object.width;
+  const fitted = fittedPdfTextWidth(length, measuredWidth);
+  // Text that runs left or up on screen, or right-to-left text, grows back.
+  const growsBack = quarters >= 2 !== (object.dir === "rtl");
+  const shift = growsBack ? fitted - length : 0;
+  return runsDown
+    ? { height: fitted, width: object.width, x: object.x, y: object.y - shift }
+    : {
+        height: object.height,
+        width: fitted,
+        x: object.x - shift,
+        y: object.y,
+      };
 };
 
 /** Overlay box for PDF text: source geometry when clean, Liberation-fitted when dirty. */
@@ -975,6 +1002,67 @@ type PdfTextFrameFields = Pick<
   PdfTextObject,
   "ascentRatio" | "fontSize" | "height" | "rotation" | "transform" | "x" | "y"
 >;
+
+/**
+ * How a run's unturned strip (see `pdfTextUnturnedBox`) turns onto its ink:
+ * by `rotation` degrees about `pivot`, its baseline origin.
+ */
+export interface PdfTextStripTurn {
+  pivot: Point;
+  rotation: number;
+}
+
+export const pdfTextStripTurn = (
+  object: PdfTextFrameFields,
+  page: Pick<EditorPage, "cropBox" | "sourceRotate">
+): PdfTextStripTurn => {
+  const quarters = pdfTextPageQuarterTurns(object);
+  if (quarters === 0) {
+    return {
+      pivot: pdfTextFramePivot(object),
+      rotation: pdfTextFrameRotation(object),
+    };
+  }
+  return {
+    pivot: pdfTextBaselineDisplayed(
+      object.transform,
+      page.cropBox,
+      page.sourceRotate
+    ),
+    rotation: quarters * 90,
+  };
+};
+
+/**
+ * A displayed-space rect of a run (its box, a cover) in the run's unturned
+ * strip, where its text runs left to right. Turned runs already store their
+ * rects that way; a run that only follows a page `/Rotate` stores them as
+ * displayed, so they are turned back about its baseline origin.
+ */
+export const pdfTextUnturnedBox = (
+  object: PdfTextFrameFields,
+  page: Pick<EditorPage, "cropBox" | "sourceRotate">,
+  rect: Rect
+): Rect => {
+  if (pdfTextPageQuarterTurns(object) === 0) {
+    return rect;
+  }
+  const { pivot, rotation } = pdfTextStripTurn(object, page);
+  const corners = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+  ].map((corner) => rotatePoint(corner, pivot, -rotation));
+  const xs = corners.map((corner) => corner.x);
+  const ys = corners.map((corner) => corner.y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  return {
+    height: Math.max(...ys) - top,
+    width: Math.max(...xs) - left,
+    x: left,
+    y: top,
+  };
+};
 
 /** A displayed point in the run's unturned frame, where its box is a plain rect. */
 export const pdfTextFramePoint = (
@@ -1823,17 +1911,22 @@ export const hitTestPdfText = (
   objects.findLast((object) => {
     // A turned run's box is a plain rect in its own frame.
     const point = pdfTextFramePoint(object, pagePoint);
+    // Text on a quarter-turned page runs down or up, so it widens on y.
+    const runsDown = pdfTextPageQuarterTurns(object) % 2 === 1;
+    const across = runsDown
+      ? { at: point.x, size: object.width, start: object.x }
+      : { at: point.y, size: object.height, start: object.y };
     if (
-      object.height <= 0 ||
-      point.y < object.y ||
-      point.y > object.y + object.height
+      across.size <= 0 ||
+      across.at < across.start ||
+      across.at > across.start + across.size
     ) {
       return false;
     }
     const box = isPdfTextDirty(object)
       ? fittedPdfTextBox(object, measurePdfTextWidth(object))
       : object;
-    return box.width > 0 && point.x >= box.x && point.x <= box.x + box.width;
+    return box.width > 0 && box.height > 0 && pointInRect(point, box);
   });
 
 export const hitTestPdfImage = (
