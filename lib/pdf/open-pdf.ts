@@ -24,11 +24,16 @@ export const prewarmPdfOpen = async (): Promise<void> => {
   const [{ ensurePdfjsWorker }] = await Promise.all([
     import("@/lib/pdf/pdfjs"),
     loadPdfModule(),
+    // The page view only mounts once pages are read; fetch it alongside them.
+    import("@/components/editor/editor-viewport"),
+    import("@/components/editor/page-thumbnail"),
   ]);
   ensurePdfjsWorker();
 };
 
 const loadPdfFile = async (file: File): Promise<void> => {
+  // A drop with no earlier hover or focus still starts the downloads now.
+  void prewarmPdfOpen();
   const { loadPdfFile: load } = await loadPdfModule();
   await load(file);
 };
@@ -80,6 +85,7 @@ export const openPdfFromUrl = async (
   if (!canOpenPdf() || !(await mayReplaceDocument())) {
     return;
   }
+  void prewarmPdfOpen();
   try {
     const response = await fetch(url);
     if (!response.ok) {
