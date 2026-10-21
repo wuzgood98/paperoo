@@ -278,6 +278,78 @@ export const adjacentPdfFormWidget = (
   return null;
 };
 
+/** The field with the value it had when the PDF was opened. */
+export const resetPdfFormField = (field: PdfFormField): PdfFormField => {
+  switch (field.kind) {
+    case "signature": {
+      return field;
+    }
+    case "text": {
+      return { ...field, value: field.originalValue };
+    }
+    case "checkbox": {
+      return { ...field, value: field.originalValue };
+    }
+    case "radio": {
+      return { ...field, value: field.originalValue };
+    }
+    case "dropdown": {
+      return { ...field, value: field.originalValue };
+    }
+    case "listbox": {
+      return { ...field, value: field.originalValue };
+    }
+    default: {
+      return field;
+    }
+  }
+};
+
+const isPdfFormFieldEmpty = (field: PdfFormField): boolean => {
+  switch (field.kind) {
+    case "text": {
+      return field.value.length === 0;
+    }
+    case "listbox": {
+      return field.value.length === 0;
+    }
+    case "signature": {
+      return false;
+    }
+    default: {
+      return field.value === null || field.value.length === 0;
+    }
+  }
+};
+
+/**
+ * Required fields still left empty, in Tab order. Read-only and signature
+ * fields are left out: nothing can be filled there.
+ */
+export const emptyRequiredPdfFormFields = (
+  form: PdfFormModel,
+  pageOrder: readonly string[]
+): PdfFormField[] => {
+  const seen = new Set<string>();
+  const empty: PdfFormField[] = [];
+  for (const pageId of pageOrder) {
+    for (const { field } of pdfFormWidgetsOnPage({ form }, pageId)) {
+      if (seen.has(field.id)) {
+        continue;
+      }
+      seen.add(field.id);
+      if (
+        field.required &&
+        isPdfFormFieldEditable(field) &&
+        isPdfFormFieldEmpty(field)
+      ) {
+        empty.push(field);
+      }
+    }
+  }
+  return empty;
+};
+
 const pointInRect = (point: Point, rect: Rect): boolean =>
   point.x >= rect.x &&
   point.x <= rect.x + rect.width &&

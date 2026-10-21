@@ -195,3 +195,26 @@ test("deleteSelected leaves form fields in place", () => {
   ).toBe(true);
   expect(editorStore.getState().selectedPdfFormFieldId).toBe("field-text");
 });
+
+const textAndCheckboxValues = () =>
+  (editorStore.getState().document.form?.fields ?? []).map((field) =>
+    field.kind === "text" || field.kind === "checkbox" ? field.value : "-"
+  );
+
+test("clearing the form restores every field as one undo step", () => {
+  editorStore.resetDocument([page()], "form.pdf", formModel());
+  editorStore.selectPdfFormField("field-text");
+  editorStore.patchPdfFormField((field) =>
+    field.kind === "text" ? { ...field, value: "Ama" } : field
+  );
+  editorStore.selectPdfFormField("field-check");
+  editorStore.patchPdfFormField((field) =>
+    field.kind === "checkbox" ? { ...field, value: null } : field
+  );
+
+  editorStore.resetPdfForm();
+  expect(textAndCheckboxValues()).toEqual(["Gideon", "Yes", "-"]);
+
+  editorStore.undo();
+  expect(textAndCheckboxValues()).toEqual(["Ama", null, "-"]);
+});

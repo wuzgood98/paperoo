@@ -16,6 +16,12 @@ import { useRef, useState } from "react";
 import { LogoMark } from "@/components/brand/logo-mark";
 import { DocumentSearch } from "@/components/editor/document-search";
 import { exportPdfWithToast } from "@/components/editor/export-action";
+import {
+  ClearFormDialog,
+  FormMenuButton,
+  FormMenuItems,
+  useFormStatus,
+} from "@/components/editor/form-menu";
 import { PageSheetButton } from "@/components/editor/page-sidebar";
 import { ToolbarTip } from "@/components/editor/toolbar-tip";
 import { Button } from "@/components/ui/button";
@@ -121,6 +127,11 @@ export const EditorToolbar = () => {
   const hasOcrWords = useOcrSelector((state) =>
     Object.values(state.wordsByPage).some((words) => words.length > 0)
   );
+  const form = useFormStatus();
+  const [clearFormOpen, setClearFormOpen] = useState(false);
+  const openClearForm = (): void => {
+    setClearFormOpen(true);
+  };
 
   return (
     <header className="border-border flex h-12 shrink-0 items-center gap-1 border-b px-2 md:gap-2 md:px-3">
@@ -261,6 +272,13 @@ export const EditorToolbar = () => {
             Show OCR regions
           </Toggle>
         ) : null}
+        {form.fillable ? (
+          <FormMenuButton
+            changed={form.changed}
+            disabled={!ready}
+            onClear={openClearForm}
+          />
+        ) : null}
         <ToolbarTip label="Print" shortcut="⌘P">
           <Button
             pressable
@@ -333,6 +351,12 @@ export const EditorToolbar = () => {
                 Show OCR regions
               </MenuCheckboxItem>
             ) : null}
+            {form.fillable ? (
+              <>
+                <MenuSeparator />
+                <FormMenuItems changed={form.changed} onClear={openClearForm} />
+              </>
+            ) : null}
             <MenuSeparator />
             <MenuItem
               disabled={isExporting}
@@ -355,6 +379,7 @@ export const EditorToolbar = () => {
           </MenuPopup>
         </Menu>
       </div>
+      <ClearFormDialog onOpenChange={setClearFormOpen} open={clearFormOpen} />
     </header>
   );
 };

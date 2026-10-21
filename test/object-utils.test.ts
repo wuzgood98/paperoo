@@ -15,6 +15,7 @@ import {
   hitTestPdfText,
   isPdfImageDirty,
   adjacentPdfFormWidget,
+  emptyRequiredPdfFormFields,
   isPdfTextDirty,
   nextCheckboxValue,
   PDF_IMAGE_COVER_BLEED,
@@ -49,6 +50,7 @@ import { editorStore } from "@/lib/editor/store";
 import type {
   EditorDocument,
   EditorPage,
+  PdfFormField,
   PdfFormTextField,
   PdfImageObject,
   PdfLinkAnnotation,
@@ -1242,4 +1244,46 @@ test("Tab order runs through the whole document and skips fields with nothing to
     adjacentPdfFormWidget(form, ["page-2", "page-1"], "w-shared-2", 1)?.widget
       .id
   ).toBe("w-first");
+});
+
+test("empty required fields are listed in Tab order, once each", () => {
+  const required = (
+    id: string,
+    pageId: string,
+    value: string
+  ): PdfFormField => ({
+    ...formTextField(id, [formWidget(`w-${id}`, pageId)]),
+    required: true,
+    value,
+  });
+  const form = {
+    fields: [
+      required("later", "page-2", ""),
+      required("filled", "page-1", "Ama"),
+      required("first", "page-1", ""),
+      formTextField("optional", [formWidget("w-optional", "page-1")]),
+      {
+        id: "agree",
+        kind: "checkbox" as const,
+        name: "agree",
+        originalValue: null,
+        readOnly: false,
+        required: true,
+        value: null,
+        widgets: [formWidget("w-agree", "page-1")],
+      },
+      {
+        ...required("locked", "page-1", ""),
+        readOnly: true,
+      },
+    ],
+    hasJavaScript: false,
+    hasXfa: false,
+    signatures: [],
+  };
+  expect(
+    emptyRequiredPdfFormFields(form, ["page-1", "page-2"]).map(
+      (field) => field.id
+    )
+  ).toEqual(["first", "agree", "later"]);
 });
