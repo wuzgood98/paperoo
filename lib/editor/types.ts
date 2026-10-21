@@ -476,7 +476,11 @@ export interface PdfFormChoiceOption {
 }
 
 export interface PdfFormWidget {
+  /** Drawn border width in points; 0 without a border colour. Unset in old sessions. */
+  borderWidth?: number;
   exportValue: string | null;
+  /** The /DA font size; 0 sizes text to fit. Unset in old sessions. */
+  fontSize?: number;
   height: number;
   id: string;
   pageId: string;

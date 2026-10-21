@@ -58,9 +58,12 @@ interface PdfJsChoiceItem {
 
 interface PdfJsWidget {
   annotationFlags?: unknown;
+  borderColor?: unknown;
+  borderStyle?: unknown;
   buttonValue?: unknown;
   checkBox?: unknown;
   combo?: unknown;
+  defaultAppearanceData?: unknown;
   exportValue?: unknown;
   exportValues?: unknown;
   fieldFlags?: unknown;
@@ -223,6 +226,24 @@ interface GroupedWidgets {
   widgets: { page: ExtractFormPage; raw: PdfJsWidget }[];
 }
 
+/** PDF.js `borderStyle` and `defaultAppearanceData`: the parts read here. */
+interface PdfJsWidgetStyle {
+  fontSize?: unknown;
+  width?: unknown;
+}
+
+const asStyle = (value: unknown): PdfJsWidgetStyle | null => {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  // SAFETY: PDF.js style records are plain objects; missing keys stay undefined.
+  return value as PdfJsWidgetStyle;
+};
+
+/** PDF.js keeps a border width even when no border colour draws it. */
+const widgetBorderWidth = (raw: PdfJsWidget): number =>
+  raw.borderColor ? (asNumber(asStyle(raw.borderStyle)?.width) ?? 1) : 0;
+
 const toWidget = (
   raw: PdfJsWidget,
   page: ExtractFormPage
@@ -238,7 +259,9 @@ const toWidget = (
     page.sourceRotate
   );
   return {
+    borderWidth: widgetBorderWidth(raw),
     exportValue: widgetExportValue(raw),
+    fontSize: asNumber(asStyle(raw.defaultAppearanceData)?.fontSize) ?? 0,
     height: displayed.height,
     id: createId(),
     pageId: page.id,

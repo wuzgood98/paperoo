@@ -1,5 +1,9 @@
 import { toastManager } from "@/components/ui/toast-manager";
-import { isPdfTextDirty } from "@/lib/editor/object-utils";
+import {
+  documentForm,
+  isPdfFormFieldDirty,
+  isPdfTextDirty,
+} from "@/lib/editor/object-utils";
 import { pageRangeLabel } from "@/lib/editor/page-range";
 import { pageDocId } from "@/lib/editor/page-source";
 import { editorStore } from "@/lib/editor/store";
@@ -14,6 +18,7 @@ import type {
 } from "@/lib/pdf/export.worker";
 import { interWeightsNeeded } from "@/lib/pdf/figma-fallback";
 import { renderRedactedPages } from "@/lib/pdf/flatten-redacted-pages";
+import { FORM_FALLBACK_FONT_URLS } from "@/lib/pdf/form-fonts";
 import { documentHasRedactions, redactionPlan } from "@/lib/pdf/output-pages";
 import { ensureDirtyPdfImageAssets } from "@/lib/pdf/pdf-image-preview";
 import { pdfSession } from "@/lib/pdf/session";
@@ -112,15 +117,22 @@ export const buildEditedPdfBytes = async ({
 
   try {
     const fontBytes: Record<string, ArrayBuffer> = {};
+    const formFilled = documentForm(state.document).fields.some(
+      isPdfFormFieldDirty
+    );
     const fontUrls: string[] = [
-      FONT_FILES.sans[400],
-      FONT_FILES.sans[700],
-      FONT_FILES.sans.italic400,
-      FONT_FILES.sans.italic700,
-      // Inter only when a Figma edit's face proved to be Inter.
-      ...[...interWeightsNeeded(state.document.pages, isPdfTextDirty)].map(
-        (weight) => FONT_FILES.inter[weight]
-      ),
+      ...new Set([
+        FONT_FILES.sans[400],
+        FONT_FILES.sans[700],
+        FONT_FILES.sans.italic400,
+        FONT_FILES.sans.italic700,
+        // Inter only when a Figma edit's face proved to be Inter.
+        ...[...interWeightsNeeded(state.document.pages, isPdfTextDirty)].map(
+          (weight) => FONT_FILES.inter[weight]
+        ),
+        // Filled form text Helvetica cannot draw falls back to these.
+        ...(formFilled ? FORM_FALLBACK_FONT_URLS : []),
+      ]),
     ];
     const buffers = await Promise.all(
       fontUrls.map((url) => cachedFontCopy(url))

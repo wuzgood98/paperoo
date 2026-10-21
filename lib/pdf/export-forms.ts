@@ -16,6 +16,7 @@ import {
 import type {
   PDFDocument,
   PDFField,
+  PDFObject,
   PDFFont,
   PDFForm,
   PDFObjectCopier,
@@ -28,7 +29,13 @@ import type {
   PdfFormChoiceOption,
   PdfFormField,
 } from "@/lib/editor/types";
-import { FONT_FILES } from "@/lib/fonts/measure-text";
+import {
+  coversText,
+  FORM_FALLBACK_FONT_URLS,
+  formFieldDrawnText,
+  helveticaCovers,
+} from "@/lib/pdf/form-fonts";
+import type { GlyphCover } from "@/lib/pdf/form-fonts";
 
 const hasXfa = (source: PDFDocument): boolean =>
   source.catalog.AcroForm()?.has(PDFName.of("XFA")) === true;
@@ -58,53 +65,50 @@ const withDisplaySelection = (
 /** Resolves an appearance font for a field's text, embedding each face once. */
 export type FormFieldFonts = (text: string) => Promise<PDFFont>;
 
+/**
+ * Helvetica when it can draw every letter, else the first fallback font
+ * that can, else the first fallback there is (the export warned already).
+ */
 export const createFormFieldFonts = (
   doc: PDFDocument,
   fontBytes: Record<string, Uint8Array>
 ): FormFieldFonts => {
   let helvetica: Promise<PDFFont> | undefined;
-  let fallback: Promise<PDFFont> | undefined;
+  const embedded = new Map<string, Promise<PDFFont>>();
+  const covers = new Map<string, GlyphCover>();
+  const fallbacks = FORM_FALLBACK_FONT_URLS.filter((url) => fontBytes[url]);
+  const coverOf = (url: string, bytes: Uint8Array): GlyphCover => {
+    let cover = covers.get(url);
+    if (!cover) {
+      const face = fontkit.create(bytes);
+      cover = (codePoint) => face.hasGlyphForCodePoint(codePoint);
+      covers.set(url, cover);
+    }
+    return cover;
+  };
+  const embed = (url: string, bytes: Uint8Array): Promise<PDFFont> => {
+    let font = embedded.get(url);
+    if (!font) {
+      // The source document is loaded, not created, so it has no fontkit.
+      doc.registerFontkit(fontkit);
+      font = doc.embedFont(bytes, { subset: true });
+      embedded.set(url, font);
+    }
+    return font;
+  };
   return async (text) => {
     helvetica ??= doc.embedFont(StandardFonts.Helvetica);
-    const standard = await helvetica;
-    try {
-      standard.encodeText(text);
-      return standard;
-    } catch {
-      const bytes = fontBytes[FONT_FILES.sans[400]];
-      if (!bytes) {
-        return standard;
-      }
-      if (!fallback) {
-        // The source document is loaded, not created, so it has no fontkit.
-        doc.registerFontkit(fontkit);
-        fallback = doc.embedFont(bytes, { subset: true });
-      }
-      return await fallback;
+    if (coversText(helveticaCovers, text) || fallbacks.length === 0) {
+      return await helvetica;
     }
+    const covering = fallbacks.find((url) => {
+      const bytes = fontBytes[url];
+      return bytes ? coversText(coverOf(url, bytes), text) : false;
+    });
+    const url = covering ?? fallbacks[0];
+    const bytes = url ? fontBytes[url] : undefined;
+    return url && bytes ? await embed(url, bytes) : await helvetica;
   };
-};
-
-const appearanceText = (field: PdfFormField): string => {
-  switch (field.kind) {
-    case "text": {
-      return field.value;
-    }
-    case "dropdown": {
-      return field.value ? displayFor(field.value, field.options) : "";
-    }
-    case "listbox": {
-      return field.value
-        .map((value) => displayFor(value, field.options))
-        .join("\n");
-    }
-    case "radio": {
-      return field.value ?? "";
-    }
-    default: {
-      return "";
-    }
-  }
 };
 
 const applyChoiceValues = (
@@ -230,6 +234,31 @@ const applyToPdfField = (
   }
 };
 
+const DA = PDFName.of("DA");
+
+/**
+ * pdf-lib writes the size it drew at into /DA, so a fit-to-box field
+ * would stop fitting in every viewer after one export. Put each back.
+ */
+const keepDefaultAppearances = (pdfField: PDFField, draw: () => void): void => {
+  const dicts = [
+    pdfField.acroField.dict,
+    ...pdfField.acroField.getWidgets().map((widget) => widget.dict),
+  ];
+  const saved = dicts.map((dict): [PDFDict, PDFObject | undefined] => [
+    dict,
+    dict.get(DA),
+  ]);
+  draw();
+  for (const [dict, appearance] of saved) {
+    if (appearance) {
+      dict.set(DA, appearance);
+    } else {
+      dict.delete(DA);
+    }
+  }
+};
+
 const applyField = async (
   owners: ReadonlyMap<string, PDFField>,
   field: PdfFormField,
@@ -245,9 +274,11 @@ const applyField = async (
   if (pdfFields.length === 0) {
     return;
   }
-  const font = await fonts(appearanceText(field));
+  const font = await fonts(formFieldDrawnText(field));
   for (const pdfField of pdfFields) {
-    applyToPdfField(pdfField, field, font);
+    keepDefaultAppearances(pdfField, () => {
+      applyToPdfField(pdfField, field, font);
+    });
   }
 };
 

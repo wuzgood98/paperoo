@@ -223,3 +223,21 @@ test("a checkbox reads its on-state from whichever widget is on", async () => {
   expect(pick.value).toBe("B");
   expect(pick.originalValue).toBe("B");
 });
+
+test("widgets keep their font size and border width for the preview", async () => {
+  const edge = extractPdfForm(
+    await loadFormPages(await buildPdfFormEdgeFixture())
+  );
+  const widgetOf = (name: string) =>
+    edge.fields.find((field) => field.name === name)?.widgets[0];
+  // Made by pdf-lib: auto size, black 1pt border.
+  expect(widgetOf(EDGE_FIELD.visible)).toMatchObject({
+    borderWidth: 1,
+    fontSize: 0,
+  });
+  // Raw widget with "/Helv 12 Tf" and no border colour.
+  expect(widgetOf(EDGE_FIELD.dotted)).toMatchObject({
+    borderWidth: 0,
+    fontSize: 12,
+  });
+});

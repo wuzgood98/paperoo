@@ -5,8 +5,8 @@ import { useEffect } from "react";
 import { requestDeleteSelection } from "@/components/editor/large-delete";
 import { toastManager } from "@/components/ui/toast-manager";
 import { duplicateSelection } from "@/lib/editor/clipboard";
+import { confirmOutput } from "@/lib/editor/output-gate";
 import { pendingSignature } from "@/lib/editor/pending";
-import { confirmRedactions } from "@/lib/editor/redaction-gate";
 import { editorStore } from "@/lib/editor/store";
 import { TOOL_KEYS } from "@/lib/editor/tool-keys";
 import {
@@ -25,7 +25,7 @@ const printEditedPdf = async (): Promise<void> => {
   }
 
   try {
-    if (!(await confirmRedactions())) {
+    if (!(await confirmOutput())) {
       return;
     }
     const { runPrint } = await import("@/lib/pdf/run-print");
