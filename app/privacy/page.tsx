@@ -86,9 +86,18 @@ const PrivacyPage = () => (
 
       <Section title="Hosting">
         <p>
-          The site is hosted on Vercel. Like any web host, Vercel handles the
-          requests your browser makes to load the site, which includes your IP
-          address. Your PDFs are not part of those requests.
+          The site is hosted on{" "}
+          <a
+            className="text-foreground underline underline-offset-4"
+            href="https://vercel.com/legal/privacy-policy"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Vercel
+          </a>
+          . Like any web host, Vercel handles the requests your browser makes to
+          load the site, which includes your IP address. Your PDFs are not part
+          of those requests.
         </p>
       </Section>
 
