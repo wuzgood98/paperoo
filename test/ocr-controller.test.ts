@@ -161,3 +161,51 @@ test("repeated progress reports do not notify subscribers", async () => {
   expect(listener).not.toHaveBeenCalled();
   pending.resolve(enginePage());
 });
+
+const scannedPage = (id: string): EditorPage => ({ ...page(), id });
+
+const blockedController = () => {
+  const pending = Promise.withResolvers<EngineOcrPage>();
+  const rendered: string[] = [];
+  const controller = createOcrController({
+    createService: () =>
+      createOcrService({
+        recognize: () => pending.promise,
+        terminate: () => Promise.resolve(),
+      }),
+    renderPage: (target) => {
+      rendered.push(target.id);
+      return Promise.resolve({ image: new Blob(), scale: 2 });
+    },
+  });
+  return { controller, pending, rendered };
+};
+
+test("drops waiting pages that scrolled out of view", async () => {
+  const { controller, pending, rendered } = blockedController();
+  controller.enqueueVisible(scannedPage("a"), { pageCount: 3, pageNumber: 1 });
+  controller.enqueueVisible(scannedPage("b"), { pageCount: 3, pageNumber: 2 });
+  await vi.waitFor(() => {
+    expect(controller.getState().status).toBe("recognizing");
+  });
+  controller.keepVisible(new Set(["c"]));
+  pending.resolve(enginePage());
+  await delay(20);
+  expect(controller.getState().wordsByPage.a).toBeDefined();
+  expect(rendered).toEqual(["a"]);
+});
+
+test("keeps pages the user started when they scroll away", async () => {
+  const { controller, pending, rendered } = blockedController();
+  controller.enqueueVisible(scannedPage("a"), { pageCount: 3, pageNumber: 1 });
+  controller.enqueueVisible(scannedPage("b"), { pageCount: 3, pageNumber: 2 });
+  controller.start(scannedPage("b"), { pageCount: 3, pageNumber: 2 });
+  await vi.waitFor(() => {
+    expect(controller.getState().status).toBe("recognizing");
+  });
+  controller.keepVisible(new Set());
+  pending.resolve(enginePage());
+  await vi.waitFor(() => {
+    expect(rendered).toEqual(["a", "b"]);
+  });
+});
