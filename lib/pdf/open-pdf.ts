@@ -1,6 +1,10 @@
 import { exportPdfWithToast } from "@/components/editor/export-action";
 import { confirmReplaceDocument } from "@/components/editor/replace-document";
 import { toastManager } from "@/components/ui/toast-manager";
+import {
+  supportsPdfEngine,
+  UNSUPPORTED_BROWSER_MESSAGE,
+} from "@/lib/browser-support";
 
 // pdf.js, page extraction and OCR load on demand, not with the empty page.
 const loadPdfModule = () => import("@/lib/pdf/load-pdf");
@@ -37,6 +41,15 @@ const fail = (message: string): void => {
   });
 };
 
+/** False, after telling the user, when this browser cannot run pdf.js. */
+const canOpenPdf = (): boolean => {
+  if (supportsPdfEngine()) {
+    return true;
+  }
+  fail(UNSUPPORTED_BROWSER_MESSAGE);
+  return false;
+};
+
 /** False when the user keeps the open document instead. */
 const mayReplaceDocument = async (): Promise<boolean> => {
   const choice = await confirmReplaceDocument();
@@ -50,7 +63,7 @@ export const openPdfFromList = async (
   files: FileList | null | undefined
 ): Promise<void> => {
   const file = files?.[0];
-  if (!file || !(await mayReplaceDocument())) {
+  if (!file || !canOpenPdf() || !(await mayReplaceDocument())) {
     return;
   }
   try {
@@ -64,7 +77,7 @@ export const openPdfFromUrl = async (
   url: string,
   fileName: string
 ): Promise<void> => {
-  if (!(await mayReplaceDocument())) {
+  if (!canOpenPdf() || !(await mayReplaceDocument())) {
     return;
   }
   try {
