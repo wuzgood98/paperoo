@@ -21,14 +21,20 @@ export const prewarmPdfOpen = async (): Promise<void> => {
     return;
   }
   prewarmed = true;
-  const [{ ensurePdfjsWorker }] = await Promise.all([
-    import("@/lib/pdf/pdfjs"),
-    loadPdfModule(),
-    // The page view only mounts once pages are read; fetch it alongside them.
-    import("@/components/editor/editor-viewport"),
-    import("@/components/editor/page-thumbnail"),
-  ]);
-  ensurePdfjsWorker();
+  try {
+    const [{ ensurePdfjsWorker }] = await Promise.all([
+      import("@/lib/pdf/pdfjs"),
+      loadPdfModule(),
+      // The page view only mounts once pages are read; fetch it alongside them.
+      import("@/components/editor/editor-viewport"),
+      import("@/components/editor/page-thumbnail"),
+    ]);
+    ensurePdfjsWorker();
+  } catch {
+    // Prewarming is only a head start: let a later call retry, and leave the
+    // real open to report a failed download.
+    prewarmed = false;
+  }
 };
 
 const loadPdfFile = async (file: File): Promise<void> => {
