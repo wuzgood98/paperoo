@@ -102,6 +102,7 @@ export const EditorViewport = () => {
 
   useEffect(() => {
     const visibleIds = new Set(visiblePageKey.split("\0").filter(Boolean));
+    ocrSession.keepVisible(visibleIds);
     const count = pages.length;
     for (const [index, page] of pages.entries()) {
       if (!visibleIds.has(page.id)) {

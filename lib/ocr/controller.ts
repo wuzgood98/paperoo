@@ -26,6 +26,13 @@ export interface OcrControllerDeps {
   renderPage: (page: EditorPage) => Promise<{ image: OcrImage; scale: number }>;
 }
 
+interface OcrJob {
+  /** Queued only because the page was on screen, not by the user. */
+  auto: boolean;
+  options: OcrEnqueueOptions;
+  page: EditorPage;
+}
+
 const DEFAULT_LANGUAGE = "eng";
 
 const idleState = (): OcrControllerState => ({
@@ -44,7 +51,7 @@ export const createOcrController = (deps: OcrControllerDeps) => {
   let service: OcrService | null = null;
   let busy = false;
   const skipped = new Set<string>();
-  const queue: { options: OcrEnqueueOptions; page: EditorPage }[] = [];
+  const queue: OcrJob[] = [];
 
   const emit = (): void => {
     for (const listener of listeners) {
@@ -157,10 +164,14 @@ export const createOcrController = (deps: OcrControllerDeps) => {
     if (state.runningPageId === page.id) {
       return;
     }
-    if (queue.some((job) => job.page.id === page.id)) {
+    const queued = queue.find((job) => job.page.id === page.id);
+    if (queued) {
+      // The user asked for a page that was already waiting on screen; keep
+      // it queued when it scrolls away.
+      queued.auto &&= !force;
       return;
     }
-    queue.push({ options, page });
+    queue.push({ auto: !force, options, page });
     void runNext();
   };
 
@@ -210,6 +221,16 @@ export const createOcrController = (deps: OcrControllerDeps) => {
       wordsByPage: Readonly<Record<string, readonly OcrTextObject[]>>
     ): void => {
       setState({ wordsByPage });
+    },
+    /**
+     * Drop waiting pages that were queued for being on screen and no longer
+     * are. The page being recognized and pages the user started stay.
+     */
+    keepVisible: (visiblePageIds: ReadonlySet<string>): void => {
+      const kept = queue.filter(
+        (job) => !job.auto || visiblePageIds.has(job.page.id)
+      );
+      queue.splice(0, queue.length, ...kept);
     },
     reset: async (): Promise<void> => {
       generation += 1;
