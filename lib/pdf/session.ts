@@ -146,6 +146,28 @@ export const FIRST_PAINT_PAGES = 3;
 /** Bound worker fan-out so N-page opens don't queue 3N requests at once. */
 export const OPEN_PAGE_CONCURRENCY = 4;
 
+/** Longest background work waits for the first canvas before starting anyway. */
+export const FIRST_PAINT_WAIT_MS = 500;
+
+const sleep = async (ms: number): Promise<void> => {
+  // oxlint-disable-next-line promise/avoid-new -- setTimeout has no promise API
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+};
+
+/** Wait for the browser to go idle; Safari has no requestIdleCallback. */
+const idle = async (): Promise<void> => {
+  // oxlint-disable-next-line promise/avoid-new -- idle callbacks have no promise API
+  await new Promise((resolve) => {
+    if (globalThis.requestIdleCallback) {
+      globalThis.requestIdleCallback(resolve, { timeout: FIRST_PAINT_WAIT_MS });
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+};
+
 interface PageCacheEntry {
   page: PDFPageProxy;
   refs: number;
@@ -276,6 +298,12 @@ class PdfSession {
   #openGeneration = 0;
   /** Bumped whenever the set of open documents changes; keys caches. */
   #generation = 0;
+  /**
+   * Settles once a canvas of the opened file has painted. Background reading
+   * and OCR wait on it so they don't slow the first page down.
+   */
+  #firstPaint: Promise<void> = Promise.resolve();
+  #resolveFirstPaint: (() => void) | null = null;
 
   get generation(): number {
     return this.#generation;
@@ -297,6 +325,32 @@ class PdfSession {
 
   #isCurrent(docId: string, doc: PDFDocumentProxy): boolean {
     return this.#sources.get(docId)?.doc === doc;
+  }
+
+  /** Call once a page canvas has finished painting. */
+  markFirstPaint(): void {
+    this.#resolveFirstPaint?.();
+    this.#resolveFirstPaint = null;
+  }
+
+  /**
+   * Settles once the first canvas has painted (or after FIRST_PAINT_WAIT_MS)
+   * and the browser is idle. For work that can wait until the page is up.
+   */
+  async afterFirstPaint(): Promise<void> {
+    await this.#waitForFirstPaint();
+    await idle();
+  }
+
+  async #waitForFirstPaint(): Promise<void> {
+    await Promise.race([this.#firstPaint, sleep(FIRST_PAINT_WAIT_MS)]);
+  }
+
+  #resetFirstPaint(): void {
+    // oxlint-disable-next-line promise/avoid-new -- settled by markFirstPaint
+    this.#firstPaint = new Promise((resolve) => {
+      this.#resolveFirstPaint = resolve;
+    });
   }
 
   /** Cap idle retained pages ≈ PDF.js `max(10, 2 * visible + 1)`. */
@@ -343,6 +397,7 @@ class PdfSession {
     bytes: Uint8Array,
     handlers: ProgressiveOpenHandlers
   ): Promise<{ pageCount: number }> {
+    this.#resetFirstPaint();
     const doc = await this.#openPrimary(bytes);
     const cancelled = handlers.isCancelled ?? ((): boolean => false);
     const isGone = (): boolean =>
@@ -493,8 +548,9 @@ class PdfSession {
     if (firstCount >= totalPages) {
       return !cancelled();
     }
-    // Yield so first paint commits before background hydration starts.
-    await yieldToUI();
+    // The pdf.js worker is shared, so reading more pages now would slow the
+    // first canvas down. Wait for it to paint before starting.
+    await this.#waitForFirstPaint();
     for (
       let start = firstCount;
       start < totalPages;

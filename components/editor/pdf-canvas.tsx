@@ -61,6 +61,9 @@ export const PdfCanvas = ({
       if (!controller.signal.aborted) {
         taskRef.current = task;
       }
+      if (task) {
+        pdfSession.markFirstPaint();
+      }
     };
 
     void draw();

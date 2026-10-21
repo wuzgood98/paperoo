@@ -33,8 +33,13 @@ const multiPagePdf = async (pageCount: number): Promise<Uint8Array> => {
   return new Uint8Array(await doc.save());
 };
 
+/** Stand in for the canvas painting, so background reading starts at once. */
+const markPainted = (): void => {
+  pdfSession.markFirstPaint();
+};
+
 const quietHandlers = (): ProgressiveOpenHandlers => ({
-  onFirstPages: () => {},
+  onFirstPages: markPainted,
   onForm: () => {},
   onMorePages: () => {},
 });
@@ -84,6 +89,7 @@ test("progressive open paints the first window before the rest", async () => {
     onFirstPages: (pages) => {
       firstBatch = pages.length;
       seen.push(...pages.map((entry) => entry.id));
+      markPainted();
     },
     onForm: () => {
       formDelivered = true;
@@ -99,6 +105,32 @@ test("progressive open paints the first window before the rest", async () => {
   expect(formDelivered).toBe(true);
 });
 
+test("background reading waits for the first canvas to paint", async () => {
+  const pageCount = FIRST_PAINT_PAGES + 2;
+  let moreCalls = 0;
+  const firstPages = Promise.withResolvers<boolean>();
+
+  const opening = pdfSession.openProgressive(await multiPagePdf(pageCount), {
+    onFirstPages: () => {
+      firstPages.resolve(true);
+    },
+    onForm: () => {},
+    onMorePages: () => {
+      moreCalls += 1;
+    },
+  });
+  await firstPages.promise;
+  // oxlint-disable-next-line promise/avoid-new -- give the worker time to run ahead
+  await new Promise((resolve) => {
+    setTimeout(resolve, 100);
+  });
+  expect(moreCalls).toBe(0);
+
+  markPainted();
+  await opening;
+  expect(moreCalls).toBeGreaterThan(0);
+});
+
 test("cancelled progressive open stops background hydration", async () => {
   const pageCount = FIRST_PAINT_PAGES + 2;
   let moreCalls = 0;
@@ -108,6 +140,7 @@ test("cancelled progressive open stops background hydration", async () => {
     isCancelled: () => cancelled,
     onFirstPages: () => {
       cancelled = true;
+      markPainted();
     },
     onForm: () => {
       throw new Error("form should not arrive after cancel");
