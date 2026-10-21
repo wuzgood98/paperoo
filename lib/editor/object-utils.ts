@@ -9,6 +9,7 @@ import {
 } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
 import {
+  DEFAULT_CHECKBOX_ON_STATE,
   DEFAULT_DRAW_STYLE,
   DEFAULT_HIGHLIGHT_COLOR,
   DEFAULT_OBJECT_OPACITY,
@@ -32,6 +33,7 @@ import type {
   ImageObject,
   RedactionObject,
   PdfAnnotationObject,
+  PdfFormCheckboxField,
   PdfFormChoiceOption,
   PdfFormField,
   PdfFormModel,
@@ -141,6 +143,18 @@ export const mapDocumentFormFields = (
   },
 });
 
+const checkboxOnState = (widget: PdfFormWidget): string =>
+  widget.exportValue ?? DEFAULT_CHECKBOX_ON_STATE;
+
+/** Clicking a box checks its own on-state, or clears the field when it is on. */
+export const nextCheckboxValue = (
+  field: PdfFormCheckboxField,
+  widget: PdfFormWidget
+): string | null => {
+  const onState = checkboxOnState(widget);
+  return field.value === onState ? null : onState;
+};
+
 export const isPdfFormFieldEditable = (field: PdfFormField): boolean =>
   field.kind !== "signature" && !field.readOnly;
 
@@ -163,7 +177,7 @@ export const pdfFormFieldPreviewText = (
 ): string => {
   switch (field.kind) {
     case "checkbox": {
-      return field.value ? "✓" : "";
+      return field.value === checkboxOnState(widget) ? "✓" : "";
     }
     case "dropdown": {
       return pdfFormChoiceDisplay(field.options, field.value);

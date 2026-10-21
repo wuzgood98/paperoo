@@ -509,11 +509,18 @@ export interface PdfFormTextField extends PdfFormFieldBase {
   value: string;
 }
 
+/**
+ * The value is the on-state that is checked, or null when none is. Widgets
+ * may have different on-states (a "Yes" box beside a "No" box).
+ */
 export interface PdfFormCheckboxField extends PdfFormFieldBase {
   kind: "checkbox";
-  originalValue: boolean;
-  value: boolean;
+  originalValue: string | null;
+  value: string | null;
 }
+
+/** The on-state pdf-lib and Acrobat give a checkbox that names none. */
+export const DEFAULT_CHECKBOX_ON_STATE = "Yes";
 
 export interface PdfFormRadioField extends PdfFormFieldBase {
   kind: "radio";

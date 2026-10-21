@@ -16,7 +16,7 @@ import type { OcrTextObject } from "@/lib/ocr/types";
 import { exportDocumentWithReport } from "@/lib/pdf/export-pdf";
 import { redactionPlan } from "@/lib/pdf/output-pages";
 import { pdfSession } from "@/lib/pdf/session";
-import { migrateMeta } from "@/lib/session/schema";
+import { migrateMeta, SESSION_SCHEMA_VERSION } from "@/lib/session/schema";
 import type { PersistedMeta } from "@/lib/session/schema";
 
 import { buildPdfFormFixture, FORM_FIELD } from "./pdf-form-fixture";
@@ -358,7 +358,7 @@ test("redactions stay unrotated and opaque, and have the X key", () => {
   expect(TOOL_KEYS).toContainEqual({ key: "x", tool: "redact" });
 });
 
-test("a version 1 session migrates to version 2 unchanged", () => {
+test("a version 1 session without a form migrates unchanged", () => {
   const meta: PersistedMeta = {
     assetIds: [],
     currentPageId: null,
@@ -370,5 +370,8 @@ test("a version 1 session migrates to version 2 unchanged", () => {
     sessionId: "s",
     sources: [],
   };
-  expect(migrateMeta(meta)).toEqual({ ...meta, schemaVersion: 2 });
+  expect(migrateMeta(meta)).toEqual({
+    ...meta,
+    schemaVersion: SESSION_SCHEMA_VERSION,
+  });
 });

@@ -363,3 +363,58 @@ test("saved metadata is checked and versioned before use", () => {
   ).toBeNull();
   expect(migrateMeta(meta({ schemaVersion: 0 }))).toBeNull();
 });
+
+/** A checkbox as version 2 stored it: checked or not. */
+const version2Checkbox = (
+  id: string,
+  value: boolean,
+  exportValue: string | null
+) => ({
+  id,
+  kind: "checkbox",
+  name: id,
+  originalValue: !value,
+  readOnly: false,
+  required: false,
+  value,
+  widgets: [
+    {
+      exportValue,
+      height: 16,
+      id: `widget-${id}`,
+      pageId: "page-1",
+      sourceAnnotId: "12R",
+      width: 16,
+      x: 0,
+      y: 0,
+    },
+  ],
+});
+
+test("version 2 checkbox booleans migrate to on-states", () => {
+  const stored = {
+    ...meta({ schemaVersion: 2 }),
+    form: {
+      fields: [
+        version2Checkbox("on", true, "Agree"),
+        version2Checkbox("off", false, "Agree"),
+        version2Checkbox("unnamed", true, null),
+      ],
+      hasJavaScript: false,
+      hasXfa: false,
+      signatures: [],
+    },
+  };
+  if (!isPersistedMeta(stored)) {
+    throw new Error("The stored meta should pass the structural check.");
+  }
+  const fields = migrateMeta(stored)?.form?.fields ?? [];
+  const values = fields.map((field) =>
+    field.kind === "checkbox" ? [field.value, field.originalValue] : null
+  );
+  expect(values).toEqual([
+    ["Agree", null],
+    [null, "Agree"],
+    ["Yes", null],
+  ]);
+});

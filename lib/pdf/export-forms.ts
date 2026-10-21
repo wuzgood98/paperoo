@@ -15,6 +15,7 @@ import {
 } from "pdf-lib";
 import type {
   PDFDocument,
+  PDFField,
   PDFFont,
   PDFForm,
   PDFObjectCopier,
@@ -132,35 +133,78 @@ const applyChoiceValues = (
   });
 };
 
+/**
+ * Set the field's value and each widget's appearance state directly:
+ * pdf-lib's check() only knows the first widget's on-state. The PDF's own
+ * drawings stay; pdf-lib draws defaults only for widgets that have none.
+ */
+const setCheckboxState = (
+  pdfField: PDFCheckBox,
+  value: string | null
+): void => {
+  const off = PDFName.of("Off");
+  const widgets = pdfField.acroField.getWidgets();
+  if (widgets.some((widget) => !widget.getOnValue())) {
+    pdfField.updateAppearances();
+  }
+  const on = value === null ? off : PDFName.of(value);
+  pdfField.acroField.dict.set(PDFName.of("V"), on);
+  for (const widget of widgets) {
+    widget.setAppearanceState(widget.getOnValue() === on ? on : off);
+  }
+};
+
+/** A ref as PDF.js writes annotation ids: `12R`, or `12R3` with a generation. */
+const pdfJsRefId = (ref: PDFRef): string =>
+  ref.generationNumber === 0
+    ? `${ref.objectNumber}R`
+    : `${ref.objectNumber}R${ref.generationNumber}`;
+
+/** Each widget's owning field, by the widget's PDF.js annotation id. */
+const fieldsByWidgetId = (form: PDFForm): Map<string, PDFField> => {
+  const owners = new Map<string, PDFField>();
+  for (const pdfField of form.getFields()) {
+    // A field with one widget may be the widget itself.
+    owners.set(pdfJsRefId(pdfField.ref), pdfField);
+    const kids = pdfField.acroField.Kids();
+    for (const kid of kids?.asArray() ?? []) {
+      if (kid instanceof PDFRef) {
+        owners.set(pdfJsRefId(kid), pdfField);
+      }
+    }
+  }
+  return owners;
+};
+
+/**
+ * The fields that own this field's widgets. Usually one; more when a PDF
+ * gives two fields the same full name, which a name lookup would miss.
+ */
+const owningFields = (
+  owners: ReadonlyMap<string, PDFField>,
+  field: PdfFormField
+): PDFField[] => [
+  ...new Set(
+    field.widgets.flatMap((widget) => {
+      const owner = owners.get(widget.sourceAnnotId);
+      return owner ? [owner] : [];
+    })
+  ),
+];
+
 // oxlint-disable-next-line eslint/complexity -- one write path per AcroForm field kind
-const applyField = async (
-  form: PDFForm,
+const applyToPdfField = (
+  pdfField: PDFField,
   field: PdfFormField,
-  fonts: FormFieldFonts
-): Promise<void> => {
-  if (field.kind === "signature" || !isPdfFormFieldDirty(field)) {
-    return;
-  }
-  if (field.kind === "text" && (field.richText || field.fileSelect)) {
-    return;
-  }
-  const pdfField = form.getFieldMaybe(field.name);
-  if (!pdfField) {
-    return;
-  }
-  const font = await fonts(appearanceText(field));
+  font: PDFFont
+): void => {
   if (field.kind === "text" && pdfField instanceof PDFTextField) {
     pdfField.setText(field.value.length > 0 ? field.value : undefined);
     pdfField.updateAppearances(font);
     return;
   }
   if (field.kind === "checkbox" && pdfField instanceof PDFCheckBox) {
-    if (field.value) {
-      pdfField.check();
-    } else {
-      pdfField.uncheck();
-    }
-    pdfField.updateAppearances();
+    setCheckboxState(pdfField, field.value);
     return;
   }
   if (field.kind === "radio" && pdfField instanceof PDFRadioGroup) {
@@ -186,6 +230,27 @@ const applyField = async (
   }
 };
 
+const applyField = async (
+  owners: ReadonlyMap<string, PDFField>,
+  field: PdfFormField,
+  fonts: FormFieldFonts
+): Promise<void> => {
+  if (field.kind === "signature" || !isPdfFormFieldDirty(field)) {
+    return;
+  }
+  if (field.kind === "text" && (field.richText || field.fileSelect)) {
+    return;
+  }
+  const pdfFields = owningFields(owners, field);
+  if (pdfFields.length === 0) {
+    return;
+  }
+  const font = await fonts(appearanceText(field));
+  for (const pdfField of pdfFields) {
+    applyToPdfField(pdfField, field, font);
+  }
+};
+
 export const applyPdfFormEdits = async (
   source: PDFDocument,
   document: EditorDocument,
@@ -194,11 +259,11 @@ export const applyPdfFormEdits = async (
   if (hasXfa(source)) {
     return;
   }
-  const form = source.getForm();
+  const owners = fieldsByWidgetId(source.getForm());
   const fonts = createFormFieldFonts(source, fontBytes);
   for (const field of documentForm(document).fields) {
     // oxlint-disable-next-line react-doctor/async-await-in-loop eslint/no-await-in-loop -- appearances must apply in field order
-    await applyField(form, field, fonts);
+    await applyField(owners, field, fonts);
   }
 };
 

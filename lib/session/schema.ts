@@ -1,6 +1,9 @@
+import { DEFAULT_CHECKBOX_ON_STATE } from "@/lib/editor/types";
 import type {
   EditorPage,
   ImageMimeType,
+  PdfFormCheckboxField,
+  PdfFormField,
   PdfFormModel,
 } from "@/lib/editor/types";
 import type { OcrTextObject } from "@/lib/ocr/types";
@@ -9,7 +12,7 @@ import type { OcrTextObject } from "@/lib/ocr/types";
  * Shape of a saved session. Bump it, and add a migration from the previous
  * version, whenever a persisted type changes shape.
  */
-export const SESSION_SCHEMA_VERSION = 2;
+export const SESSION_SCHEMA_VERSION = 3;
 
 /** Saved sessions older than this are not offered. */
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -72,11 +75,54 @@ export interface SessionStorage {
 
 type Migration = (meta: PersistedMeta) => PersistedMeta;
 
+/** Version 2 stored a checkbox as checked or not; 3 stores its on-state. */
+interface Version2Checkbox extends Omit<
+  PdfFormCheckboxField,
+  "originalValue" | "value"
+> {
+  originalValue: boolean;
+  value: boolean;
+}
+
+const checkboxOnStateFromBoolean = (
+  field: PdfFormField | Version2Checkbox
+): PdfFormField => {
+  if (field.kind !== "checkbox") {
+    return field;
+  }
+  const onState = field.widgets[0]?.exportValue ?? DEFAULT_CHECKBOX_ON_STATE;
+  const toOnState = (value: boolean | string | null): string | null => {
+    if (value === true) {
+      return onState;
+    }
+    if (value === false) {
+      return null;
+    }
+    return value;
+  };
+  return {
+    ...field,
+    originalValue: toOnState(field.originalValue),
+    value: toOnState(field.value),
+  };
+};
+
 /** Upgrades from each older schema version to the next one. */
 const MIGRATIONS = new Map<number, Migration>([
   // 2 adds redaction objects. Nothing stored changes shape; the bump makes
   // an older build refuse a session it would export without its redactions.
   [1, (meta) => ({ ...meta, schemaVersion: 2 })],
+  [
+    2,
+    (meta) => ({
+      ...meta,
+      form: meta.form && {
+        ...meta.form,
+        fields: meta.form.fields.map(checkboxOnStateFromBoolean),
+      },
+      schemaVersion: 3,
+    }),
+  ],
 ]);
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- IndexedDB records are I/O: check them before use */

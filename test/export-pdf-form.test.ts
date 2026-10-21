@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { PDFDocument, PDFName } from "pdf-lib";
+import { PDFAcroText, PDFArray, PDFDict, PDFDocument, PDFName } from "pdf-lib";
 import { expect, test } from "vitest";
 
 import { normalizeRotation } from "@/lib/editor/coordinates";
@@ -16,8 +16,10 @@ import { exportDocument } from "@/lib/pdf/export-pdf";
 import { extractPdfForm } from "@/lib/pdf/extract-forms";
 
 import {
+  buildPdfFormEdgeFixture,
   buildPdfFormFixture,
   buildXfaFormFixture,
+  EDGE_FIELD,
   FORM_FIELD,
 } from "./pdf-form-fixture";
 import { pdfContainsText } from "./pdf-scan";
@@ -99,10 +101,10 @@ test("export keeps AcroForm fields interactive with updated values", async () =>
       return { ...field, value: "Line one\nLine two\nLine three" };
     }
     if (field.name === FORM_FIELD.newsletter && field.kind === "checkbox") {
-      return { ...field, value: false };
+      return { ...field, value: null };
     }
     if (field.name === FORM_FIELD.terms && field.kind === "checkbox") {
-      return { ...field, value: true };
+      return { ...field, value: "Yes" };
     }
     if (field.name === FORM_FIELD.region && field.kind === "radio") {
       return { ...field, value: "Kenya" };
@@ -205,4 +207,95 @@ test("export fills a non-Latin form value with the embedded fallback font", asyn
   expect(exported.getForm().getTextField(FORM_FIELD.name).getText()).toBe(
     value
   );
+});
+
+const topField = (doc: PDFDocument, name: string): PDFDict => {
+  const found = doc
+    .getForm()
+    .acroForm.getAllFields()
+    .find(([acroField]) => acroField.getFullyQualifiedName() === name);
+  if (!found) {
+    throw new Error(`No field named ${name}.`);
+  }
+  return found[0].dict;
+};
+
+const kidDicts = (doc: PDFDocument, field: PDFDict): PDFDict[] =>
+  field
+    .lookup(PDFName.of("Kids"), PDFArray)
+    .asArray()
+    .map((kid) => doc.context.lookup(kid, PDFDict));
+
+const kidStates = (doc: PDFDocument, field: PDFDict): string[] =>
+  kidDicts(doc, field).map((kid) => String(kid.get(PDFName.of("AS"))));
+
+test("export sets the chosen on-state of a multi-state checkbox", async () => {
+  const bytes = await buildPdfFormEdgeFixture();
+  const base = await editorDocumentFromBytes(bytes);
+  const exportWith = async (value: string | null) =>
+    await exportDocument({
+      assets: {},
+      bytes,
+      document: mapDocumentFormFields(base, (field) =>
+        field.name === EDGE_FIELD.pick && field.kind === "checkbox"
+          ? { ...field, value }
+          : field
+      ),
+      fontBytes: {},
+    });
+
+  const pickedBytes = await exportWith("A");
+  const picked = await PDFDocument.load(pickedBytes);
+  const fieldA = topField(picked, EDGE_FIELD.pick);
+  expect(String(fieldA.get(PDFName.of("V")))).toBe("/A");
+  expect(kidStates(picked, fieldA)).toEqual(["/A", "/Off"]);
+  // The PDF's own drawings stay; pdf-lib's default tick must not replace them.
+  const normal = kidDicts(picked, fieldA)[1]
+    ?.lookup(PDFName.of("AP"), PDFDict)
+    .lookup(PDFName.of("N"), PDFDict);
+  expect(normal?.has(PDFName.of("B"))).toBe(true);
+
+  const cleared = await PDFDocument.load(await exportWith(null));
+  const fieldOff = topField(cleared, EDGE_FIELD.pick);
+  expect(String(fieldOff.get(PDFName.of("V")))).toBe("/Off");
+  expect(kidStates(cleared, fieldOff)).toEqual(["/Off", "/Off"]);
+
+  const reloaded = await editorDocumentFromBytes(pickedBytes);
+  const pick = reloaded.form?.fields.find(
+    (field) => field.name === EDGE_FIELD.pick
+  );
+  expect(pick?.kind === "checkbox" ? pick.value : "missing").toBe("A");
+});
+
+test("export writes every field that owns one of the widgets", async () => {
+  const bytes = await buildPdfFormEdgeFixture();
+  const base = await editorDocumentFromBytes(bytes);
+  // "a.b" (dotted) and "a" > "b" share a full name, so PDF.js groups them.
+  const shared = base.form?.fields.find(
+    (field) => field.name === EDGE_FIELD.dotted
+  );
+  expect(shared?.widgets).toHaveLength(2);
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document: mapDocumentFormFields(base, (field) =>
+      field.id === shared?.id && field.kind === "text"
+        ? { ...field, value: "changed" }
+        : field
+    ),
+    fontBytes: {},
+  });
+  const exported = await PDFDocument.load(output);
+  const values = exported
+    .getForm()
+    .acroForm.getAllFields()
+    .filter(
+      ([acroField]) => acroField.getFullyQualifiedName() === EDGE_FIELD.dotted
+    )
+    .map(([acroField]) =>
+      acroField instanceof PDFAcroText
+        ? acroField.getValue()?.decodeText()
+        : null
+    );
+  expect(values).toEqual(["changed", "changed"]);
 });

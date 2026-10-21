@@ -7,6 +7,7 @@ import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
   isPdfFormFieldDirty,
   isPdfFormFieldEditable,
+  nextCheckboxValue,
   pdfFormChoiceDisplay,
   pdfFormFieldPreviewText,
   pdfFormWidgetsOnPage,
@@ -300,7 +301,7 @@ const activateWidget = (field: PdfFormField, widget: PdfFormWidget): void => {
   if (field.kind === "checkbox") {
     patchSelectedField((current) =>
       current.kind === "checkbox" && current.id === field.id
-        ? { ...current, value: !current.value }
+        ? { ...current, value: nextCheckboxValue(current, widget) }
         : current
     );
     return;
