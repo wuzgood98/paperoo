@@ -167,6 +167,13 @@ export const EmptyState = () => {
           >
             {siteConfig.supportEmail}
           </a>
+          {" · "}
+          <Link
+            className="text-foreground underline underline-offset-4"
+            href="/privacy"
+          >
+            Privacy
+          </Link>
         </p>
       </EmptyContent>
       <RestoreSessionBanner />
