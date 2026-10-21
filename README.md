@@ -61,6 +61,7 @@ pnpm dev
 - Maximum file size: 80 MB
 - Maximum page count: 200
 - Encrypted PDFs cannot be opened or exported
+- Needs Chrome or Edge 140+, Firefox 133+, or Safari 18.2+. Older browsers see an "Update your browser" message
 
 ## Stack
 

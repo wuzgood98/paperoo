@@ -1,7 +1,8 @@
 "use client";
 
 import { FileUpIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import Link from "next/link";
+import { useRef, useState, useSyncExternalStore } from "react";
 
 import { RestoreSessionBanner } from "@/components/editor/restore-session-banner";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,10 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Kbd } from "@/components/ui/kbd";
+import {
+  supportsPdfEngine,
+  UNSUPPORTED_BROWSER_MESSAGE,
+} from "@/lib/browser-support";
 import { useEditorStore } from "@/lib/editor/store";
 import {
   openPdfFromList,
@@ -22,13 +27,49 @@ import {
 } from "@/lib/pdf/open-pdf";
 import { siteConfig } from "@/lib/site";
 
+// Browser support never changes while the page is open.
+const stopNothing = (): void => {
+  // Nothing was subscribed.
+};
+const subscribeToNothing = (): (() => void) => stopNothing;
+// The server cannot know the browser; assume support until hydrated.
+const assumeSupported = (): boolean => true;
+
 const onFiles = async (files: FileList | null) => {
   await openPdfFromList(files);
+};
+
+const emptyTitle = (
+  supported: boolean,
+  errorMessage: string | null
+): string => {
+  if (!supported) {
+    return "Update your browser";
+  }
+  return errorMessage ? "Could not open that PDF" : "Open a PDF";
+};
+
+const emptyDescription = (
+  supported: boolean,
+  errorMessage: string | null
+): string => {
+  if (!supported) {
+    return UNSUPPORTED_BROWSER_MESSAGE;
+  }
+  return (
+    errorMessage ??
+    "Drop a file here or choose one from your computer. Edits stay on a layer above the original pages."
+  );
 };
 
 export const EmptyState = () => {
   const inputRef = useRef<HTMLInputElement>(null);
   const errorMessage = useEditorStore((state) => state.errorMessage);
+  const supported = useSyncExternalStore(
+    subscribeToNothing,
+    supportsPdfEngine,
+    assumeSupported
+  );
   const [dragging, setDragging] = useState(false);
   // dragenter/dragleave fire for every child crossed; count to know when the
   // drag has really left.
@@ -74,12 +115,9 @@ export const EmptyState = () => {
             <FileUpIcon />
           </EmptyMedia>
         </div>
-        <EmptyTitle>
-          {errorMessage ? "Could not open that PDF" : "Open a PDF"}
-        </EmptyTitle>
+        <EmptyTitle>{emptyTitle(supported, errorMessage)}</EmptyTitle>
         <EmptyDescription>
-          {errorMessage ??
-            "Drop a file here or choose one from your computer. Edits stay on a layer above the original pages."}
+          {emptyDescription(supported, errorMessage)}
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
@@ -96,6 +134,7 @@ export const EmptyState = () => {
         />
         <div className="flex items-center justify-center gap-2">
           <Button
+            disabled={!supported}
             pressable
             onClick={() => inputRef.current?.click()}
             onFocus={prewarmPdfOpen}
@@ -104,6 +143,7 @@ export const EmptyState = () => {
             Choose PDF
           </Button>
           <Button
+            disabled={!supported}
             pressable
             onClick={async () => {
               await openPdfFromUrl("/sample.pdf", "sample.pdf");
@@ -128,6 +168,13 @@ export const EmptyState = () => {
           >
             {siteConfig.supportEmail}
           </a>
+          {" · "}
+          <Link
+            className="text-foreground underline underline-offset-4"
+            href="/privacy"
+          >
+            Privacy
+          </Link>
         </p>
       </EmptyContent>
       <RestoreSessionBanner />
