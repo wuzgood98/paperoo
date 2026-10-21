@@ -146,6 +146,7 @@ export const EditorToolbar = () => {
           event.target.value = "";
         }}
         ref={inputRef}
+        tabIndex={-1}
         type="file"
       />
       <ToolbarTip label="Open PDF" shortcut="⌘O">

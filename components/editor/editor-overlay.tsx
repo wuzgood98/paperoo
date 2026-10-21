@@ -429,6 +429,8 @@ export const EditorOverlay = ({
           event.target.value = "";
         }}
         ref={imageInputRef}
+        // Opened by the image tool, never by Tab.
+        tabIndex={-1}
         type="file"
       />
       <PdfAnnotationLayer

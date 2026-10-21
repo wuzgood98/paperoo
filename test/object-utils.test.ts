@@ -14,6 +14,7 @@ import {
   hitTestPdfImage,
   hitTestPdfText,
   isPdfImageDirty,
+  adjacentPdfFormWidget,
   isPdfTextDirty,
   nextCheckboxValue,
   PDF_IMAGE_COVER_BLEED,
@@ -1166,4 +1167,79 @@ test("clicking a checkbox widget picks its on-state, or clears it when on", () =
   expect(nextCheckboxValue(field, boxA)).toBe("A");
   expect(nextCheckboxValue(field, boxB)).toBeNull();
   expect(nextCheckboxValue({ ...field, value: null }, boxB)).toBe("B");
+});
+
+const formWidget = (id: string, pageId: string) => ({
+  exportValue: null,
+  height: 20,
+  id,
+  pageId,
+  sourceAnnotId: `${id}R`,
+  width: 200,
+  x: 72,
+  y: 720,
+});
+
+const formTextField = (
+  id: string,
+  widgets: ReturnType<typeof formWidget>[],
+  readOnly = false
+) => ({
+  align: "left" as const,
+  comb: false,
+  fileSelect: false,
+  id,
+  kind: "text" as const,
+  maxLength: null,
+  multiline: false,
+  name: id,
+  originalValue: "",
+  password: false,
+  readOnly,
+  required: false,
+  richText: false,
+  value: "",
+  widgets,
+});
+
+test("Tab order runs through the whole document and skips fields with nothing to fill", () => {
+  const form = {
+    fields: [
+      formTextField("first", [formWidget("w-first", "page-1")]),
+      formTextField("locked", [formWidget("w-locked", "page-1")], true),
+      {
+        id: "sign",
+        kind: "signature" as const,
+        name: "sign",
+        readOnly: true,
+        required: false,
+        widgets: [formWidget("w-sign", "page-1")],
+      },
+      formTextField("shared", [
+        formWidget("w-shared-2", "page-2"),
+        formWidget("w-shared-1", "page-1"),
+      ]),
+    ],
+    hasJavaScript: false,
+    hasXfa: false,
+    signatures: [],
+  };
+  const pageOrder = ["page-1", "page-2"];
+  const after = (id: string) =>
+    adjacentPdfFormWidget(form, pageOrder, id, 1)?.widget.id ?? null;
+  const before = (id: string) =>
+    adjacentPdfFormWidget(form, pageOrder, id, -1)?.widget.id ?? null;
+
+  expect(after("w-first")).toBe("w-shared-1");
+  expect(after("w-shared-1")).toBe("w-shared-2");
+  expect(after("w-shared-2")).toBeNull();
+  expect(before("w-shared-2")).toBe("w-shared-1");
+  expect(before("w-first")).toBeNull();
+  // From a read-only field that was clicked, Tab still moves on.
+  expect(after("w-locked")).toBe("w-shared-1");
+  // Page order follows the document, not the form.
+  expect(
+    adjacentPdfFormWidget(form, ["page-2", "page-1"], "w-shared-2", 1)?.widget
+      .id
+  ).toBe("w-first");
 });
