@@ -1,6 +1,7 @@
 "use client";
 
 import { FileUpIcon } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState, useSyncExternalStore } from "react";
 
 import { RestoreSessionBanner } from "@/components/editor/restore-session-banner";
