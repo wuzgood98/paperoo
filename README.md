@@ -79,3 +79,15 @@ lib/pdf/              Load, extract, export, print
 lib/ocr/              OCR session and search
 test/                 Vitest suites
 ```
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up the project, name branches, and write commits.
+
+## Security
+
+Please don't report security issues in public issues or pull requests. Email them privately to [security@paperoo.app](mailto:security@paperoo.app). See [SECURITY.md](SECURITY.md) for what to include.
+
+## License
+
+Paperoo is licensed under the [GNU Affero General Public License v3.0](LICENSE). You can use, change, and share it. If you run a changed version for other people, including as a website, you must share your source code under the same license.
