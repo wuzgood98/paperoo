@@ -28,6 +28,7 @@ import {
   fittedPdfTextBox,
   isPdfVectorDirty,
   mapDocumentFormFields,
+  resetPdfFormField,
   mapPageObjects,
   pinObject,
   mapPagePdfAnnotations,
@@ -1352,6 +1353,20 @@ export const editorStore = {
       zoomMode: "fit-page",
     });
     editorStore.recomputeFitZoom();
+  },
+
+  /** Clear form: every field back to its value when opened, as one undo step. */
+  resetPdfForm: (): void => {
+    commit(() => {
+      internal.state = {
+        ...internal.state,
+        document: mapDocumentFormFields(
+          internal.state.document,
+          resetPdfFormField
+        ),
+        selectedPdfFormFieldId: null,
+      };
+    }, true);
   },
 
   /** Re-add a saved image under its saved id, so restored objects find it. */

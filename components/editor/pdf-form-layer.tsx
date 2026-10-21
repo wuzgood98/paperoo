@@ -8,6 +8,7 @@ import type {
   RefObject,
 } from "react";
 
+import { focusPdfFormWidget } from "@/components/editor/form-focus";
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
   autoCombFontSize,
@@ -17,6 +18,7 @@ import {
   formTextBounds,
 } from "@/lib/editor/form-appearance";
 import type { MeasureText } from "@/lib/editor/form-appearance";
+import { useHighlightFormFields } from "@/lib/editor/form-highlight";
 import {
   adjacentPdfFormWidget,
   documentForm,
@@ -142,17 +144,9 @@ const formTextStyle = (
   };
 };
 
-/** A page scrolled into view mounts its widgets within a few frames. */
-const FOCUS_WIDGET_MAX_FRAMES = 30;
-
 const patchSelectedField = (updater: (field: PdfFormField) => PdfFormField) => {
   editorStore.patchPdfFormField(updater);
 };
-
-const widgetButton = (widgetId: string): HTMLElement | null =>
-  document.querySelector<HTMLElement>(
-    `[data-form-widget="${CSS.escape(widgetId)}"]`
-  );
 
 /**
  * Focus the next or previous fillable widget in the document, scrolling its
@@ -169,20 +163,7 @@ const focusAdjacentWidget = (widgetId: string, step: 1 | -1): boolean => {
   if (!target) {
     return false;
   }
-  editorStore.setCurrentPage(target.widget.pageId, { syncFitZoom: false });
-  let frames = 0;
-  const tryFocus = (): void => {
-    const node = widgetButton(target.widget.id);
-    if (node) {
-      node.focus();
-      return;
-    }
-    frames += 1;
-    if (frames < FOCUS_WIDGET_MAX_FRAMES) {
-      window.requestAnimationFrame(tryFocus);
-    }
-  };
-  tryFocus();
+  focusPdfFormWidget(target.widget);
   return true;
 };
 
@@ -670,9 +651,79 @@ const activateWidget = (field: PdfFormField, widget: PdfFormWidget): void => {
   }
 };
 
+/** The open control for a field being typed in or picked from. */
+const FormFieldControl = ({
+  field,
+  onExit,
+  openPicker,
+  widget,
+  zoom,
+}: ChoiceControlProps & { field: PdfFormField }) => {
+  switch (field.kind) {
+    case "text": {
+      return (
+        <FormTextControl
+          field={field}
+          onExit={onExit}
+          widget={widget}
+          zoom={zoom}
+        />
+      );
+    }
+    case "dropdown": {
+      return field.editable ? (
+        <FormComboControl
+          field={field}
+          onExit={onExit}
+          openPicker={openPicker}
+          widget={widget}
+          zoom={zoom}
+        />
+      ) : (
+        <FormDropdownControl
+          field={field}
+          onExit={onExit}
+          openPicker={openPicker}
+          widget={widget}
+          zoom={zoom}
+        />
+      );
+    }
+    case "listbox": {
+      return (
+        <FormListboxControl
+          field={field}
+          onExit={onExit}
+          widget={widget}
+          zoom={zoom}
+        />
+      );
+    }
+    default: {
+      return null;
+    }
+  }
+};
+
+/** Selected, then hovered, then a required field's red outline. */
+const widgetOutlineClass = (
+  selected: boolean,
+  hovered: boolean,
+  requiredToFill: boolean
+): string | undefined => {
+  if (selected) {
+    return "outline-primary outline";
+  }
+  if (hovered) {
+    return "outline-primary/40 outline";
+  }
+  return requiredToFill ? "outline-destructive/80 outline" : undefined;
+};
+
 const FormWidgetChrome = ({
   editing,
   field,
+  highlight,
   hovered,
   onBeginEdit,
   onExitEdit,
@@ -682,6 +733,8 @@ const FormWidgetChrome = ({
 }: {
   editing: boolean;
   field: PdfFormField;
+  /** Tint fillable fields so they are easy to find. */
+  highlight: boolean;
   hovered: boolean;
   onBeginEdit: (fieldId: string) => void;
   onExitEdit: () => void;
@@ -695,12 +748,11 @@ const FormWidgetChrome = ({
   const editable = isPdfFormFieldEditable(field);
   const showControl = editing && editable && startsInlineEdit(field);
   const preview = dirty ? pdfFormFieldPreviewText(field, widget) : "";
-  let chromeClass: string | undefined;
-  if (selected) {
-    chromeClass = "outline-primary outline";
-  } else if (hovered) {
-    chromeClass = "outline-primary/40 outline";
-  }
+  const chromeClass = widgetOutlineClass(
+    selected,
+    hovered,
+    field.required && editable
+  );
   const exitControl = (): void => {
     setOpenedByPointer(false);
     onExitEdit();
@@ -719,41 +771,24 @@ const FormWidgetChrome = ({
           zoom={zoom}
         />
       ) : null}
-      {showControl && field.kind === "text" ? (
-        <FormTextControl
-          field={field}
-          onExit={exitControl}
-          widget={widget}
-          zoom={zoom}
+      {highlight && editable && !showControl ? (
+        <div
+          aria-hidden="true"
+          className={cn(
+            "bg-info/15 pointer-events-none absolute inset-0",
+            field.kind === "radio" && "rounded-full"
+          )}
         />
       ) : null}
-      {showControl && field.kind === "dropdown" && field.editable ? (
-        <FormComboControl
-          field={field}
-          onExit={exitControl}
-          openPicker={openedByPointer}
-          widget={widget}
-          zoom={zoom}
-        />
-      ) : null}
-      {showControl && field.kind === "dropdown" && !field.editable ? (
-        <FormDropdownControl
+      {showControl ? (
+        <FormFieldControl
           field={field}
           onExit={exitControl}
           openPicker={openedByPointer}
           widget={widget}
           zoom={zoom}
         />
-      ) : null}
-      {showControl && field.kind === "listbox" ? (
-        <FormListboxControl
-          field={field}
-          onExit={exitControl}
-          widget={widget}
-          zoom={zoom}
-        />
-      ) : null}
-      {showControl ? null : (
+      ) : (
         <button
           aria-label={field.name}
           className="absolute inset-0 cursor-text bg-transparent"
@@ -805,6 +840,7 @@ const PdfFormLayerView = ({
 }) => {
   // Only the form: edits to page content must not re-render form widgets.
   const form = useEditorStore((state) => state.document.form);
+  const highlight = useHighlightFormFields();
   const items = pdfFormWidgetsOnPage({ form }, pageId);
 
   return (
@@ -814,6 +850,7 @@ const PdfFormLayerView = ({
           // Selecting anything else closes an open control.
           editing={editingId === field.id && selectedId === field.id}
           field={field}
+          highlight={highlight}
           hovered={hoveredId === field.id}
           key={widget.id}
           onBeginEdit={onBeginEdit}
