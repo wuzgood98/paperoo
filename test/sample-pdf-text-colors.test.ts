@@ -37,8 +37,10 @@ const misalignment = async (
 
 // A misaligned zip fails closed to the default text color, so every run on
 // the page would lose its ink.
-test("public/sample.pdf text paints align with text items on every page", async () => {
-  const bytes = await readFile(path.join(process.cwd(), "public/sample.pdf"));
+test("test/fixtures/sample.pdf text paints align with text items on every page", async () => {
+  const bytes = await readFile(
+    path.join(process.cwd(), "test/fixtures/sample.pdf")
+  );
   const loadingTask = loadPdfJsDocument(new Uint8Array(bytes));
   try {
     const doc = await loadingTask.promise;
