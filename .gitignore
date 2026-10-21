@@ -13,6 +13,9 @@
 
 # generated OCR worker, WASM cores, and English traineddata
 /public/ocr
+
+# pdf.js cmaps, fonts, ICC profiles, and WASM, copied from pdfjs-dist on install
+/public/pdfjs
 /public/scan-sample.pdf
 
 # next.js
