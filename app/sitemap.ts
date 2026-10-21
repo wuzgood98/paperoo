@@ -8,6 +8,11 @@ const sitemap = (): MetadataRoute.Sitemap => [
     priority: 1,
     url: siteConfig.url,
   },
+  {
+    changeFrequency: "yearly",
+    priority: 0.3,
+    url: `${siteConfig.url}/privacy`,
+  },
 ];
 
 export default sitemap;

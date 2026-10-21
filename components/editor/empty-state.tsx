@@ -1,6 +1,7 @@
 "use client";
 
 import { FileUpIcon } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState } from "react";
 
 import { RestoreSessionBanner } from "@/components/editor/restore-session-banner";
@@ -128,6 +129,13 @@ export const EmptyState = () => {
           >
             {siteConfig.supportEmail}
           </a>
+          {" · "}
+          <Link
+            className="text-foreground underline underline-offset-4"
+            href="/privacy"
+          >
+            Privacy
+          </Link>
         </p>
       </EmptyContent>
       <RestoreSessionBanner />
