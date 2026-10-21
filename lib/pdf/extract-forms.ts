@@ -1,5 +1,6 @@
 import { userBoxToDisplayed } from "@/lib/editor/coordinates";
 import { createId } from "@/lib/editor/ids";
+import { DEFAULT_CHECKBOX_ON_STATE } from "@/lib/editor/types";
 import type {
   CropBox,
   PageRotation,
@@ -44,12 +45,19 @@ const FIELD_FLAG = {
   RICHTEXT: 0x02_00_00_00,
 } as const;
 
+/** Annotation /F bits that keep a widget off screen. */
+const ANNOTATION_FLAG = {
+  HIDDEN: 0x02,
+  NO_VIEW: 0x20,
+} as const;
+
 interface PdfJsChoiceItem {
   displayValue?: unknown;
   exportValue?: unknown;
 }
 
 interface PdfJsWidget {
+  annotationFlags?: unknown;
   buttonValue?: unknown;
   checkBox?: unknown;
   combo?: unknown;
@@ -59,6 +67,7 @@ interface PdfJsWidget {
   fieldName?: unknown;
   fieldType?: unknown;
   fieldValue?: unknown;
+  hidden?: unknown;
   id?: unknown;
   maxLen?: unknown;
   multiLine?: unknown;
@@ -150,8 +159,11 @@ const widgetExportValue = (raw: PdfJsWidget): string | null => {
     return asString(raw.buttonValue) ?? asString(raw.exportValue);
   }
   if (raw.checkBox === true) {
-    const named = asString(raw.exportValue) ?? asString(raw.exportValues);
-    return named;
+    return (
+      asString(raw.exportValue) ??
+      asString(raw.exportValues) ??
+      DEFAULT_CHECKBOX_ON_STATE
+    );
   }
   return null;
 };
@@ -162,6 +174,16 @@ const isCheckedValue = (value: unknown): boolean => {
   }
   const named = asString(value);
   return named !== null && named !== "Off" && named.length > 0;
+};
+
+/** Hidden and NoView widgets are not shown by any viewer, so not here either. */
+const isHiddenWidget = (raw: PdfJsWidget): boolean => {
+  const flags = asNumber(raw.annotationFlags) ?? 0;
+  return (
+    raw.hidden === true ||
+    hasFlag(flags, ANNOTATION_FLAG.HIDDEN) ||
+    hasFlag(flags, ANNOTATION_FLAG.NO_VIEW)
+  );
 };
 
 const classify = (
@@ -227,6 +249,26 @@ const toWidget = (
   };
 };
 
+/**
+ * The checked on-state, read from every widget: PDF.js may report the value
+ * on the checked widget only. A value naming a widget's on-state wins.
+ */
+const checkboxValue = (group: GroupedWidgets): string | null => {
+  const onStates = new Set(
+    group.widgets.map((item) => widgetExportValue(item.raw))
+  );
+  const named = group.widgets
+    .map((item) => asString(item.raw.fieldValue))
+    .find((value) => value !== null && onStates.has(value));
+  if (named) {
+    return named;
+  }
+  const checked = group.widgets.find((item) =>
+    isCheckedValue(item.raw.fieldValue)
+  );
+  return checked ? widgetExportValue(checked.raw) : null;
+};
+
 // oxlint-disable-next-line eslint/complexity -- one constructor per PDF field kind
 const fieldFromGroup = (group: GroupedWidgets): PdfFormField | null => {
   const [first] = group.widgets;
@@ -273,7 +315,7 @@ const fieldFromGroup = (group: GroupedWidgets): PdfFormField | null => {
       };
     }
     case "checkbox": {
-      const value = isCheckedValue(raw.fieldValue);
+      const value = checkboxValue(group);
       return {
         ...base,
         kind: "checkbox",
@@ -355,7 +397,7 @@ export const extractPdfForm = (input: ExtractFormInput): PdfFormModel => {
   for (const { annotations, page } of input.pages) {
     for (const annotation of annotations) {
       const raw = asRecord(annotation);
-      if (!raw || asString(raw.subtype) !== "Widget") {
+      if (!raw || asString(raw.subtype) !== "Widget" || isHiddenWidget(raw)) {
         continue;
       }
       const kind = classify(raw);

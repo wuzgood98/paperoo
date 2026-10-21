@@ -49,11 +49,19 @@ const checkboxField = (
   id: "field-check",
   kind: "checkbox",
   name: "prefs.newsletter",
-  originalValue: true,
+  originalValue: "Yes",
   readOnly: false,
   required: false,
-  value: true,
-  widgets: [widget({ height: 16, id: "widget-check", width: 16, y: 520 })],
+  value: "Yes",
+  widgets: [
+    widget({
+      exportValue: "Yes",
+      height: 16,
+      id: "widget-check",
+      width: 16,
+      y: 520,
+    }),
+  ],
   ...overrides,
 });
 
@@ -138,7 +146,7 @@ test("checkbox and radio each record a separate history entry", () => {
   editorStore.resetDocument([page()], "form.pdf", formModel());
   editorStore.selectPdfFormField("field-check");
   editorStore.patchPdfFormField((field) =>
-    field.kind === "checkbox" ? { ...field, value: false } : field
+    field.kind === "checkbox" ? { ...field, value: null } : field
   );
   editorStore.selectPdfFormField("field-radio");
   editorStore.patchPdfFormField((field) =>
@@ -148,7 +156,7 @@ test("checkbox and radio each record a separate history entry", () => {
   const fields = editorStore.getState().document.form?.fields ?? [];
   const checkbox = fields.find((field) => field.id === "field-check");
   const radio = fields.find((field) => field.id === "field-radio");
-  expect(checkbox?.kind === "checkbox" ? checkbox.value : null).toBe(false);
+  expect(checkbox?.kind === "checkbox" ? checkbox.value : "missing").toBe(null);
   expect(radio?.kind === "radio" ? radio.value : null).toBe("Ghana");
 
   editorStore.undo();
@@ -164,8 +172,8 @@ test("checkbox and radio each record a separate history entry", () => {
   expect(
     checkboxAfterRadioUndo?.kind === "checkbox"
       ? checkboxAfterRadioUndo.value
-      : null
-  ).toBe(false);
+      : "missing"
+  ).toBe(null);
 
   editorStore.undo();
   const checkboxRestored = editorStore
@@ -173,7 +181,7 @@ test("checkbox and radio each record a separate history entry", () => {
     .document.form?.fields.find((field) => field.id === "field-check");
   expect(
     checkboxRestored?.kind === "checkbox" ? checkboxRestored.value : null
-  ).toBe(true);
+  ).toBe("Yes");
 });
 
 test("deleteSelected leaves form fields in place", () => {

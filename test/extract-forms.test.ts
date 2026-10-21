@@ -4,7 +4,12 @@ import { normalizeRotation } from "@/lib/editor/coordinates";
 import type { PdfFormModel } from "@/lib/editor/types";
 import { extractPdfForm } from "@/lib/pdf/extract-forms";
 
-import { buildPdfFormFixture, FORM_FIELD } from "./pdf-form-fixture";
+import {
+  buildPdfFormEdgeFixture,
+  buildPdfFormFixture,
+  EDGE_FIELD,
+  FORM_FIELD,
+} from "./pdf-form-fixture";
 import { loadPdfJsDocument } from "./pdfjs-node";
 
 const loadFormPages = async (bytes: Uint8Array) => {
@@ -101,14 +106,15 @@ test("extracts checkbox and radio widgets", () => {
   if (newsletter?.kind !== "checkbox") {
     return;
   }
-  expect(newsletter.value).toBe(true);
+  expect(newsletter.value).toBe("Yes");
+  expect(newsletter.widgets[0]?.exportValue).toBe("Yes");
 
   const terms = fieldNamed(FORM_FIELD.terms);
   expect(terms?.kind).toBe("checkbox");
   if (terms?.kind !== "checkbox") {
     return;
   }
-  expect(terms.value).toBe(false);
+  expect(terms.value).toBeNull();
 
   const region = fieldNamed(FORM_FIELD.region);
   expect(region?.kind).toBe("radio");
@@ -193,4 +199,27 @@ test("marks XFA documents and leaves the field list empty", () => {
   });
   expect(xfa.hasXfa).toBe(true);
   expect(xfa.fields).toEqual([]);
+});
+
+test("leaves out hidden widgets", async () => {
+  const edge = extractPdfForm(
+    await loadFormPages(await buildPdfFormEdgeFixture())
+  );
+  const names = edge.fields.map((field) => field.name);
+  expect(names).toContain(EDGE_FIELD.visible);
+  expect(names).not.toContain(EDGE_FIELD.hidden);
+});
+
+test("a checkbox reads its on-state from whichever widget is on", async () => {
+  const edge = extractPdfForm(
+    await loadFormPages(await buildPdfFormEdgeFixture())
+  );
+  const pick = edge.fields.find((field) => field.name === EDGE_FIELD.pick);
+  expect(pick?.kind).toBe("checkbox");
+  if (pick?.kind !== "checkbox") {
+    return;
+  }
+  expect(pick.widgets.map((widget) => widget.exportValue)).toEqual(["A", "B"]);
+  expect(pick.value).toBe("B");
+  expect(pick.originalValue).toBe("B");
 });

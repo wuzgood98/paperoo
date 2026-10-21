@@ -15,6 +15,7 @@ import {
   hitTestPdfText,
   isPdfImageDirty,
   isPdfTextDirty,
+  nextCheckboxValue,
   PDF_IMAGE_COVER_BLEED,
   PDF_TEXT_COVER_LEFT_EM,
   PDF_VECTOR_COVER_BLEED,
@@ -1137,4 +1138,32 @@ test("the primary cover hides the original underline across the link", () => {
   expect((band?.y ?? 0) + (band?.height ?? 0)).toBeGreaterThan(
     primary.y + 11 + 0.5
   );
+});
+
+const checkboxWidget = (exportValue: string) => ({
+  exportValue,
+  height: 16,
+  id: exportValue,
+  pageId: "page-1",
+  sourceAnnotId: "1R",
+  width: 16,
+  x: 0,
+  y: 0,
+});
+
+test("clicking a checkbox widget picks its on-state, or clears it when on", () => {
+  const [boxA, boxB] = [checkboxWidget("A"), checkboxWidget("B")];
+  const field = {
+    id: "pick",
+    kind: "checkbox" as const,
+    name: "pick",
+    originalValue: "B",
+    readOnly: false,
+    required: false,
+    value: "B",
+    widgets: [boxA, boxB],
+  };
+  expect(nextCheckboxValue(field, boxA)).toBe("A");
+  expect(nextCheckboxValue(field, boxB)).toBeNull();
+  expect(nextCheckboxValue({ ...field, value: null }, boxB)).toBe("B");
 });
