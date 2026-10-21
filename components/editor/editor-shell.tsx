@@ -7,6 +7,7 @@ import { EditorClipboard } from "@/components/editor/editor-clipboard";
 import { EditorHotkeys } from "@/components/editor/editor-hotkeys";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { EmptyState } from "@/components/editor/empty-state";
+import { FormGlyphDialog } from "@/components/editor/form-glyph-dialog";
 import { LargeDeleteDialog } from "@/components/editor/large-delete-dialog";
 import { PageSidebar } from "@/components/editor/page-sidebar";
 import { RedactionConfirmDialog } from "@/components/editor/redaction-confirm-dialog";
@@ -88,6 +89,7 @@ export const EditorShell = () => {
       <SignatureDialog />
       <LargeDeleteDialog />
       <RedactionConfirmDialog />
+      <FormGlyphDialog />
       <ReplaceDocumentDialog />
     </div>
   );

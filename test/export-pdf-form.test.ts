@@ -1,7 +1,14 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { PDFAcroText, PDFArray, PDFDict, PDFDocument, PDFName } from "pdf-lib";
+import {
+  PDFAcroText,
+  PDFArray,
+  PDFDict,
+  PDFDocument,
+  PDFName,
+  PDFStream,
+} from "pdf-lib";
 import { expect, test } from "vitest";
 
 import { normalizeRotation } from "@/lib/editor/coordinates";
@@ -298,4 +305,80 @@ test("export writes every field that owns one of the widgets", async () => {
         : null
     );
   expect(values).toEqual(["changed", "changed"]);
+});
+
+const publicFont = async (url: string): Promise<Uint8Array> =>
+  new Uint8Array(await readFile(path.join(process.cwd(), "public", url)));
+
+const exportFormFonts = async () => ({
+  [FONT_FILES.inter[400]]: await publicFont(FONT_FILES.inter[400]),
+  [FONT_FILES.sans[400]]: await publicFont(FONT_FILES.sans[400]),
+});
+
+const defaultAppearances = (doc: PDFDocument, name: string): string[] => {
+  const field = topField(doc, name);
+  const kids = field.lookup(PDFName.of("Kids"));
+  const dicts = kids instanceof PDFArray ? kidDicts(doc, field) : [];
+  return [field, ...dicts].map((dict) =>
+    String(dict.lookup(PDFName.of("DA")) ?? "")
+  );
+};
+
+test("export keeps a fit-to-box field fitting the box", async () => {
+  const bytes = await buildPdfFormEdgeFixture();
+  const before = defaultAppearances(
+    await PDFDocument.load(bytes),
+    EDGE_FIELD.visible
+  );
+  expect(before.join(",")).toContain(" 0 Tf");
+  const base = await editorDocumentFromBytes(bytes);
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document: mapDocumentFormFields(base, (field) =>
+      field.name === EDGE_FIELD.visible && field.kind === "text"
+        ? { ...field, value: "A new value" }
+        : field
+    ),
+    fontBytes: await exportFormFonts(),
+  });
+  const exported = await PDFDocument.load(output);
+  expect(defaultAppearances(exported, EDGE_FIELD.visible)).toEqual(before);
+  expect(exported.getForm().getTextField(EDGE_FIELD.visible).getText()).toBe(
+    "A new value"
+  );
+});
+
+test("export draws Twi letters with Inter, which has them", async () => {
+  const bytes = await buildPdfFormFixture();
+  const base = await editorDocumentFromBytes(bytes);
+  const value = "Ɔkɔ Ɛsi ₵5";
+  const output = await exportDocument({
+    assets: {},
+    bytes,
+    document: mapDocumentFormFields(base, (field) =>
+      field.name === FORM_FIELD.name && field.kind === "text"
+        ? { ...field, value }
+        : field
+    ),
+    fontBytes: await exportFormFonts(),
+  });
+  const exported = await PDFDocument.load(output);
+  const [widget] = exported
+    .getForm()
+    .getTextField(FORM_FIELD.name)
+    .acroField.getWidgets();
+  const normal = widget?.dict
+    .lookup(PDFName.of("AP"), PDFDict)
+    .lookup(PDFName.of("N"));
+  const fonts =
+    normal instanceof PDFStream
+      ? normal.dict
+          .lookup(PDFName.of("Resources"), PDFDict)
+          .lookup(PDFName.of("Font"), PDFDict)
+      : undefined;
+  const baseFonts = [...(fonts?.values() ?? [])].map((ref) =>
+    String(exported.context.lookup(ref, PDFDict).get(PDFName.of("BaseFont")))
+  );
+  expect(baseFonts.some((name) => name.includes("Inter"))).toBe(true);
 });

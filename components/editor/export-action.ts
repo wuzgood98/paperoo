@@ -1,5 +1,5 @@
 import { toastManager } from "@/components/ui/toast-manager";
-import { confirmRedactions } from "@/lib/editor/redaction-gate";
+import { confirmOutput } from "@/lib/editor/output-gate";
 import type { ExportOptions } from "@/lib/pdf/run-export";
 import { siteConfig, supportMailto } from "@/lib/site";
 
@@ -10,7 +10,7 @@ import { siteConfig, supportMailto } from "@/lib/site";
 export const exportPdfWithToast = async (
   options: ExportOptions = {}
 ): Promise<boolean> => {
-  if (!(await confirmRedactions())) {
+  if (!(await confirmOutput())) {
     return false;
   }
   try {

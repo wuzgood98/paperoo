@@ -186,6 +186,12 @@ export const buildPdfFormEdgeFixture = async (): Promise<Uint8Array> => {
   const visible = form.createTextField(EDGE_FIELD.visible);
   visible.setText("Shown");
   visible.addToPage(page, { ...widget, font, y: 720 });
+  // pdf-lib writes the size it drew at; put back "fit to the box".
+  const autoSize = "/Helv 0 Tf 0 g";
+  visible.acroField.setDefaultAppearance(autoSize);
+  for (const visibleWidget of visible.acroField.getWidgets()) {
+    visibleWidget.setDefaultAppearance(autoSize);
+  }
 
   const hidden = form.createTextField(EDGE_FIELD.hidden);
   hidden.setText("Secret");

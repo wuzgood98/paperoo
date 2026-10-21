@@ -10,6 +10,14 @@ import type {
 
 import { objectWrapperStyle, pageToCss } from "@/lib/editor/coordinates";
 import {
+  autoCombFontSize,
+  autoFormFontSize,
+  FORM_TEXT_PADDING,
+  formLineHeight,
+  formTextBounds,
+} from "@/lib/editor/form-appearance";
+import type { MeasureText } from "@/lib/editor/form-appearance";
+import {
   adjacentPdfFormWidget,
   documentForm,
   isPdfFormFieldDirty,
@@ -27,11 +35,9 @@ import type {
   PdfFormTextField,
   PdfFormWidget,
 } from "@/lib/editor/types";
+import { canvasTextWidth, fontFamilyCss } from "@/lib/fonts/measure-text";
 import { cn } from "@/lib/utils";
 
-const FORM_CONTROL_FONT_INSET = 2;
-const FORM_CONTROL_MAX_FONT = 12;
-const FORM_CONTROL_MIN_FONT = 8;
 const LISTBOX_MAX_VISIBLE_OPTIONS = 8;
 const LISTBOX_MIN_VISIBLE_OPTIONS = 2;
 
@@ -43,18 +49,96 @@ const startsInlineEdit = (field: PdfFormField): boolean =>
 const widgetBoxStyle = (widget: PdfFormWidget, zoom: number) =>
   objectWrapperStyle({ ...widget, rotation: 0 }, zoom);
 
-const controlFontStyle = (
+/** pdf-lib's border when a widget predates recorded widths (old sessions). */
+const DEFAULT_BORDER_WIDTH = 1;
+/** A checkbox tick fills this much of its box. */
+const CHECK_MARK_FILL = 0.8;
+
+const measureSans: MeasureText = (text, fontSize) =>
+  canvasTextWidth(text, {
+    fontFamily: "sans",
+    fontSize,
+    fontWeight: 400,
+    italic: false,
+  });
+
+const borderOf = (widget: PdfFormWidget): number =>
+  widget.borderWidth ?? DEFAULT_BORDER_WIDTH;
+
+const combCellsOf = (field: PdfFormField): number | null =>
+  field.kind === "text" && field.comb && field.maxLength
+    ? field.maxLength
+    : null;
+
+const isMultiline = (field: PdfFormField): boolean =>
+  field.kind === "listbox" || (field.kind === "text" && field.multiline);
+
+/** The size export draws this text at: the PDF's own, or pdf-lib's fit-to-box size. */
+const formFontSize = (
+  field: PdfFormField,
+  widget: PdfFormWidget,
+  text: string
+): number => {
+  const fixed = widget.fontSize ?? 0;
+  if (fixed > 0) {
+    return fixed;
+  }
+  const cells = combCellsOf(field);
+  const bounds = formTextBounds(widget, borderOf(widget), cells !== null);
+  if (cells !== null) {
+    return autoCombFontSize(text, bounds, cells, measureSans);
+  }
+  if (field.kind === "listbox") {
+    // pdf-lib sizes a list box so every option fits, selected or not.
+    const options = field.options.map((option) => option.display);
+    return autoFormFontSize(options, bounds, measureSans, true);
+  }
+  if (isMultiline(field)) {
+    return autoFormFontSize(text.split("\n"), bounds, measureSans, true);
+  }
+  return autoFormFontSize(
+    [text.replaceAll("\n", " ")],
+    bounds,
+    measureSans,
+    false
+  );
+};
+
+/**
+ * Text placed where export draws it: inside the border, Helvetica-sized
+ * (Liberation Sans has its widths), at the size export will pick.
+ */
+const formTextStyle = (
+  field: PdfFormField,
   widget: PdfFormWidget,
   zoom: number,
-  align: PdfFormTextField["align"] = "left"
+  text: string
 ): CSSProperties => {
-  const fontSize = Math.max(
-    FORM_CONTROL_MIN_FONT,
-    Math.min(widget.height - FORM_CONTROL_FONT_INSET, FORM_CONTROL_MAX_FONT)
-  );
+  const border = pageToCss(borderOf(widget), zoom);
+  const cells = combCellsOf(field);
+  const fontSize = pageToCss(formFontSize(field, widget, text), zoom);
+  const style: CSSProperties = {
+    fontFamily: fontFamilyCss("sans"),
+    fontSize,
+    height: `calc(100% - ${border * 2}px)`,
+    left: border,
+    lineHeight: isMultiline(field) ? formLineHeight(1) : 1,
+    padding: cells === null ? pageToCss(FORM_TEXT_PADDING, zoom) : 0,
+    textAlign: field.kind === "text" ? field.align : "left",
+    top: border,
+    width: `calc(100% - ${border * 2}px)`,
+  };
+  if (cells === null) {
+    return style;
+  }
+  // While typing a comb field, spread a monospace font across the cells.
+  const cell = (widget.width * zoom - border * 2) / cells;
   return {
-    fontSize: pageToCss(fontSize, zoom),
-    textAlign: align,
+    ...style,
+    fontFamily: fontFamilyCss("mono"),
+    letterSpacing: `calc(${cell}px - 1ch)`,
+    paddingLeft: `calc((${cell}px - 1ch) / 2)`,
+    textAlign: "left",
   };
 };
 
@@ -112,24 +196,138 @@ const handleTabKey = (event: KeyboardEvent<HTMLElement>, widgetId: string) => {
   }
 };
 
-const FormCoverPlate = ({
-  preview,
+/** pdf-lib's highlight behind a list box's selected options. */
+const LIST_SELECTED_COLOR = "rgb(153 193 218)";
+const PLATE_CLASS =
+  "pointer-events-none absolute overflow-hidden bg-white text-[#111827]";
+
+/** Radios draw their own circle: a plate inside the box would cut the PDF's. */
+const RadioPlate = ({
+  on,
   widget,
   zoom,
 }: {
-  preview: string;
+  on: boolean;
   widget: PdfFormWidget;
   zoom: number;
 }) => (
   <div
-    className="pointer-events-none absolute inset-0 overflow-hidden bg-white text-[#111827]"
-    style={controlFontStyle(widget, zoom)}
+    className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-white"
+    style={{
+      border: `${Math.max(1, pageToCss(borderOf(widget), zoom))}px solid #111827`,
+    }}
   >
-    <div className="flex h-full w-full items-center px-0.5 whitespace-pre-wrap">
-      {preview}
-    </div>
+    {on ? <span className="size-1/2 rounded-full bg-[#111827]" /> : null}
   </div>
 );
+
+const CombPlate = ({
+  cells,
+  field,
+  preview,
+  widget,
+  zoom,
+}: {
+  cells: number;
+  field: PdfFormField;
+  preview: string;
+  widget: PdfFormWidget;
+  zoom: number;
+}) => {
+  const letters = [...preview];
+  return (
+    <div
+      className={cn(PLATE_CLASS, "flex items-center")}
+      style={{
+        ...formTextStyle(field, widget, zoom, preview),
+        fontFamily: fontFamilyCss("sans"),
+        letterSpacing: "normal",
+        paddingLeft: 0,
+      }}
+    >
+      {Array.from({ length: cells }, (_, cell) => (
+        <span className="flex-1 text-center" key={`cell-${cell}`}>
+          {letters[cell] ?? ""}
+        </span>
+      ))}
+    </div>
+  );
+};
+
+/** Covers the PDF's drawing of a filled field with the value export will draw. */
+const FormCoverPlate = ({
+  field,
+  preview,
+  widget,
+  zoom,
+}: {
+  field: PdfFormField;
+  preview: string;
+  widget: PdfFormWidget;
+  zoom: number;
+}) => {
+  if (field.kind === "radio") {
+    return <RadioPlate on={preview.length > 0} widget={widget} zoom={zoom} />;
+  }
+  if (field.kind === "checkbox") {
+    // Inside the border, so the PDF's own box stays.
+    return (
+      <div
+        className={cn(PLATE_CLASS, "flex items-center justify-center")}
+        style={{
+          ...formTextStyle(field, widget, zoom, ""),
+          fontSize: pageToCss(widget.height * CHECK_MARK_FILL, zoom),
+          padding: 0,
+        }}
+      >
+        {preview}
+      </div>
+    );
+  }
+  const cells = combCellsOf(field);
+  if (cells !== null) {
+    return (
+      <CombPlate
+        cells={cells}
+        field={field}
+        preview={preview}
+        widget={widget}
+        zoom={zoom}
+      />
+    );
+  }
+  const style = formTextStyle(field, widget, zoom, preview);
+  if (field.kind === "listbox") {
+    return (
+      <div className={PLATE_CLASS} style={style}>
+        {field.options.map((option) => (
+          <div
+            key={option.exportValue}
+            style={
+              field.value.includes(option.exportValue)
+                ? { backgroundColor: LIST_SELECTED_COLOR }
+                : undefined
+            }
+          >
+            {option.display}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (isMultiline(field)) {
+    return (
+      <div className={cn(PLATE_CLASS, "whitespace-pre-wrap")} style={style}>
+        {preview}
+      </div>
+    );
+  }
+  return (
+    <div className={cn(PLATE_CLASS, "flex items-center")} style={style}>
+      <div className="w-full overflow-hidden whitespace-pre">{preview}</div>
+    </div>
+  );
+};
 
 const FormTextControl = ({
   field,
@@ -202,7 +400,7 @@ const FormTextControl = ({
   const shared = {
     "aria-label": field.name,
     className:
-      "absolute inset-0 h-full w-full resize-none border-0 bg-white p-0.5 text-[#111827] outline-none",
+      "absolute resize-none border-0 bg-white text-[#111827] outline-none",
     maxLength,
     onBlur,
     onChange: (event: {
@@ -214,7 +412,7 @@ const FormTextControl = ({
     onPointerDown: (event: PointerEvent<HTMLElement>) => {
       event.stopPropagation();
     },
-    style: controlFontStyle(widget, zoom, field.align),
+    style: formTextStyle(field, widget, zoom, value),
     value,
   };
 
@@ -311,7 +509,7 @@ const FormComboControl = ({
       <input
         aria-label={field.name}
         autoComplete="off"
-        className="absolute inset-0 h-full w-full border-0 bg-white p-0.5 text-[#111827] outline-none"
+        className="absolute border-0 bg-white text-[#111827] outline-none"
         defaultValue={displayValue}
         list={listId}
         onBlur={(event) => {
@@ -341,7 +539,7 @@ const FormComboControl = ({
           event.stopPropagation();
         }}
         ref={inputRef}
-        style={controlFontStyle(widget, zoom)}
+        style={formTextStyle(field, widget, zoom, displayValue)}
       />
       <datalist id={listId}>
         {field.options.map((option) => (
@@ -367,7 +565,7 @@ const FormDropdownControl = ({
   return (
     <select
       aria-label={field.name}
-      className="absolute inset-0 h-full w-full border-0 bg-white text-[#111827] outline-none"
+      className="absolute border-0 bg-white text-[#111827] outline-none"
       onBlur={onExit}
       onChange={(event) => {
         commitDropdownValue(field, event.currentTarget.value);
@@ -379,7 +577,12 @@ const FormDropdownControl = ({
         event.stopPropagation();
       }}
       ref={selectRef}
-      style={controlFontStyle(widget, zoom)}
+      style={formTextStyle(
+        field,
+        widget,
+        zoom,
+        pdfFormChoiceDisplay(field.options, field.value)
+      )}
       value={field.value ?? ""}
     >
       <option value="">Select…</option>
@@ -404,7 +607,7 @@ const FormListboxControl = ({
   return (
     <select
       aria-label={field.name}
-      className="absolute inset-0 h-full w-full border-0 bg-white text-[#111827] outline-none"
+      className="absolute border-0 bg-white text-[#111827] outline-none"
       multiple={field.multiSelect}
       onBlur={onExit}
       onChange={(event) => {
@@ -429,7 +632,7 @@ const FormListboxControl = ({
         LISTBOX_MIN_VISIBLE_OPTIONS,
         Math.min(field.options.length, LISTBOX_MAX_VISIBLE_OPTIONS)
       )}
-      style={controlFontStyle(widget, zoom)}
+      style={formTextStyle(field, widget, zoom, "")}
       value={field.multiSelect ? field.value : (field.value[0] ?? "")}
     >
       {field.options.map((option) => (
@@ -509,7 +712,12 @@ const FormWidgetChrome = ({
       style={widgetBoxStyle(widget, zoom)}
     >
       {dirty && !showControl ? (
-        <FormCoverPlate preview={preview} widget={widget} zoom={zoom} />
+        <FormCoverPlate
+          field={field}
+          preview={preview}
+          widget={widget}
+          zoom={zoom}
+        />
       ) : null}
       {showControl && field.kind === "text" ? (
         <FormTextControl
