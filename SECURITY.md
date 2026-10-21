@@ -15,7 +15,7 @@ We'll reply to confirm we got your report, keep you updated while we work on a f
 
 ## Supported versions
 
-Only the latest version is supported. That means the live site and the `main` branch.
+Only the latest version is supported. That means the live site at [paperoo.app](https://paperoo.app) and the `main` branch.
 
 ## What counts
 
