@@ -16,6 +16,9 @@ const renderEditorPage = async (page: EditorPage) => {
     import("@/lib/pdf/session"),
     import("@/lib/ocr/render-page"),
   ]);
+  // OCR renders on the same pdf.js worker as the page view; let the page
+  // paint first.
+  await pdfSession.afterFirstPaint();
   const key = pageKeyOf(page);
   const pdfPage = await pdfSession.retainPage(key);
   if (!pdfPage) {
