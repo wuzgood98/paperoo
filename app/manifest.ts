@@ -7,20 +7,12 @@ const manifest = (): MetadataRoute.Manifest => ({
   background_color: "#ffffff",
   description: siteConfig.description,
   display: "standalone",
-  icons: [
-    {
-      purpose: "any",
-      sizes: "any",
-      src: "/icon.svg",
-      type: "image/svg+xml",
-    },
-    ...appIcons.map((icon) => ({
-      purpose: icon.purpose,
-      sizes: `${icon.size}x${icon.size}`,
-      src: appIconSrc(icon),
-      type: "image/png",
-    })),
-  ],
+  icons: appIcons.map((icon) => ({
+    purpose: icon.purpose,
+    sizes: `${icon.size}x${icon.size}`,
+    src: appIconSrc(icon),
+    type: "image/png",
+  })),
   id: "/",
   name: siteConfig.name,
   scope: "/",

@@ -3,7 +3,7 @@ export const BRAND_TILE_COLOR = "#141414";
 export const BRAND_GLYPH_COLOR = "#ffffff";
 
 /**
- * Manifest PNG icons. `any` icons match `app/icon.svg` (rounded tile, glyph at
+ * Manifest PNG icons. `any` icons match `scripts/icon.svg` (rounded tile, glyph at
  * 80%). `maskable` icons are full-bleed with the glyph at 60%, well inside the
  * W3C safe zone (a centred circle of radius 40%).
  */

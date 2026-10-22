@@ -6,7 +6,7 @@ import { LogoGlyph } from "@/components/brand/logo-mark";
 import type { AppIcon } from "@/lib/app-icons";
 import { BRAND_GLYPH_COLOR, BRAND_TILE_COLOR } from "@/lib/app-icons";
 
-// Matches the 7/32 corner radius and 0.8 glyph scale of app/icon.svg.
+// Matches the 7/32 corner radius and 0.8 glyph scale of scripts/icon.svg.
 const ANY_CORNER_RATIO = 7 / 32;
 const ANY_GLYPH_RATIO = 0.8;
 const MASKABLE_GLYPH_RATIO = 0.6;

@@ -1,16 +1,18 @@
-// Rasterises app/icon.svg into a multi-size app/favicon.ico (PNG-encoded
-// entries). Next.js can't generate favicon.ico from code, so rerun this after
-// changing the icon: `pnpm icons`.
+// Rasterises scripts/icon.svg into a multi-size app/favicon.ico (PNG-encoded
+// entries) and a large app/icon.png. Rerun this after changing the icon:
+// `pnpm icons`.
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import sharp from "sharp";
 
 const root = path.join(import.meta.dirname, "..");
-const source = path.join(root, "app", "icon.svg");
+const source = path.join(root, "scripts", "icon.svg");
 const target = path.join(root, "app", "favicon.ico");
+const pngTarget = path.join(root, "app", "icon.png");
 
 const SIZES = [16, 32, 48];
+const PNG_SIZE = 512;
 const HEADER_BYTES = 6;
 const ENTRY_BYTES = 16;
 const ICO_TYPE_ICON = 1;
@@ -49,3 +51,8 @@ const entries = SIZES.map((size, index) => {
 });
 
 await writeFile(target, Buffer.concat([header, ...entries, ...images]));
+
+await sharp(svg, { density: 72 * (PNG_SIZE / 32) })
+  .resize(PNG_SIZE, PNG_SIZE)
+  .png()
+  .toFile(pngTarget);
