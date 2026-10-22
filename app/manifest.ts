@@ -7,14 +7,20 @@ const manifest = (): MetadataRoute.Manifest => ({
   background_color: "#ffffff",
   description: siteConfig.description,
   display: "standalone",
-  // PNG only: a sizes "any" SVG entry looks like the biggest icon, and iOS
-  // can pick it for the Home Screen and then fail to use it.
-  icons: appIcons.map((icon) => ({
-    purpose: icon.purpose,
-    sizes: `${icon.size}x${icon.size}`,
-    src: appIconSrc(icon),
-    type: "image/png",
-  })),
+  icons: [
+    {
+      purpose: "any",
+      sizes: "any",
+      src: "/icon.svg",
+      type: "image/svg+xml",
+    },
+    ...appIcons.map((icon) => ({
+      purpose: icon.purpose,
+      sizes: `${icon.size}x${icon.size}`,
+      src: appIconSrc(icon),
+      type: "image/png",
+    })),
+  ],
   id: "/",
   name: siteConfig.name,
   scope: "/",
