@@ -1,4 +1,7 @@
-import { GlobalWorkerOptions } from "pdfjs-dist";
+import "@/lib/pdf/stream-iterator";
+// The legacy build fills in newer features pdf.js 6 uses, like
+// `Map.getOrInsertComputed` and `Math.sumPrecise`, that Safari 18 lacks.
+import { GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 export {
   AnnotationMode,
@@ -8,14 +11,14 @@ export {
   PasswordException,
   PixelsPerInch,
   RenderingCancelledException,
-} from "pdfjs-dist";
+} from "pdfjs-dist/legacy/build/pdf.mjs";
 export type {
   PDFDocumentLoadingTask,
   PDFDocumentProxy,
   PDFPageProxy,
   PageViewport,
   RenderTask,
-} from "pdfjs-dist";
+} from "pdfjs-dist/legacy/build/pdf.mjs";
 
 let configured = false;
 
@@ -25,7 +28,7 @@ export const ensurePdfjsWorker = (): void => {
   }
 
   GlobalWorkerOptions.workerPort = new Worker(
-    new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url),
+    new URL("pdf.worker.ts", import.meta.url),
     { type: "module" }
   );
   configured = true;
