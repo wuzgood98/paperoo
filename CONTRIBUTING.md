@@ -58,6 +58,8 @@ pnpm test
 
 `pnpm fix` fixes most lint and format problems for you. A pre-commit hook also runs it on staged files.
 
+If people using Paperoo would notice your change, add a line under "Unreleased" in [CHANGELOG.md](CHANGELOG.md). Put it in the right section (Added, Changed, Fixed, or Security), write it in plain words, and link your pull request. Refactors, tests, and CI changes don't need a line.
+
 In the pull request, explain what changed and why. Add a screenshot or a short clip if the change is visible.
 
 ## License

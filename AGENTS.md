@@ -14,6 +14,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - No AI attribution in commits or pull requests: no `Co-Authored-By` lines, session links, or "Generated with" footers.
 - Commits must be authored by the person you're working for, never an AI identity. Before committing, check `git config user.name` and `git config user.email`. If either names an AI agent or is missing, ask the person for their name and email. Never copy another contributor's identity from `git log`.
 
+# Changelog
+
+- If people using Paperoo would notice a change, add a line under "Unreleased" in `CHANGELOG.md` in the same pull request. Use the right section (Added, Changed, Fixed, or Security), write it in plain words, and link the pull request.
+- Refactors, tests, CI, and other internal changes don't get a line.
+
 # Ultracite Code Standards
 
 This project uses **Ultracite**, a zero-config preset that enforces strict code quality standards through automated formatting and linting.
