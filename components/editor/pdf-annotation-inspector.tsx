@@ -12,7 +12,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { isOpenableWebUrl } from "@/lib/editor/annotation-links";
+import { openableWebUrl } from "@/lib/editor/annotation-links";
 import {
   isPdfMarkupAnnotation,
   pdfLinkActionsEqual,
@@ -93,7 +93,7 @@ const LinkInspector = ({
     null
   );
   const [draft, setDraft] = useState("");
-  const openHref = isOpenableWebUrl(urlValue) ? urlValue : null;
+  const openHref = openableWebUrl(urlValue);
 
   const commitUrl = (): void => {
     const trimmed = draft.trim();

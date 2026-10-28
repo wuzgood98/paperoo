@@ -1456,10 +1456,10 @@ export interface ExportReport {
    */
   coverOnlyRunIds: string[];
   /**
-   * Deleted PDF images and vectors that could only be covered, so they are
-   * still in the file.
+   * The output page of each deleted PDF image or vector that could only be
+   * covered, so it is still in the file unless the page is flattened.
    */
-  coveredObjectCount: number;
+  coveredObjectPages: number[];
   /** Output pages (by index) whose redactions are left for flattening. */
   flattenPages: number[];
   /** Fields removed because a widget sat under a precise redaction. */
@@ -1702,7 +1702,7 @@ export const exportDocumentWithReport = async (
   input: ExportInput
 ): Promise<ExportReport> => {
   const coverOnlyRunIds: string[] = [];
-  let coveredObjectCount = 0;
+  const coveredObjectPages: number[] = [];
   const outputPages = outputPagesOf(input);
   const [sources, output] = await Promise.all([
     loadSources(input, outputPages),
@@ -1799,7 +1799,12 @@ export const exportDocumentWithReport = async (
         input.document.pages
       );
     }
-    coveredObjectCount += coveredDeletions(editorPage, written.vectorsRemoved);
+    coveredObjectPages.push(
+      ...Array.from(
+        { length: coveredDeletions(editorPage, written.vectorsRemoved) },
+        () => outputIndex
+      )
+    );
     for (const object of editorPage.pdfImageObjects) {
       if (!isPdfImageDirty(object)) {
         continue;
@@ -1846,7 +1851,7 @@ export const exportDocumentWithReport = async (
   return {
     bytes: await saveOutput(output, input.scrub),
     coverOnlyRunIds,
-    coveredObjectCount,
+    coveredObjectPages,
     flattenPages,
     removedFieldNames,
   };

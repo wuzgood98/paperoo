@@ -1,4 +1,11 @@
-import { PDFArray, PDFDict, PDFName, PDFStream } from "pdf-lib";
+import {
+  PDFArray,
+  PDFDict,
+  PDFHexString,
+  PDFName,
+  PDFStream,
+  PDFString,
+} from "pdf-lib";
 import type { PDFDocument, PDFObject } from "pdf-lib";
 
 /**
@@ -11,7 +18,15 @@ import type { PDFDocument, PDFObject } from "pdf-lib";
  */
 const KEPT_ACTION_TYPES = new Set(["GoTo", "URI", "Named"]);
 
+/**
+ * Link schemes kept in a saved file: web and mail. Others (javascript:,
+ * file:, custom app schemes) would run or open something on the reader's
+ * machine.
+ */
+const KEPT_URI_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+
 const ACTION_KEY = PDFName.of("A");
+const URI_KEY = PDFName.of("URI");
 const NEXT_KEY = PDFName.of("Next");
 const TYPE_KEY = PDFName.of("S");
 /** Trigger actions (page open, field change, keystroke, calculate, ...). */
@@ -25,7 +40,18 @@ const isKeptAction = (doc: PDFDocument, value: PDFObject): boolean => {
     return false;
   }
   const type = action.get(TYPE_KEY);
-  return type instanceof PDFName && KEPT_ACTION_TYPES.has(type.decodeText());
+  if (!(type instanceof PDFName && KEPT_ACTION_TYPES.has(type.decodeText()))) {
+    return false;
+  }
+  if (type !== PDFName.of("URI")) {
+    return true;
+  }
+  const uri = action.lookup(URI_KEY);
+  if (!(uri instanceof PDFString || uri instanceof PDFHexString)) {
+    return false;
+  }
+  const parsed = URL.parse(uri.decodeText());
+  return parsed !== null && KEPT_URI_PROTOCOLS.has(parsed.protocol);
 };
 
 const stripDict = (doc: PDFDocument, dict: PDFDict): void => {

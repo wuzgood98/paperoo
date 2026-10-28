@@ -40,7 +40,7 @@ const editorDocumentFromBytes = async (
   const formPages = await Promise.all(
     Array.from({ length: pdf.numPages }, async (_, index) => {
       const page = await pdf.getPage(index + 1);
-      const viewport = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: 1 / page.userUnit });
       const { view } = page;
       const cropBox = {
         height: view[3] - view[1],

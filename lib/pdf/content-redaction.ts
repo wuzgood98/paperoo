@@ -294,17 +294,9 @@ const type3Reach = (font: PDFDict): GlyphReach => {
   const listed = arrayNumbers(
     font.lookupMaybe(PDFName.of("FontMatrix"), PDFArray)
   );
+  const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = listed;
   const matrix: Matrix =
-    listed.length === 6
-      ? [
-          listed[0] ?? 0,
-          listed[1] ?? 0,
-          listed[2] ?? 0,
-          listed[3] ?? 0,
-          listed[4] ?? 0,
-          listed[5] ?? 0,
-        ]
-      : DEFAULT_TYPE3_MATRIX;
+    listed.length === 6 ? [a, b, c, d, e, f] : DEFAULT_TYPE3_MATRIX;
   const widths = arrayNumbers(font.lookupMaybe(PDFName.of("Widths"), PDFArray));
   const advance = Math.max(
     UNKNOWN_GLYPH_EMS,

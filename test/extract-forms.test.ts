@@ -19,7 +19,7 @@ const loadFormPages = async (bytes: Uint8Array) => {
   const pages = await Promise.all(
     Array.from({ length: pageCount }, async (_, index) => {
       const page = await pdf.getPage(index + 1);
-      const viewport = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: 1 / page.userUnit });
       const { view } = page;
       return {
         annotations: await page.getAnnotations({ intent: "display" }),

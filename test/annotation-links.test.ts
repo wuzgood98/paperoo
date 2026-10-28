@@ -1,21 +1,23 @@
 import { expect, test } from "vitest";
 
 import {
-  isOpenableWebUrl,
+  openableWebUrl,
   resolvePdfLinkNavigation,
 } from "@/lib/editor/annotation-links";
 
 const document = { pages: [] };
 
-test("web addresses open", () => {
-  for (const url of [
-    "https://example.com/a",
-    "http://example.com",
-    "HTTPS://example.com",
-  ]) {
+test("web addresses open as parsed", () => {
+  for (const [url, opened] of [
+    ["https://example.com/a", "https://example.com/a"],
+    ["http://example.com", "http://example.com/"],
+    ["HTTPS://example.com", "https://example.com/"],
+    // Raw, this would open relative to Paperoo's own page.
+    ["https:example.com", "https://example.com/"],
+  ] as const) {
     expect(resolvePdfLinkNavigation({ kind: "url", url }, document)).toEqual({
       kind: "url",
-      url,
+      url: opened,
     });
   }
 });
@@ -36,7 +38,7 @@ test("other address types never reach the browser", () => {
     "relative/path.html",
     "",
   ]) {
-    expect(isOpenableWebUrl(url)).toBe(false);
+    expect(openableWebUrl(url)).toBeNull();
     expect(resolvePdfLinkNavigation({ kind: "url", url }, document)).toBeNull();
   }
 });

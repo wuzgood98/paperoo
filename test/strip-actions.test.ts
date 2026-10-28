@@ -86,3 +86,52 @@ test("scripts and form actions are removed, links and page jumps kept", async ()
   const next = linkAction.lookup(PDFName.of("Next"), PDFArray);
   expect(next.size()).toBe(1);
 });
+
+test("only web and mail links stay in the file, in /A and in /Next", async () => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([200, 200]);
+  const { context } = doc;
+  const uri = (address: string) =>
+    context.obj({ S: "URI", URI: PDFString.of(address) });
+  const link = (action: PDFObject) =>
+    context.register(
+      context.obj({ A: action, Rect: [0, 0, 10, 10], Subtype: "Link" })
+    );
+  const chained = uri("https://example.com/first");
+  chained.set(
+    PDFName.of("Next"),
+    context.obj([uri("file:///etc/passwd"), uri("mailto:a@example.com")])
+  );
+  page.node.set(
+    PDFName.of("Annots"),
+    context.obj([
+      // oxlint-disable-next-line eslint/no-script-url -- the test checks this is dropped
+      link(uri("javascript:alert(1)")),
+      link(uri("ms-msdt:/id")),
+      link(uri("mailto:b@example.com")),
+      link(chained),
+    ])
+  );
+
+  const reloaded = await PDFDocument.load(await saveSwept(doc));
+  const [annots] = reloaded.getPages().map((item) => item.node.Annots());
+  const addresses = (annots?.asArray() ?? []).map((entry) => {
+    const action = lookupDict(reloaded, entry).lookupMaybe(
+      PDFName.of("A"),
+      PDFDict
+    );
+    const next = action?.lookupMaybe(PDFName.of("Next"), PDFArray);
+    return [action, ...(next?.asArray() ?? [])].map((item) =>
+      item
+        ? lookupDict(reloaded, item).lookup(PDFName.of("URI"))?.toString()
+        : null
+    );
+  });
+
+  expect(addresses).toEqual([
+    [null],
+    [null],
+    ["(mailto:b@example.com)"],
+    ["(https://example.com/first)", "(mailto:a@example.com)"],
+  ]);
+});

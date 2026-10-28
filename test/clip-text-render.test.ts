@@ -74,7 +74,7 @@ const redPixels = async (useSystemFonts: boolean): Promise<number> => {
   try {
     const doc = await task.promise;
     const page = await doc.getPage(1);
-    const viewport = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: 1 / page.userUnit });
     // SAFETY: pdf.js types canvasFactory as Object; in Node it is a
     // NodeCanvasFactory backed by @napi-rs/canvas.
     const factory = doc.canvasFactory as NodeCanvasFactory;

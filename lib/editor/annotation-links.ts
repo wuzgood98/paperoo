@@ -4,11 +4,15 @@ import type { EditorDocument, PdfLinkAction } from "@/lib/editor/types";
 
 const OPENABLE_PROTOCOLS = new Set(["http:", "https:"]);
 
-// A PDF link can name any address, including javascript:, file: or a custom
-// app scheme, so only web addresses are ever handed to the browser.
-export const isOpenableWebUrl = (url: string): boolean => {
+/**
+ * The address to open for a PDF link, or null. A link can name any
+ * address, including javascript:, file: or a custom app scheme, so only web
+ * addresses are ever handed to the browser, and always as parsed: a raw
+ * "https:example.com" would open relative to Paperoo's own page.
+ */
+export const openableWebUrl = (url: string): string | null => {
   const parsed = URL.parse(url);
-  return parsed !== null && OPENABLE_PROTOCOLS.has(parsed.protocol);
+  return parsed && OPENABLE_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
 };
 
 export const resolvePdfLinkNavigation = (
@@ -18,9 +22,8 @@ export const resolvePdfLinkNavigation = (
 ): { kind: "url"; url: string } | { kind: "page"; pageId: string } | null => {
   switch (action.kind) {
     case "url": {
-      return isOpenableWebUrl(action.url)
-        ? { kind: "url", url: action.url }
-        : null;
+      const url = openableWebUrl(action.url);
+      return url ? { kind: "url", url } : null;
     }
     case "goto": {
       // Resolved at load to a page of the link's own source document.

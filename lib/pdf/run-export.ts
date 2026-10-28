@@ -198,7 +198,7 @@ export const buildEditedPdfBytes = async ({
       return {
         bytes: pass1.bytes,
         coverOnlyRunIds: pass1.coverOnlyRunIds,
-        coveredObjectCount: pass1.coveredObjectCount,
+        coveredObjectCount: pass1.coveredObjectPages.length,
         flattenedPageCount: 0,
         preciseRedactionCount: 0,
         removedFieldNames: [],
@@ -227,7 +227,7 @@ export const buildEditedPdfBytes = async ({
       return {
         bytes: pass1.bytes,
         coverOnlyRunIds: pass1.coverOnlyRunIds,
-        coveredObjectCount: pass1.coveredObjectCount,
+        coveredObjectCount: pass1.coveredObjectPages.length,
         flattenedPageCount: 0,
         preciseRedactionCount: plan.length,
         removedFieldNames: pass1.removedFieldNames,
@@ -257,7 +257,10 @@ export const buildEditedPdfBytes = async ({
     return {
       bytes: pass2.bytes,
       coverOnlyRunIds: pass1.coverOnlyRunIds,
-      coveredObjectCount: pass1.coveredObjectCount,
+      // A flattened page no longer holds what was covered on it.
+      coveredObjectCount: pass1.coveredObjectPages.filter(
+        (index) => !flatten.has(index)
+      ).length,
       flattenedPageCount: pass2.flattenedPageCount,
       preciseRedactionCount: plan.length - toFlatten.length,
       removedFieldNames: [
