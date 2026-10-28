@@ -55,6 +55,8 @@ export interface EditedPdf {
   bytes: ArrayBuffer;
   /** Edited runs whose old text could only be covered, not removed. */
   coverOnlyRunIds: string[];
+  /** Deleted PDF images and vectors that could only be covered. */
+  coveredObjectCount: number;
   /** Pages rebuilt from a picture because they hold redactions. */
   flattenedPageCount: number;
   /** Pages whose redactions came out of their content, kept as text and vectors. */
@@ -196,6 +198,7 @@ export const buildEditedPdfBytes = async ({
       return {
         bytes: pass1.bytes,
         coverOnlyRunIds: pass1.coverOnlyRunIds,
+        coveredObjectCount: pass1.coveredObjectCount,
         flattenedPageCount: 0,
         preciseRedactionCount: 0,
         removedFieldNames: [],
@@ -224,6 +227,7 @@ export const buildEditedPdfBytes = async ({
       return {
         bytes: pass1.bytes,
         coverOnlyRunIds: pass1.coverOnlyRunIds,
+        coveredObjectCount: pass1.coveredObjectCount,
         flattenedPageCount: 0,
         preciseRedactionCount: plan.length,
         removedFieldNames: pass1.removedFieldNames,
@@ -253,6 +257,7 @@ export const buildEditedPdfBytes = async ({
     return {
       bytes: pass2.bytes,
       coverOnlyRunIds: pass1.coverOnlyRunIds,
+      coveredObjectCount: pass1.coveredObjectCount,
       flattenedPageCount: pass2.flattenedPageCount,
       preciseRedactionCount: plan.length - toFlatten.length,
       removedFieldNames: [
@@ -274,6 +279,20 @@ const warnCoverOnly = (count: number): void => {
         ? "One edit could only be covered. Its old text is still in the file and other PDF tools can find it."
         : `${count} edits could only be covered. Their old text is still in the file and other PDF tools can find it.`,
     title: "Old text still in the file",
+    type: "warning",
+  });
+};
+
+const warnCoveredObjects = (count: number): void => {
+  if (count === 0) {
+    return;
+  }
+  toastManager.add({
+    description:
+      count === 1
+        ? "A deleted image or shape could only be covered. It may still be in the file, where other PDF tools can find it. Draw a redaction box over it to take it out."
+        : `${count} deleted images or shapes could only be covered. They may still be in the file, where other PDF tools can find them. Draw redaction boxes over them to take them out.`,
+    title: "Deleted content still in the file",
     type: "warning",
   });
 };
@@ -335,7 +354,7 @@ const exportFileName = (
 export const runExport = async (options: ExportOptions = {}): Promise<void> => {
   const exported = editorStore.getState().document;
   const edited = await buildEditedPdfBytes(options);
-  const { bytes: result, coverOnlyRunIds } = edited;
+  const { bytes: result, coverOnlyRunIds, coveredObjectCount } = edited;
   const state = editorStore.getState();
   const blob = new Blob([result], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
@@ -349,5 +368,6 @@ export const runExport = async (options: ExportOptions = {}): Promise<void> => {
     editorStore.markClean(exported);
   }
   warnCoverOnly(coverOnlyRunIds.length);
+  warnCoveredObjects(coveredObjectCount);
   reportFlattened(edited);
 };

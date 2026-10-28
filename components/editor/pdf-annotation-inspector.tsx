@@ -12,6 +12,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
+import { isOpenableWebUrl } from "@/lib/editor/annotation-links";
 import {
   isPdfMarkupAnnotation,
   pdfLinkActionsEqual,
@@ -27,9 +28,6 @@ import type {
 import type { SampledCaptionInk } from "@/lib/pdf/sample-caption-ink";
 import { sampleLinkCaptionFromPage } from "@/lib/pdf/sample-link-caption-from-page";
 import { ensurePdfTextMeasured } from "@/lib/pdf/sample-pdf-text-cover";
-
-const isOpenableHttpUrl = (url: string): boolean =>
-  url.startsWith("http://") || url.startsWith("https://");
 
 const MarkupInspector = ({ object }: { object: PdfMarkupAnnotation }) => (
   <div className="flex flex-wrap items-center gap-3">
@@ -95,7 +93,7 @@ const LinkInspector = ({
     null
   );
   const [draft, setDraft] = useState("");
-  const openHref = isOpenableHttpUrl(urlValue) ? urlValue : null;
+  const openHref = isOpenableWebUrl(urlValue) ? urlValue : null;
 
   const commitUrl = (): void => {
     const trimmed = draft.trim();

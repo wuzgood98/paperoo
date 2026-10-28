@@ -65,6 +65,23 @@ const paperooDrawn = (page: EditorPage): Rect[] => {
       rects.push(turnedBounds(item, item.rotation));
     }
   }
+  // A changed or deleted vector is hidden by repainting its own path in
+  // white at its original place, so that place counts as drawn too.
+  for (const item of page.pdfVectorObjects) {
+    if (isPdfVectorDirty(item)) {
+      rects.push(
+        turnedBounds(
+          {
+            height: item.originalHeight,
+            width: item.originalWidth,
+            x: item.originalX,
+            y: item.originalY,
+          },
+          item.originalRotation
+        )
+      );
+    }
+  }
   return rects;
 };
 
@@ -107,6 +124,32 @@ export const pageRedaction = (
   };
 };
 
+/**
+ * User-space boxes where deleted PDF images and vectors were: OCR words
+ * there read content the user took off the page.
+ */
+export const deletedObjectBoxes = (page: EditorPage): UserRect[] => {
+  const boxes: UserRect[] = [];
+  for (const item of [...page.pdfImageObjects, ...page.pdfVectorObjects]) {
+    if (item.deleted) {
+      const original = {
+        height: item.originalHeight,
+        width: item.originalWidth,
+        x: item.originalX,
+        y: item.originalY,
+      };
+      boxes.push(
+        displayedToUserSpace(
+          turnedBounds(original, item.originalRotation),
+          page.cropBox,
+          page.sourceRotate
+        )
+      );
+    }
+  }
+  return boxes;
+};
+
 /** OCR words that stay clear of every box (all of them without boxes). */
 export const ocrWordsClearOf = (
   words: readonly OcrTextObject[] | undefined,
@@ -147,12 +190,12 @@ export const removeAnnotationsUnderBoxes = (
   if (!annots) {
     return;
   }
-  const removed = new Set<PDFRef>();
+  // Entries are refs or, less often, dicts written inline in /Annots.
+  const removed = new Set<PDFObject>();
   const entries = annots.asArray();
   for (const entry of entries) {
     const dict = doc.context.lookup(entry);
     if (
-      entry instanceof PDFRef &&
       dict instanceof PDFDict &&
       !isSubtype(dict, "Widget") &&
       rectArrayTouchesBoxes(annotRect(dict), boxes)
@@ -161,7 +204,7 @@ export const removeAnnotationsUnderBoxes = (
     }
   }
   const kept = entries.filter((entry) => {
-    if (entry instanceof PDFRef && removed.has(entry)) {
+    if (removed.has(entry)) {
       return false;
     }
     const parent = doc.context
@@ -169,6 +212,19 @@ export const removeAnnotationsUnderBoxes = (
       ?.get(PDFName.of("Parent"));
     return !(parent instanceof PDFRef && removed.has(parent));
   });
+  // A kept annotation can point at a removed one (a reply's /IRT, say),
+  // which would keep it in the file.
+  for (const entry of kept) {
+    const dict = doc.context.lookup(entry);
+    if (!(dict instanceof PDFDict)) {
+      continue;
+    }
+    for (const [key, value] of dict.entries()) {
+      if (value instanceof PDFRef && removed.has(value)) {
+        dict.delete(key);
+      }
+    }
+  }
   page.node.set(PDFName.of("Annots"), doc.context.obj(kept));
 };
 

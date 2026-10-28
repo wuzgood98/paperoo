@@ -2,6 +2,15 @@ import { pageDocId } from "@/lib/editor/page-source";
 import { PRIMARY_DOC_ID } from "@/lib/editor/types";
 import type { EditorDocument, PdfLinkAction } from "@/lib/editor/types";
 
+const OPENABLE_PROTOCOLS = new Set(["http:", "https:"]);
+
+// A PDF link can name any address, including javascript:, file: or a custom
+// app scheme, so only web addresses are ever handed to the browser.
+export const isOpenableWebUrl = (url: string): boolean => {
+  const parsed = URL.parse(url);
+  return parsed !== null && OPENABLE_PROTOCOLS.has(parsed.protocol);
+};
+
 export const resolvePdfLinkNavigation = (
   action: PdfLinkAction,
   document: EditorDocument,
@@ -9,7 +18,9 @@ export const resolvePdfLinkNavigation = (
 ): { kind: "url"; url: string } | { kind: "page"; pageId: string } | null => {
   switch (action.kind) {
     case "url": {
-      return { kind: "url", url: action.url };
+      return isOpenableWebUrl(action.url)
+        ? { kind: "url", url: action.url }
+        : null;
     }
     case "goto": {
       // Resolved at load to a page of the link's own source document.

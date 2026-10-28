@@ -92,6 +92,8 @@ export type PdfPaintTask = Pick<RenderTask, "cancel" | "promise">;
 export interface RenderablePdfPage {
   getViewport: PDFPageProxy["getViewport"];
   render: (params: Parameters<PDFPageProxy["render"]>[0]) => PdfPaintTask;
+  /** pdf.js scales every viewport by the page's /UserUnit. */
+  userUnit?: number;
 }
 
 export const renderPdfPage = async (
@@ -126,9 +128,10 @@ export const renderPdfPage = async (
     if (signal?.aborted) {
       return null;
     }
+    // Displayed space is plain user space: undo pdf.js's /UserUnit scale.
     const viewport = page.getViewport({
       rotation: options.rotation,
-      scale,
+      scale: scale / (page.userUnit ?? 1),
     });
     const transform = sizeCanvas(
       canvas,
@@ -176,7 +179,7 @@ export const renderPdfPageRegion = async (
     offsetX: -rect.x * scale,
     offsetY: -rect.y * scale,
     rotation,
-    scale,
+    scale: scale / page.userUnit,
   });
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.ceil(rect.width * scale));

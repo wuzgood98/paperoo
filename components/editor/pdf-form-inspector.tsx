@@ -19,7 +19,9 @@ export const PdfFormInspector = ({ field }: { field: PdfFormField }) => {
   const form = useEditorStore((state) => documentForm(state.document));
   const notes: string[] = [];
   if (form.hasJavaScript) {
-    notes.push("This PDF has JavaScript; calculated fields are not evaluated.");
+    notes.push(
+      "This PDF has JavaScript. Calculated fields are not evaluated, and scripts are removed on export."
+    );
   }
   if (form.signatures.length > 0) {
     notes.push(

@@ -95,24 +95,84 @@ export interface PositionedText {
   height: number;
   str: string;
   transform: readonly number[];
+  /** Vertical writing: the run goes down from the origin. */
+  vertical?: boolean;
   width: number;
 }
+
+interface PdfJsTextItem extends PositionedText {
+  fontName?: string;
+}
+
+/**
+ * The text items of a pdf.js text content that hold text, with vertical
+ * runs marked: pdf.js reports their width as the font size and their
+ * height as the column length.
+ */
+export const positionedTextItems = (content: {
+  items: readonly (PdfJsTextItem | { type: string })[];
+  styles?: Readonly<Record<string, { vertical?: boolean }>>;
+}): PositionedText[] =>
+  content.items.flatMap((item) =>
+    "str" in item && item.str.trim() !== ""
+      ? [
+          {
+            height: item.height,
+            str: item.str,
+            transform: item.transform,
+            vertical:
+              item.vertical ??
+              (item.fontName !== undefined &&
+                content.styles?.[item.fontName]?.vertical === true),
+            width: item.width,
+          },
+        ]
+      : []
+  );
+
+/** Corner points of an item's box, before padding. */
+const textCorners = (item: PositionedText): { x: number; y: number }[] => {
+  const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = item.transform;
+  const run = Math.hypot(a, b) || 1;
+  const rise = Math.hypot(c, d) || 1;
+  if (item.vertical) {
+    // A column centred on the origin, `width` across, running `height`
+    // down from just above the origin.
+    const ax = (a / run) * (item.width / 2);
+    const ay = (b / run) * (item.width / 2);
+    const top = item.width * TEXT_DESCENT_SHARE;
+    const ux = (c / rise) * top;
+    const uy = (d / rise) * top;
+    const dx = (-c / rise) * item.height;
+    const dy = (-d / rise) * item.height;
+    return [
+      { x: e - ax + ux, y: f - ay + uy },
+      { x: e + ax + ux, y: f + ay + uy },
+      { x: e + ax + dx, y: f + ay + dy },
+      { x: e - ax + dx, y: f - ay + dy },
+    ];
+  }
+  const ux = (a / run) * item.width;
+  const uy = (b / run) * item.width;
+  const vx = (c / rise) * item.height;
+  const vy = (d / rise) * item.height;
+  const below = { x: -vx * TEXT_DESCENT_SHARE, y: -vy * TEXT_DESCENT_SHARE };
+  return [
+    { x: e + below.x, y: f + below.y },
+    { x: e + ux + below.x, y: f + uy + below.y },
+    { x: e + ux + vx, y: f + uy + vy },
+    { x: e + vx, y: f + vy },
+  ];
+};
 
 /** The item's box in user space, padded by `margin`. */
 const textBounds = (
   item: PositionedText,
   margin = TEXT_TOUCH_MARGIN
 ): UserRect => {
-  const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = item.transform;
-  const run = Math.hypot(a, b) || 1;
-  const rise = Math.hypot(c, d) || 1;
-  const ux = (a / run) * item.width;
-  const uy = (b / run) * item.width;
-  const vx = (c / rise) * item.height;
-  const vy = (d / rise) * item.height;
-  const below = { x: -vx * TEXT_DESCENT_SHARE, y: -vy * TEXT_DESCENT_SHARE };
-  const xs = [e + below.x, e + ux + below.x, e + ux + vx, e + vx];
-  const ys = [f + below.y, f + uy + below.y, f + uy + vy, f + vy];
+  const corners = textCorners(item);
+  const xs = corners.map((point) => point.x);
+  const ys = corners.map((point) => point.y);
   const x0 = Math.min(...xs) - margin;
   const y0 = Math.min(...ys) - margin;
   return {

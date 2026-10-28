@@ -203,11 +203,23 @@ const matrixOf = (operation: ContentOperation): Matrix => {
   return [a, b, c, d, e, f];
 };
 
+/**
+ * How far the glyphs of a font that cannot be measured reach from the pen,
+ * in ems: the most one glyph advances, and where its ink can lie. Null ink
+ * means anywhere.
+ */
+interface GlyphReach {
+  advance: number;
+  ink: Bounds2 | null;
+}
+
 interface GraphicsState {
   charSpacing: number;
   ctm: Matrix;
   font: RedactionFont | null;
   fontSize: number;
+  /** Where glyphs reach when `font` is null. */
+  glyphReach: GlyphReach;
   hScale: number;
   leading: number;
   lineWidth: number;
@@ -265,12 +277,76 @@ const arrayNumbers = (array: PDFArray | undefined): number[] =>
       })
     : [];
 
+const UNKNOWN_REACH: GlyphReach = {
+  advance: UNKNOWN_GLYPH_EMS,
+  ink: { maxX: 0, maxY: UNKNOWN_ASCENT, minX: 0, minY: UNKNOWN_DESCENT },
+};
+
+const DEFAULT_TYPE3_MATRIX: Matrix = [0.001, 0, 0, 0.001, 0, 0];
+
+/**
+ * A Type3 font's reach: its glyph procedures can paint anywhere the
+ * FontMatrix puts them, so the reach comes from the FontBBox and Widths it
+ * declares. Without a usable FontBBox the ink can lie anywhere.
+ */
+const type3Reach = (font: PDFDict): GlyphReach => {
+  const box = arrayNumbers(font.lookupMaybe(PDFName.of("FontBBox"), PDFArray));
+  const listed = arrayNumbers(
+    font.lookupMaybe(PDFName.of("FontMatrix"), PDFArray)
+  );
+  const matrix: Matrix =
+    listed.length === 6
+      ? [
+          listed[0] ?? 0,
+          listed[1] ?? 0,
+          listed[2] ?? 0,
+          listed[3] ?? 0,
+          listed[4] ?? 0,
+          listed[5] ?? 0,
+        ]
+      : DEFAULT_TYPE3_MATRIX;
+  const widths = arrayNumbers(font.lookupMaybe(PDFName.of("Widths"), PDFArray));
+  const advance = Math.max(
+    UNKNOWN_GLYPH_EMS,
+    ...widths.map((width) => Math.abs(width) * maxScale(matrix))
+  );
+  const [x0 = 0, y0 = 0, x1 = 0, y1 = 0] = box;
+  if (box.length !== 4 || x0 === x1 || y0 === y1) {
+    return { advance, ink: null };
+  }
+  const ink = mappedBounds(matrix, x0, y0, x1, y1);
+  return {
+    advance,
+    ink: {
+      maxX: Math.max(0, ink.maxX),
+      maxY: Math.max(UNKNOWN_ASCENT, ink.maxY),
+      minX: Math.min(0, ink.minX),
+      minY: Math.min(UNKNOWN_DESCENT, ink.minY),
+    },
+  };
+};
+
+const UNBOUNDED: Bounds2 = {
+  maxX: Number.POSITIVE_INFINITY,
+  maxY: Number.POSITIVE_INFINITY,
+  minX: Number.NEGATIVE_INFINITY,
+  minY: Number.NEGATIVE_INFINITY,
+};
+
 /** Where an XObject paints: the unit square, or a form's BBox × Matrix. */
 const xObjectBounds = (dict: PDFDict | undefined, ctm: Matrix): Bounds2 => {
   if (dict?.get(PDFName.of("Subtype")) !== PDFName.of("Form")) {
     return mappedBounds(ctm, 0, 0, 1, 1);
   }
   const box = dict.lookupMaybe(PDFName.of("BBox"), PDFArray);
+  const isRect =
+    box?.size() === 4 &&
+    box.asArray().every((_, index) => box.lookup(index) instanceof PDFNumber);
+  if (!isRect) {
+    // Renderers draw a form without a usable BBox unclipped, so it may
+    // paint anywhere.
+    return UNBOUNDED;
+  }
   const matrix = dict.lookupMaybe(PDFName.of("Matrix"), PDFArray);
   const [x0 = 0, y0 = 0, x1 = 0, y1 = 0] = arrayNumbers(box);
   const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = arrayNumbers(matrix);
@@ -446,9 +522,138 @@ const pathSegments = (path: ReadPath, closeAll: boolean): Segment[] => {
   return segments;
 };
 
+const SHOW_OPS = new Set(["Tj", "TJ", "'", '"']);
+const EMPTY_STRINGS = new Set(["()", "<>"]);
+
+/**
+ * Names of the fonts that still show a glyph. Redaction leaves a removed
+ * run's Tf in place and empties its show, so selecting a font is not using
+ * it. Null when a show runs before any Tf: it uses a font set by whoever
+ * draws this content.
+ */
+const fontsShowingGlyphs = (
+  operations: readonly ContentOperation[]
+): Set<string> | null => {
+  const used = new Set<string>();
+  const stack: (string | null)[] = [];
+  let font: string | null = null;
+  for (const { operands, operator } of operations) {
+    if (operator === "q") {
+      stack.push(font);
+    } else if (operator === "Q") {
+      const restored = stack.pop();
+      if (restored !== undefined) {
+        font = restored;
+      }
+    } else if (operator === "Tf") {
+      font = operands[0]?.text ?? null;
+    } else if (SHOW_OPS.has(operator)) {
+      const showsGlyphs = operands.some(
+        (token) =>
+          (token.kind === "string" || token.kind === "hex-string") &&
+          !EMPTY_STRINGS.has(token.text)
+      );
+      if (showsGlyphs && font === null) {
+        return null;
+      }
+      if (showsGlyphs && font !== null) {
+        used.add(font);
+      }
+    }
+  }
+  return used;
+};
+
+interface ResourceUse {
+  drawn: Set<string>;
+  fonts: Set<string> | null;
+}
+
+/**
+ * The XObject names a content stream draws and the font names it shows
+ * glyphs in. A form without resources of its own draws from these same
+ * resources, so what it uses counts too. Fonts are null when they cannot
+ * be told.
+ */
+const resourcesUsed = (
+  context: PDFContext,
+  xObjects: PDFDict,
+  content: string
+): ResourceUse => {
+  const drawn = new Set<string>();
+  let fonts: Set<string> | null = new Set<string>();
+  const pending = [content];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    let operations: ContentOperation[];
+    try {
+      operations = parseContentStream(next);
+    } catch {
+      return { drawn: new Set(xObjects.keys().map(String)), fonts: null };
+    }
+    const shown = fontsShowingGlyphs(operations);
+    fonts = shown && fonts ? new Set([...fonts, ...shown]) : null;
+    for (const operation of operations) {
+      const name = operation.operands[0]?.text;
+      if (operation.operator !== "Do" || !name || drawn.has(name)) {
+        continue;
+      }
+      drawn.add(name);
+      const form = context.lookup(xObjects.get(PDFName.of(name.slice(1))));
+      if (
+        form instanceof PDFRawStream &&
+        form.dict.get(PDFName.of("Subtype")) === PDFName.of("Form") &&
+        !form.dict.has(PDFName.of("Resources"))
+      ) {
+        try {
+          pending.push(latin1(decodePDFRawStream(form).decode()));
+        } catch {
+          return { drawn: new Set(xObjects.keys().map(String)), fonts: null };
+        }
+      }
+    }
+  }
+  return { drawn, fonts };
+};
+
+/**
+ * Replace fonts that no longer show a glyph: a font only the removed text
+ * used (a bold face for a name, say) would still carry its glyphs, name
+ * and Unicode map. Its Tf stays in the content, so the name now points at
+ * a plain standard font. Nothing is replaced when a graphics state could
+ * name a font.
+ */
+const pruneFonts = (copy: PDFDict, usedFonts: ReadonlySet<string>): void => {
+  const fonts = copy.lookupMaybe(PDFName.of("Font"), PDFDict);
+  if (!fonts) {
+    return;
+  }
+  const states = copy.lookupMaybe(PDFName.of("ExtGState"), PDFDict);
+  const statesNameFonts = (states?.values() ?? []).some((value) =>
+    copy.context.lookupMaybe(value, PDFDict)?.has(PDFName.of("Font"))
+  );
+  if (statesNameFonts) {
+    return;
+  }
+  const kept = fonts.clone(copy.context);
+  let placeholder: PDFDict | undefined;
+  for (const key of kept.keys()) {
+    if (!usedFonts.has(key.toString())) {
+      placeholder ??= copy.context.obj({
+        BaseFont: "Helvetica",
+        Subtype: "Type1",
+        Type: "Font",
+      });
+      kept.set(key, placeholder);
+    }
+  }
+  copy.set(PDFName.of("Font"), kept);
+};
+
 /**
  * Resources with extra XObjects: a copy, so a resource dictionary shared
- * with other pages or forms is never changed.
+ * with other pages or forms is never changed. XObjects the content no
+ * longer draws are dropped and fonts it no longer shows glyphs in are
+ * replaced, so nothing removed stays reachable through them.
  */
 export const withXObjects = (
   doc: Pick<PDFDocument, "context">,
@@ -464,20 +669,16 @@ export const withXObjects = (
   for (const [name, ref] of added) {
     xObjects.set(PDFName.of(name), ref);
   }
-  // An XObject the edited content no longer draws must not stay reachable.
-  const used = new Set<string>();
-  for (const operation of parseContentStream(content)) {
-    const [name] = operation.operands;
-    if (operation.operator === "Do" && name) {
-      used.add(name.text);
-    }
-  }
+  const { drawn, fonts } = resourcesUsed(context, xObjects, content);
   for (const key of xObjects.keys()) {
-    if (!used.has(key.toString())) {
+    if (!drawn.has(key.toString())) {
       xObjects.delete(key);
     }
   }
   copy.set(PDFName.of("XObject"), xObjects);
+  if (fonts) {
+    pruneFonts(copy, fonts);
+  }
   return copy;
 };
 
@@ -502,6 +703,7 @@ class ContentRedactor {
     ctm: IDENTITY,
     font: null,
     fontSize: 0,
+    glyphReach: UNKNOWN_REACH,
     hScale: 1,
     leading: 0,
     lineWidth: 1,
@@ -583,7 +785,12 @@ class ContentRedactor {
       this.#pathStart = -1;
       return;
     }
-    this.#pathStart = -1;
+    if (this.#pathStart >= 0) {
+      // The spec allows nothing between building a path and painting it,
+      // but renderers keep the path and paint it anyway, so it cannot be
+      // measured from the build operators alone.
+      notPrecise("A path is interrupted before it is painted.");
+    }
     switch (operator) {
       case "q": {
         this.#stack.push({ ...this.#state });
@@ -688,6 +895,7 @@ class ContentRedactor {
       case "Tf": {
         const name = operation.operands[0]?.text.slice(1) ?? "";
         this.#state.font = this.#font(name);
+        this.#state.glyphReach = this.#glyphReach(name);
         this.#state.fontSize = second;
         return;
       }
@@ -764,6 +972,16 @@ class ContentRedactor {
     this.#text = { known: true, line, matrix: line };
   }
 
+  #glyphReach(name: string): GlyphReach {
+    const dict = lookupDict(this.#input.resources, "Font")?.lookupMaybe(
+      PDFName.of(name),
+      PDFDict
+    );
+    return dict?.get(PDFName.of("Subtype")) === PDFName.of("Type3")
+      ? type3Reach(dict)
+      : UNKNOWN_REACH;
+  }
+
   #font(name: string): RedactionFont | null {
     if (!this.#fonts.has(name)) {
       const dict = lookupDict(this.#input.resources, "Font")?.lookupMaybe(
@@ -788,6 +1006,7 @@ class ContentRedactor {
     if (params?.has(PDFName.of("Font"))) {
       // A font set through the graphics state is not measured here.
       this.#state.font = null;
+      this.#state.glyphReach = { advance: UNKNOWN_GLYPH_EMS, ink: null };
     }
   }
 
@@ -997,10 +1216,26 @@ class ContentRedactor {
       [state.fontSize * state.hScale, 0, 0, state.fontSize, 0, state.rise],
       multiply(this.#text.matrix, state.ctm)
     );
-    const reach = Math.max(length * UNKNOWN_GLYPH_EMS, 1);
+    const { advance, ink } = state.glyphReach;
+    if (!ink) {
+      return notPrecise("Text in a font with no known extent is on the page.");
+    }
+    // Character and word spacing are in unscaled text space, not ems.
+    const spacing =
+      state.fontSize === 0
+        ? 0
+        : (Math.abs(state.charSpacing) + Math.abs(state.wordSpacing)) /
+          Math.abs(state.fontSize);
+    const reach = Math.max(length * (advance + spacing), 1);
     if (
       this.#touches(
-        mappedBounds(render, -reach, UNKNOWN_DESCENT, reach, UNKNOWN_ASCENT)
+        mappedBounds(
+          render,
+          -reach + ink.minX,
+          ink.minY,
+          reach + ink.maxX,
+          ink.maxY
+        )
       )
     ) {
       notPrecise("Text in an unsupported font lies near a box.");

@@ -14,7 +14,7 @@ import type {
   PdfJsImage,
   PdfJsOperatorArg,
 } from "@/lib/pdf/flatten-redacted-pages";
-import { textOverlapsBoxes } from "@/lib/pdf/output-pages";
+import { positionedTextItems, textOverlapsBoxes } from "@/lib/pdf/output-pages";
 import type { RedactedOutputPage, UserRect } from "@/lib/pdf/output-pages";
 
 /** The pdf.js operator codes the check follows. */
@@ -276,11 +276,8 @@ export const failedRedactions = async (
         page.getTextContent(),
         page.getOperatorList(),
       ]);
-      const textUnderBox = content.items.some(
-        (item) =>
-          "str" in item &&
-          item.str.trim() !== "" &&
-          textOverlapsBoxes(item, boxes)
+      const textUnderBox = positionedTextItems(content).some((item) =>
+        textOverlapsBoxes(item, boxes)
       );
       if (
         textUnderBox ||

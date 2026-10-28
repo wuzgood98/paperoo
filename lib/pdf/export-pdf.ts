@@ -124,6 +124,7 @@ import type { RedactionBox } from "@/lib/pdf/output-pages";
 import { pushRebuiltType3Text } from "@/lib/pdf/rebuilt-type3-font";
 import {
   clearOfBoxes,
+  deletedObjectBoxes,
   ocrWordsClearOf,
   pageRedaction,
   removeAnnotationsUnderBoxes,
@@ -1454,6 +1455,11 @@ export interface ExportReport {
    * or its glyph shapes are still in the file.
    */
   coverOnlyRunIds: string[];
+  /**
+   * Deleted PDF images and vectors that could only be covered, so they are
+   * still in the file.
+   */
+  coveredObjectCount: number;
   /** Output pages (by index) whose redactions are left for flattening. */
   flattenPages: number[];
   /** Fields removed because a widget sat under a precise redaction. */
@@ -1469,6 +1475,8 @@ interface DirtyTextOutcome {
   coverOnly: string[];
   /** The page's redaction boxes were applied to its content. */
   redactedPrecisely: boolean;
+  /** Deleted vectors taken out of the page's content. */
+  vectorsRemoved: ReadonlySet<string>;
 }
 
 const removeOrCoverDirtyText = async (
@@ -1514,7 +1522,11 @@ const removeOrCoverDirtyText = async (
       drawDirtyPdfTextCovers(page, object, editorPage);
     }
   }
-  return { coverOnly, redactedPrecisely: removal.redactedPrecisely };
+  return {
+    coverOnly,
+    redactedPrecisely: removal.redactedPrecisely,
+    vectorsRemoved: removal.vectorsRemoved,
+  };
 };
 
 const loadSourcePdf = async (bytes: Uint8Array): Promise<PDFDocument> => {
@@ -1582,6 +1594,8 @@ interface PageTextOutcome {
   coverOnly: string[];
   /** The page's redactions were applied here; it needs no flattening. */
   precise: boolean;
+  /** Deleted vectors taken out of the page's content: no cover needed. */
+  vectorsRemoved: ReadonlySet<string>;
 }
 
 /**
@@ -1606,21 +1620,22 @@ const writePageText = async (
   }
   const dirtyText = editorPage.pdfTextObjects.filter(isPdfTextDirty);
   // Removal first, on the page's own content; covers only where ink stays.
-  const { coverOnly, redactedPrecisely } = await removeOrCoverDirtyText(
-    output,
-    page,
-    editorPage,
-    dirtyText,
-    redaction && tryPrecise ? redaction.boxes : [],
-    input.imageCodec
-  );
+  const { coverOnly, redactedPrecisely, vectorsRemoved } =
+    await removeOrCoverDirtyText(
+      output,
+      page,
+      editorPage,
+      dirtyText,
+      redaction && tryPrecise ? redaction.boxes : [],
+      input.imageCodec
+    );
   // After Removal, which reads the page's own content and gives up on a
   // page with appended streams.
   const boxes = redaction?.boxes;
   const ocrWords = ocrWordsClearOf(
     input.ocrWordsByPage?.[editorPage.id],
     editorPage,
-    boxes
+    [...(boxes ?? []), ...deletedObjectBoxes(editorPage)]
   );
   if (ocrWords.length > 0) {
     drawInvisibleOcrWords(
@@ -1644,8 +1659,34 @@ const writePageText = async (
       await ocrFontFor(fonts, output)
     );
   }
-  return { coverOnly, precise: tryPrecise && redactedPrecisely };
+  return {
+    coverOnly,
+    precise: tryPrecise && redactedPrecisely,
+    vectorsRemoved,
+  };
 };
+
+/** Dirty vectors to cover (and redraw), leaving out deleted ones already gone. */
+const coveredVectors = (
+  editorPage: EditorPage,
+  vectorsRemoved: ReadonlySet<string>
+): PdfVectorObject[] =>
+  editorPage.pdfVectorObjects.filter(
+    (vector) => isPdfVectorDirty(vector) && !vectorsRemoved.has(vector.id)
+  );
+
+/**
+ * Deleted images, and deleted vectors whose path could not come out of the
+ * content: export only covers them.
+ */
+const coveredDeletions = (
+  editorPage: EditorPage,
+  vectorsRemoved: ReadonlySet<string>
+): number =>
+  editorPage.pdfImageObjects.filter((image) => image.deleted).length +
+  editorPage.pdfVectorObjects.filter(
+    (vector) => vector.deleted && !vectorsRemoved.has(vector.id)
+  ).length;
 
 const saveOutput = (
   output: PDFDocument,
@@ -1661,6 +1702,7 @@ export const exportDocumentWithReport = async (
   input: ExportInput
 ): Promise<ExportReport> => {
   const coverOnlyRunIds: string[] = [];
+  let coveredObjectCount = 0;
   const outputPages = outputPagesOf(input);
   const [sources, output] = await Promise.all([
     loadSources(input, outputPages),
@@ -1757,6 +1799,7 @@ export const exportDocumentWithReport = async (
         input.document.pages
       );
     }
+    coveredObjectCount += coveredDeletions(editorPage, written.vectorsRemoved);
     for (const object of editorPage.pdfImageObjects) {
       if (!isPdfImageDirty(object)) {
         continue;
@@ -1771,10 +1814,7 @@ export const exportDocumentWithReport = async (
         output
       );
     }
-    for (const object of editorPage.pdfVectorObjects) {
-      if (!isPdfVectorDirty(object)) {
-        continue;
-      }
+    for (const object of coveredVectors(editorPage, written.vectorsRemoved)) {
       drawDirtyPdfVector(page, object, editorPage);
     }
     for (const object of editorPage.objects) {
@@ -1806,6 +1846,7 @@ export const exportDocumentWithReport = async (
   return {
     bytes: await saveOutput(output, input.scrub),
     coverOnlyRunIds,
+    coveredObjectCount,
     flattenPages,
     removedFieldNames,
   };

@@ -43,6 +43,8 @@ interface PdfJsAnnotation {
 const DEFAULT_MARKUP_COLOR = "#facc15";
 const DEFAULT_FREE_TEXT_COLOR = "#111827";
 const DEFAULT_FREE_TEXT_SIZE = 12;
+/** pdf.js ids for annotations stored as their own object: "12R" or "12R0". */
+const OBJECT_REF_ID = /^\d+R\d*$/u;
 
 export const rgbBytesToHex = (
   color: Uint8ClampedArray | null | undefined,
@@ -179,7 +181,14 @@ export const extractPdfAnnotationObjects = (
       skipped.add(subtype);
       continue;
     }
-    if (!raw.id || !raw.rect || raw.rect.length < 4) {
+    // An annotation written inline in /Annots has no object ref (pdf.js
+    // names it "annot_<n>"), so export could not find it to change or
+    // remove it. It stays part of the page instead of looking editable.
+    if (
+      !(raw.id && OBJECT_REF_ID.test(raw.id)) ||
+      !raw.rect ||
+      raw.rect.length < 4
+    ) {
       continue;
     }
 

@@ -264,3 +264,33 @@ test("the sweep drops unreachable objects and hidden pages, and keeps Info", asy
   const reloaded = await PDFDocument.load(bytes);
   expect(reloaded.getTitle()).toBe("Kept title");
 });
+
+test("a deleted vector's path is gone from the file, not just covered", async () => {
+  const source = await PDFDocument.create();
+  const page = source.addPage([612, 792]);
+  page.node.set(
+    PDFName.of("Contents"),
+    source.context.register(
+      source.context.flateStream(
+        "0 0 1 RG 3 w 210 400 m 250 470 270 390 291.25 430 c S"
+      )
+    )
+  );
+  const bytes = new Uint8Array(await source.save());
+  const [opened] = await openPages(bytes);
+  if (!opened) {
+    throw new Error("No page");
+  }
+  expect(opened.pdfVectorObjects).toHaveLength(1);
+  const deleted = {
+    ...opened,
+    pdfVectorObjects: opened.pdfVectorObjects.map((vector) => ({
+      ...vector,
+      deleted: true,
+    })),
+  };
+
+  const output = await exportPages(bytes, [deleted]);
+
+  expect(await pdfContainsText(output, "291.25")).toBe(false);
+});
