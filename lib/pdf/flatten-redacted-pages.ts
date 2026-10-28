@@ -1,5 +1,5 @@
 import type { FlattenedPage } from "@/lib/pdf/export-flatten";
-import { textClearOfBoxes } from "@/lib/pdf/output-pages";
+import { positionedTextItems, textClearOfBoxes } from "@/lib/pdf/output-pages";
 import type {
   PositionedText,
   RedactedOutputPage,
@@ -14,7 +14,15 @@ const MAX_RENDER_PIXELS = 16e6;
 const ANNOTATION_MODE_ENABLE = 1;
 
 /** A pdf.js text content entry: a positioned run, or a marked-content tag. */
-type TextContentItem = PositionedText | { type: string };
+type TextContentItem =
+  | (PositionedText & { fontName?: string })
+  | { type: string };
+
+/** pdf.js text content: its runs, and per font whether it writes vertically. */
+export interface PdfJsTextContent {
+  items: readonly TextContentItem[];
+  styles?: Readonly<Record<string, { vertical?: boolean }>>;
+}
 
 /** A decoded image as pdf.js keeps it: raw samples, or a bitmap. */
 export interface PdfJsImage {
@@ -48,7 +56,7 @@ export interface PdfJsObjects {
 
 /** The slice of a pdf.js page the flattener uses. */
 export interface FlattenSourcePage {
-  getTextContent: () => Promise<{ items: readonly TextContentItem[] }>;
+  getTextContent: () => Promise<PdfJsTextContent>;
   /** Decoded images by id, once the operator list has loaded them. */
   commonObjs: PdfJsObjects;
   objs: PdfJsObjects;
@@ -57,6 +65,8 @@ export interface FlattenSourcePage {
     argsArray: readonly (readonly PdfJsOperatorArg[] | null)[];
     fnArray: readonly number[];
   }>;
+  /** pdf.js scales every viewport by the page's /UserUnit. */
+  userUnit?: number;
   getViewport: (params: { rotation: number; scale: number }) => {
     convertToViewportPoint: (x: number, y: number) => number[];
     height: number;
@@ -92,22 +102,13 @@ export const flattenScale = (width: number, height: number): number =>
 
 /** The runs to keep searchable: those with text, clear of every box. */
 const keptText = (
-  items: readonly TextContentItem[],
+  content: PdfJsTextContent,
   boxes: readonly RedactionBox[]
 ): PositionedText[] => {
   const kept: PositionedText[] = [];
-  for (const item of items) {
-    if (
-      "str" in item &&
-      item.str.trim() !== "" &&
-      textClearOfBoxes(item, boxes)
-    ) {
-      kept.push({
-        height: item.height,
-        str: item.str,
-        transform: [...item.transform],
-        width: item.width,
-      });
+  for (const item of positionedTextItems(content)) {
+    if (textClearOfBoxes(item, boxes)) {
+      kept.push({ ...item, transform: [...item.transform] });
     }
   }
   return kept;
@@ -130,9 +131,10 @@ export const renderRedactedPages = async <Canvas>(
       // oxlint-disable-next-line react-doctor/async-await-in-loop eslint/no-await-in-loop -- one page canvas at a time bounds memory
       const page = await source.getPage(outputIndex + 1);
       const [x0 = 0, y0 = 0, x1 = 0, y1 = 0] = page.view;
+      // Boxes are in plain user space: undo pdf.js's /UserUnit scale.
       const viewport = page.getViewport({
         rotation: 0,
-        scale: flattenScale(x1 - x0, y1 - y0),
+        scale: flattenScale(x1 - x0, y1 - y0) / (page.userUnit ?? 1),
       });
       const width = Math.max(1, Math.round(viewport.width));
       const height = Math.max(1, Math.round(viewport.height));
@@ -168,7 +170,7 @@ export const renderRedactedPages = async <Canvas>(
       }
       // oxlint-disable-next-line react-doctor/async-await-in-loop eslint/no-await-in-loop -- one page canvas at a time bounds memory
       const content = await page.getTextContent();
-      const text = keptText(content.items, boxes);
+      const text = keptText(content, boxes);
       // oxlint-disable-next-line react-doctor/async-await-in-loop eslint/no-await-in-loop -- one page canvas at a time bounds memory
       const jpeg = await deps.encodeJpeg(canvas);
       pages.push({ boxes, jpeg, outputIndex, text });

@@ -421,6 +421,20 @@ test("what precise redaction cannot handle is flattened", async () => {
     pages: [withBoxes(clipPage, { rect: displayed(70, 690, 200, 740) })],
   });
   expect(clip.flattenPages).toEqual([0]);
+  await pdfSession.close();
+
+  // A colour set between building a path and filling it: renderers still
+  // fill the path, so it cannot be measured from the build operators.
+  const interrupted = await pdfWith((page, doc) => {
+    rawContent(page, doc, "200 400 100 50 re 1 0 0 rg f");
+  });
+  const interruptedPage = await firstPage(interrupted);
+  const unmeasured = await redactingExport(interrupted, {
+    pages: [
+      withBoxes(interruptedPage, { rect: displayed(180, 380, 320, 470) }),
+    ],
+  });
+  expect(unmeasured.flattenPages).toEqual([0]);
 });
 
 test("an overlay under a box sends the page to flattening", async () => {
@@ -441,6 +455,185 @@ test("an overlay under a box sends the page to flattening", async () => {
 
   expect(result.flattenPages).toEqual([0]);
   expect(await pageTexts(result.bytes)).toEqual(["Plain"]);
+});
+
+test("a font only the redacted text used leaves the file", async () => {
+  const bytes = await pdfWith(async (page, doc) => {
+    const regular = await doc.embedFont(StandardFonts.Helvetica);
+    const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+    page.drawText("Kept line", { font: regular, size: 18, x: 72, y: 600 });
+    page.drawText("Secretname", { font: bold, size: 18, x: 72, y: 500 });
+  });
+  const page = await firstPage(bytes);
+
+  const result = await redactingExport(bytes, {
+    pages: [withBoxes(page, { rect: displayed(60, 490, 300, 525) })],
+  });
+
+  expect(result).toMatchObject({ flattened: 0, precise: 1 });
+  expect(await pageTexts(result.bytes)).toEqual(["Kept line"]);
+  const reloaded = await PDFDocument.load(result.bytes);
+  const [output] = reloaded.getPages();
+  const fonts = output?.node.Resources()?.lookup(PDFName.of("Font"), PDFDict);
+  const baseFonts = (fonts?.values() ?? []).map((font) =>
+    fonts?.context.lookup(font, PDFDict).get(PDFName.of("BaseFont"))?.toString()
+  );
+  expect(baseFonts.toSorted()).toEqual(["/Helvetica", "/Helvetica"]);
+});
+
+test("an image redacted on one page does not stay through another page's shared resources", async () => {
+  const doc = await PDFDocument.create();
+  const image = (fill: string) =>
+    doc.context.register(
+      doc.context.flateStream(fill.repeat(16).slice(0, 256), {
+        BitsPerComponent: 8,
+        ColorSpace: "DeviceGray",
+        Height: 16,
+        Subtype: "Image",
+        Type: "XObject",
+        Width: 16,
+      })
+    );
+  const shared = doc.context.register(
+    doc.context.obj({
+      XObject: {
+        Kept: image("KEPTIMAGEBYTES"),
+        Secret: image("SECRETIMAGEBYTE"),
+      },
+    })
+  );
+  for (const name of ["Secret", "Kept"]) {
+    const page = doc.addPage(LETTER);
+    page.node.set(PDFName.of("Resources"), shared);
+    rawContent(page, doc, `q 100 0 0 100 100 600 cm /${name} Do Q`);
+  }
+  const bytes = new Uint8Array(await doc.save());
+  const [first, second] = await openPages(bytes);
+  if (!(first && second)) {
+    throw new Error("No pages");
+  }
+
+  const result = await redactingExport(bytes, {
+    pages: [withBoxes(first, { rect: displayed(90, 590, 210, 710) }), second],
+  });
+
+  expect(result).toMatchObject({ flattened: 0, precise: 1 });
+  expect(await pdfContainsText(result.bytes, "SECRETIMAGEBYTE")).toBe(false);
+  expect(await pdfContainsText(result.bytes, "KEPTIMAGEBYTES")).toBe(true);
+});
+
+test("a page with /UserUnit keeps text, page and boxes in one space", async () => {
+  const bytes = await pdfWith(async (page, doc) => {
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    page.node.set(PDFName.of("UserUnit"), doc.context.obj(2));
+    page.drawText("Kept line", { font, size: 18, x: 72, y: 600 });
+    page.drawText("Unitsecret", { font, size: 18, x: 72, y: 500 });
+  });
+  const page = await firstPage(bytes);
+  expect(page).toMatchObject({ height: PAGE_HEIGHT, width: 612 });
+  const secret = page.pdfTextObjects.find(
+    (run) => run.originalText === "Unitsecret"
+  );
+  if (!secret) {
+    throw new Error("No secret run");
+  }
+
+  // The box is drawn where the run shows on the page.
+  const result = await redactingExport(bytes, {
+    pages: [
+      withBoxes(page, {
+        rect: {
+          height: secret.height,
+          width: secret.width,
+          x: secret.x,
+          y: secret.y,
+        },
+      }),
+    ],
+  });
+
+  expect(await pageTexts(result.bytes)).toEqual(["Kept line"]);
+  expect(await pdfContainsText(result.bytes, "Unitsecret")).toBe(false);
+});
+
+test("Type3 glyphs painted far from the pen are still seen near a box", async () => {
+  // Each glyph paints a square 3 to 4 em above its pen position.
+  const bytes = await pdfWith((page, doc) => {
+    const { context } = doc;
+    const glyph = context.register(
+      context.flateStream("1000 0 0 3000 1000 4000 d1 0 3000 1000 1000 re f")
+    );
+    const font = context.register(
+      context.obj({
+        CharProcs: { a: glyph },
+        Encoding: { Differences: [97, PDFName.of("a")], Type: "Encoding" },
+        FirstChar: 97,
+        FontBBox: [0, 3000, 1000, 4000],
+        FontMatrix: [0.001, 0, 0, 0.001, 0, 0],
+        LastChar: 97,
+        Resources: {},
+        Subtype: "Type3",
+        Type: "Font",
+        Widths: [1000],
+      })
+    );
+    page.node.setFontDictionary(PDFName.of("T3"), font);
+    rawContent(page, doc, "BT /T3 20 Tf 100 400 Td (aaa) Tj ET");
+  });
+  const page = await firstPage(bytes);
+
+  // Over the ink, 60 to 80 pt above the baseline.
+  const result = await redactingExport(bytes, {
+    pages: [withBoxes(page, { rect: displayed(95, 455, 170, 485) })],
+  });
+
+  expect(result.flattenPages).toEqual([0]);
+});
+
+test("a form without a BBox is treated as painting anywhere", async () => {
+  const bytes = await pdfWith((page, doc) => {
+    const form = doc.context.register(
+      doc.context.flateStream("0 0 1 rg 10 10 m 40.125 30 l 20 5 l h f", {
+        Subtype: "Form",
+        Type: "XObject",
+      })
+    );
+    const key = page.node.newXObject("Fm", form);
+    rawContent(page, doc, `q 1 0 0 1 200 400 cm ${key.toString()} Do Q`);
+  });
+  const page = await firstPage(bytes);
+
+  const result = await redactingExport(bytes, {
+    pages: [withBoxes(page, { rect: displayed(205, 402, 245, 435) })],
+  });
+
+  expect(await pdfContainsText(result.bytes, "40.125")).toBe(false);
+});
+
+test("a deleted vector under a box is not repainted as its cover", async () => {
+  const bytes = await pdfWith((page, doc) => {
+    rawContent(
+      page,
+      doc,
+      "0 0 1 RG 3 w 210 400 m 250 470 270 390 291.25 430 c S"
+    );
+  });
+  const page = await firstPage(bytes);
+  expect(page.pdfVectorObjects).toHaveLength(1);
+  const deleted = {
+    ...page,
+    pdfVectorObjects: page.pdfVectorObjects.map((vector) => ({
+      ...vector,
+      deleted: true,
+    })),
+  };
+
+  const result = await redactingExport(bytes, {
+    pages: [withBoxes(deleted, { rect: displayed(180, 360, 320, 500) })],
+  });
+
+  expect(result.flattenPages).toEqual([0]);
+  expect(await pdfContainsText(result.bytes, "291.25")).toBe(false);
 });
 
 test("the safety net catches text and images left under a box", async () => {

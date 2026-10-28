@@ -38,6 +38,7 @@ export type WorkerResponse =
   | {
       bytes: ArrayBuffer;
       coverOnlyRunIds: string[];
+      coveredObjectPages: number[];
       flattenPages: number[];
       kind: "export";
       ok: true;
@@ -103,6 +104,7 @@ const runExportRequest = async (
   return {
     bytes: ownedBuffer(report.bytes),
     coverOnlyRunIds: report.coverOnlyRunIds,
+    coveredObjectPages: report.coveredObjectPages,
     flattenPages: report.flattenPages,
     kind: "export",
     ok: true,

@@ -8,6 +8,8 @@ import {
 } from "pdf-lib";
 import type { PDFDocument, PDFObject } from "pdf-lib";
 
+import { stripActiveContent } from "@/lib/pdf/strip-actions";
+
 export interface SweepResult {
   /** Objects written to the context but reachable from nothing. */
   deleted: number;
@@ -102,10 +104,12 @@ export const sweepUnreachable = (doc: PDFDocument): SweepResult => {
 /**
  * Save with nothing unreachable in the file. Fonts and images are embedded
  * first (the flush), so the sweep sees their objects; the save's own flush
- * then has nothing left to add.
+ * then has nothing left to add. Script and form-sending actions go before
+ * the sweep, so fields only they pointed at go with it.
  */
 export const saveSwept = async (doc: PDFDocument): Promise<Uint8Array> => {
   await doc.flush();
+  stripActiveContent(doc);
   sweepUnreachable(doc);
   return doc.save({ updateFieldAppearances: false });
 };

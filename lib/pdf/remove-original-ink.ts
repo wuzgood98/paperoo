@@ -50,12 +50,15 @@ export interface InkRemovalResult {
    * outline-only runs, which have none.
    */
   textRemoved: ReadonlySet<string>;
+  /** Deleted vectors whose path no longer paints: no cover needed. */
+  vectorsRemoved: ReadonlySet<string>;
 }
 
 const NOTHING_REMOVED: InkRemovalResult = {
   inkRemoved: new Set(),
   keptOutlineLines: [],
   textRemoved: new Set(),
+  vectorsRemoved: new Set(),
 };
 
 const MAX_OCTAL_DIGITS = 3;
@@ -314,6 +317,34 @@ const unpaintPath = (operation: ContentOperation): ContentEdit => ({
   start: operation.end - operation.operator.length,
 });
 
+/**
+ * Take a path out whole, its points with it, so a deleted shape cannot be
+ * read back from the content. A path that also clips only stops painting:
+ * later content depends on the clip.
+ */
+const removePath = (
+  operations: readonly ContentOperation[],
+  paintIndex: number
+): ContentEdit | null => {
+  const paint = operations[paintIndex];
+  let first = paintIndex;
+  while (
+    first > 0 &&
+    PATH_BUILD_OPERATORS.has(operations[first - 1]?.operator ?? "")
+  ) {
+    first -= 1;
+  }
+  const path = operations.slice(first, paintIndex);
+  const start = operations[first];
+  if (!(paint && start)) {
+    return null;
+  }
+  if (path.some(({ operator }) => operator === "W" || operator === "W*")) {
+    return unpaintPath(paint);
+  }
+  return { end: paint.end, replacement: " ", start: start.start };
+};
+
 const runPaintsOwnInk = (run: PdfTextObject): boolean =>
   run.invisibleGlyphs !== true &&
   !INVISIBLE_RENDER_MODES.has(run.originalTextRenderingMode);
@@ -426,6 +457,20 @@ const planLabelEdit = (
     : null;
 };
 
+/** The edit that takes a deleted vector's path out, if verified. */
+const planVectorRemoval = (
+  raw: RawContent,
+  vector: PdfVectorObject
+): ContentEdit | null => {
+  const target = vector.removalTarget;
+  const paintIndex = target ? raw.paints[target.pathOrdinal] : undefined;
+  return target &&
+    paintIndex !== undefined &&
+    pathMatches(raw.operations, paintIndex, target)
+    ? removePath(raw.operations, paintIndex)
+    : null;
+};
+
 /** Dirty outline-only runs, grouped by the label path they share. */
 const groupByLabel = (
   runs: readonly PdfTextObject[]
@@ -453,6 +498,24 @@ const NOTHING_PLANNED = (): InkRemovalPlan => ({
   edits: [],
   emptiedShows: new Set(),
 });
+
+/**
+ * Deleted vectors whose own path can come out of the content. A vector
+ * that is a text run's outline is left to that run.
+ */
+const deletedVectors = (editorPage: EditorPage): PdfVectorObject[] => {
+  const runInk = new Set(
+    editorPage.pdfTextObjects.flatMap((run) =>
+      run.inkVectorId ? [run.inkVectorId] : []
+    )
+  );
+  return editorPage.pdfVectorObjects.filter(
+    (vector) => vector.deleted && vector.removalTarget && !runInk.has(vector.id)
+  );
+};
+
+const rangesMeet = (a: ContentEdit, b: ContentEdit): boolean =>
+  a.start < b.end && b.start < a.end;
 
 /**
  * Plan taking dirty runs' original ink out of the page's own content: empty
@@ -528,7 +591,15 @@ const planInkRemoval = (
       inkRemoved.add(run.id);
     }
   }
-  return { ...plan, inkRemoved, keptOutlineLines, textRemoved };
+  const vectorsRemoved = new Set<string>();
+  for (const vector of deletedVectors(editorPage)) {
+    const edit = planVectorRemoval(raw, vector);
+    if (edit && !plan.edits.some((own) => rangesMeet(edit, own))) {
+      plan.edits.push(edit);
+      vectorsRemoved.add(vector.id);
+    }
+  }
+  return { ...plan, inkRemoved, keptOutlineLines, textRemoved, vectorsRemoved };
 };
 
 /** Replace the page's content with the edited source; returns it. */
@@ -545,8 +616,12 @@ const writeContent = (
   return updated;
 };
 
-const needsInkRemoval = (runs: readonly PdfTextObject[]): boolean =>
-  runs.some((run) => run.removalTarget || run.outlineText);
+const needsInkRemoval = (
+  runs: readonly PdfTextObject[],
+  editorPage: EditorPage
+): boolean =>
+  runs.some((run) => run.removalTarget || run.outlineText) ||
+  deletedVectors(editorPage).length > 0;
 
 export interface PageContentEdits extends InkRemovalResult {
   /**
@@ -556,9 +631,6 @@ export interface PageContentEdits extends InkRemovalResult {
    */
   redactedPrecisely: boolean;
 }
-
-const rangesMeet = (a: ContentEdit, b: ContentEdit): boolean =>
-  a.start < b.end && b.start < a.end;
 
 /**
  * Edit a page's own content once: Removal for dirty runs, and precise
@@ -574,13 +646,14 @@ export const editPageContent = async (
   boxes: readonly RedactionBox[],
   codec?: ImageCodec
 ): Promise<PageContentEdits> => {
-  if (boxes.length === 0 && !needsInkRemoval(runs)) {
+  const removesInk = needsInkRemoval(runs, editorPage);
+  if (boxes.length === 0 && !removesInk) {
     return { ...NOTHING_REMOVED, redactedPrecisely: true };
   }
   const counts = editorPage.contentOpCounts;
   const raw = counts ? readRawContent(page, counts) : null;
   const ink =
-    raw && needsInkRemoval(runs)
+    raw && removesInk
       ? planInkRemoval(raw, editorPage, runs)
       : NOTHING_PLANNED();
   let redaction: ContentEdit[] = [];
@@ -615,7 +688,13 @@ export const editPageContent = async (
       );
     }
   }
-  const { inkRemoved, keptOutlineLines, textRemoved } =
+  const { inkRemoved, keptOutlineLines, textRemoved, vectorsRemoved } =
     ink.edits.length > 0 ? ink : NOTHING_REMOVED;
-  return { inkRemoved, keptOutlineLines, redactedPrecisely, textRemoved };
+  return {
+    inkRemoved,
+    keptOutlineLines,
+    redactedPrecisely,
+    textRemoved,
+    vectorsRemoved,
+  };
 };

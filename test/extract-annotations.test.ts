@@ -1,3 +1,4 @@
+import { PDFDocument, PDFName, PDFString } from "pdf-lib";
 import { expect, test } from "vitest";
 
 import type {
@@ -58,4 +59,34 @@ test("extracts display annotations and skips widgets and popups", async () => {
 
   const note = objects.find((object) => object.type === "pdf-text-note");
   expect(note?.popupRef).toBeTruthy();
+});
+
+test("an annotation written inline in /Annots is not offered for editing", async () => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([612, 792]);
+  const note = (text: string) =>
+    doc.context.obj({
+      Contents: PDFString.of(text),
+      Rect: [100, 700, 120, 720],
+      Subtype: "Text",
+      Type: "Annot",
+    });
+  page.node.set(
+    PDFName.of("Annots"),
+    doc.context.obj([doc.context.register(note("Stored")), note("Inline")])
+  );
+  const task = loadPdfJsDocument(new Uint8Array(await doc.save()));
+  const pdf = await task.promise;
+  const pdfPage = await pdf.getPage(1);
+  const raw = await pdfPage.getAnnotations({ intent: "display" });
+  const { objects } = extractPdfAnnotationObjects(raw, {
+    cropBox: { height: 792, width: 612, x: 0, y: 0 },
+    id: "page-1",
+    sourceRotate: 0,
+  });
+
+  expect(raw).toHaveLength(2);
+  expect(
+    objects.map((object) => ("contents" in object ? object.contents : null))
+  ).toEqual(["Stored"]);
 });

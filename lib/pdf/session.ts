@@ -623,7 +623,9 @@ class PdfSession {
       return null;
     }
 
-    const viewport = page.getViewport({ scale: 1 });
+    // pdf.js scales viewports by /UserUnit; text, images and boxes are in
+    // plain user space, so displayed space stays in user space too.
+    const viewport = page.getViewport({ scale: 1 / page.userUnit });
     const { view } = page;
     let textContent: Awaited<ReturnType<PDFPageProxy["getTextContent"]>>;
     let operatorList: Awaited<ReturnType<PDFPageProxy["getOperatorList"]>>;
